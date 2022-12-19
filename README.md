@@ -15,17 +15,38 @@ The information is then available via
 See weewx-celestial in action with at
 [www.paloaltoweather.com/celestial.html](https://www.paloaltoweather.com/celestial.html)
 
+The following observations are available in the LOOP packet:
+
+`SunAzimuth`
+`SunAltitude`
+`SunRightAscension`
+`SunDeclination`
+`MoonAzimuth`
+`MoonAltitude`
+`MoonRightAscension`
+`MoonDeclination`
+`EarthSunDistance`
+`EarthMoonDistance`
+`EarthMercuryDistance`
+`EarthVenusDistance`
+`EarthMarsDistance`
+`EarthJupiterDistance`
+`EarthSaturnDistance`
+`EarthUranusDistance`
+`EarthNeptuneDistance`
+`EarthPlutoDistance`
+
 # Installation Instructions
 
 1. Install the prerequisite pyephem package.  On debian, that can be accomplished with:
    `sudo apt install python3-ephem` 
 
-1. Download the lastest release, weewx-celestial-0.1.zip, from the
+1. Download the lastest release, weewx-celestial-0.2.zip, from the
    [GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Run the following command.
 
-   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.1.zip`
+   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.2.zip`
 
    Note: this command assumes weewx is installed in /home/weewx.  If it's installed
    elsewhere, adjust the path of wee_extension accordingly.

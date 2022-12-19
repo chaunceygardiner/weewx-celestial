@@ -1,5 +1,8 @@
 weewx-celestial change history
 ------------------------------
 
-0.01 Release 2022/12/19
+0.2 Release 2022/12/19
+1. Add distances from earth to all other planets (plus Pluto)
+
+0.1 Release 2022/12/19
 1. Initial release.
