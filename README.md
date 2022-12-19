@@ -17,24 +17,24 @@ See weewx-celestial in action with at
 
 The following observations are available in the LOOP packet:
 
-`SunAzimuth`
-`SunAltitude`
-`SunRightAscension`
-`SunDeclination`
-`MoonAzimuth`
-`MoonAltitude`
-`MoonRightAscension`
-`MoonDeclination`
-`EarthSunDistance`
-`EarthMoonDistance`
-`EarthMercuryDistance`
-`EarthVenusDistance`
-`EarthMarsDistance`
-`EarthJupiterDistance`
-`EarthSaturnDistance`
-`EarthUranusDistance`
-`EarthNeptuneDistance`
-`EarthPlutoDistance`
+`current.SunAzimuth`
+`current.SunAltitude`
+`current.SunRightAscension`
+`current.SunDeclination`
+`current.MoonAzimuth`
+`current.MoonAltitude`
+`current.MoonRightAscension`
+`current.MoonDeclination`
+`current.EarthSunDistance`
+`current.EarthMoonDistance`
+`current.EarthMercuryDistance`
+`current.EarthVenusDistance`
+`current.EarthMarsDistance`
+`current.EarthJupiterDistance`
+`current.EarthSaturnDistance`
+`current.EarthUranusDistance`
+`current.EarthNeptuneDistance`
+`current.EarthPlutoDistance`
 
 # Installation Instructions
 
