@@ -20,7 +20,6 @@ import weeutil
 import weewx
 
 from weeutil.weeutil import to_bool
-from weeutil.weeutil import to_float
 from weeutil.weeutil import to_int
 from weewx.engine import StdService
 
@@ -87,16 +86,19 @@ class Celestial(StdService):
                 if 'moon_phases' in config_dict['StdReport']['Defaults']['Almanac']:
                     self.moon_phases = config_dict['StdReport']['Defaults']['Almanac']['moon_phases']
 
-        latitude = config_dict['Station'].get('latitude', None)
-        longitude = config_dict['Station'].get('longitude', None)
+        altitude_vt = engine.stn_info.altitude_vt
+        altitude_vt = weewx.units.StdUnitConverters[weewx.METRIC].convert(altitude_vt)
+        self.altitude = altitude_vt[0]
+        self.latitude = engine.stn_info.latitude_f
+        self.longitude = engine.stn_info.longitude_f
 
-        if latitude is None or longitude is None:
+        if self.latitude is None or self.longitude is None:
             log.error("Could not determine station's latitude and longitude.")
             return
 
-        # convert lat/lon to floats
-        self.latitude = to_float(latitude)
-        self.longitude = to_float(longitude)
+        if self.altitude is None:
+            log.error("Could not determine station's altitude.")
+            return
 
         self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
 
@@ -105,6 +107,12 @@ class Celestial(StdService):
 
         obs = ephem.Observer()
         obs.lat, obs.lon = math.radians(self.latitude), math.radians(self.longitude)
+        obs.elevation = self.altitude
+        metric_pkt = weewx.units.StdUnitConverters[weewx.METRIC].convertDict(pkt)
+        if 'outTemp' in metric_pkt:
+            obs.temp = metric_pkt['outTemp']
+        if 'barometer' in metric_pkt:
+            obs.pressure = metric_pkt['barometer']
         obs.date = datetime.utcfromtimestamp(pkt_time)
         sun  = ephem.Sun()
         moon = ephem.Moon()
