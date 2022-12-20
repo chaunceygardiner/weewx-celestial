@@ -13,6 +13,7 @@ import math
 import sys
 
 from datetime import datetime
+from datetime import timezone
 from typing import Any, Dict
 
 import ephem
@@ -28,9 +29,9 @@ log = logging.getLogger(__name__)
 
 CELESTIAL_VERSION = '0.3'
 
-if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 7):
+if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
-        "weewx-celestial requires Python 3.7 or later, found %s.%s" % (sys.version_info[0], sys.version_info[1]))
+        "weewx-celestial requires Python 3.9 or later, found %s.%s" % (sys.version_info[0], sys.version_info[1]))
 
 if weewx.__version__ < "4":
     raise weewx.UnsupportedFeature(
@@ -57,11 +58,8 @@ weewx.units.obs_group_dict['MoonRightAscension']   = 'group_direction'
 weewx.units.obs_group_dict['MoonDeclination']      = 'group_direction'
 weewx.units.obs_group_dict['MoonFullness']         = 'group_percent'
 weewx.units.obs_group_dict['MoonPhase']            = 'group_data'
-
-distance_types = [ 'EarthSunDistance', 'EarthMoonDistance' ]
-
-distance_types = [ 'SunAzimuth', 'SunAltitude', 'SunRightAscension', 'SunDeclination',
-                   'MoonAzimuth', 'MoonAltitude', 'MoonRightAscension', 'MoonDeclination' ]
+weewx.units.obs_group_dict['NextEquinox']          = 'group_time'
+weewx.units.obs_group_dict['NextSolstice']         = 'group_time'
 
 class Celestial(StdService):
     def __init__(self, engine, config_dict):
@@ -103,7 +101,8 @@ class Celestial(StdService):
         self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
 
     def insert_fields(self, pkt: Dict[str, Any]) -> None:
-        pkt_time: int       = to_int(pkt['dateTime'])
+        pkt_time: int = to_int(pkt['dateTime'])
+        pkt_datetime  = datetime.fromtimestamp(pkt_time, timezone.utc)
 
         obs = ephem.Observer()
         obs.lat, obs.lon = math.radians(self.latitude), math.radians(self.longitude)
@@ -113,7 +112,7 @@ class Celestial(StdService):
             obs.temp = metric_pkt['outTemp']
         if 'barometer' in metric_pkt:
             obs.pressure = metric_pkt['barometer']
-        obs.date = datetime.utcfromtimestamp(pkt_time)
+        obs.date = pkt_datetime
         sun  = ephem.Sun()
         moon = ephem.Moon()
         mercury = ephem.Mercury()
@@ -163,6 +162,9 @@ class Celestial(StdService):
         pkt['EarthUranusDistance'] = uranus.earth_distance * multiplier
         pkt['EarthNeptuneDistance'] = neptune.earth_distance * multiplier
         pkt['EarthPlutoDistance'] = pluto.earth_distance * multiplier
+
+        pkt['NextEquinox']  = ephem.next_equinox( pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['NextSolstice'] = ephem.next_solstice(pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
 
     def new_loop(self, event):
         pkt: Dict[str, Any] = event.packet

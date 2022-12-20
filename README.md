@@ -21,6 +21,8 @@ The following observations are available in the LOOP packet:
 `current.SunAltitude`
 `current.SunRightAscension`
 `current.SunDeclination`
+`current.NextSolstice`
+`current.NextEquinox`
 `current.MoonAzimuth`
 `current.MoonAltitude`
 `current.MoonRightAscension`
@@ -63,10 +65,10 @@ The following observations are available in the LOOP packet:
 ```
 
 
-## Why require Python 3.7 or later?
+## Why require Python 3.9 or later?
 
-Celestial code includes type annotation which do not work with Python 2, nor in
-earlier versions of Python 3.
+Celestial code uses timezone aware date features which do not work with Python 2, nor in
+versions of Python 3 earlier than 3.9.
 
 
 ## Licensing

@@ -1,11 +1,19 @@
 weewx-celestial change history
 ------------------------------
 
+0.4 Release 2022/12/??
+----------------------
+1. Added current.NextSolstice and Current.NextEquinox
+2. Require Python 3.9 or higher.
+
 0.3 Release 2022/12/19
-1. Add current.MoonPhase and current.MoonFullness
+----------------------
+Add current.MoonPhase and current.MoonFullness
 
 0.2 Release 2022/12/19
-1. Add distances from earth to all other planets (plus Pluto)
+----------------------
+Add distances from earth to all other planets (plus Pluto)
 
 0.1 Release 2022/12/19
-1. Initial release.
+----------------------
+Initial release.
