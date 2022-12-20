@@ -3,7 +3,12 @@ weewx-celestial change history
 
 0.4 Release 2022/12/??
 ----------------------
-1. Added current.NextSolstice and Current.NextEquinox
+1. Added the following:
+   current.NextSolstice
+   current.NextEquinox
+   current.NextNewMoon
+   current.NextFullMoon
+
 2. Require Python 3.9 or higher.
 
 0.3 Release 2022/12/19

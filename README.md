@@ -29,6 +29,8 @@ The following observations are available in the LOOP packet:
 `current.MoonDeclination`
 `current.MoonFullness`
 `current.MoonPhase`
+`current.NextNewMoon`
+`current.NextFullMoon`
 `current.EarthSunDistance`
 `current.EarthMoonDistance`
 `current.EarthMercuryDistance`

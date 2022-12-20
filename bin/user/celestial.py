@@ -52,14 +52,16 @@ weewx.units.obs_group_dict['SunAzimuth']           = 'group_direction'
 weewx.units.obs_group_dict['SunAltitude']          = 'group_direction'
 weewx.units.obs_group_dict['SunRightAscension']    = 'group_direction'
 weewx.units.obs_group_dict['SunDeclination']       = 'group_direction'
+weewx.units.obs_group_dict['NextEquinox']          = 'group_time'
+weewx.units.obs_group_dict['NextSolstice']         = 'group_time'
 weewx.units.obs_group_dict['MoonAzimuth']          = 'group_direction'
 weewx.units.obs_group_dict['MoonAltitude']         = 'group_direction'
 weewx.units.obs_group_dict['MoonRightAscension']   = 'group_direction'
 weewx.units.obs_group_dict['MoonDeclination']      = 'group_direction'
 weewx.units.obs_group_dict['MoonFullness']         = 'group_percent'
 weewx.units.obs_group_dict['MoonPhase']            = 'group_data'
-weewx.units.obs_group_dict['NextEquinox']          = 'group_time'
-weewx.units.obs_group_dict['NextSolstice']         = 'group_time'
+weewx.units.obs_group_dict['NextNewMoon']          = 'group_time'
+weewx.units.obs_group_dict['NextFullMoon']         = 'group_time'
 
 class Celestial(StdService):
     def __init__(self, engine, config_dict):
@@ -165,6 +167,9 @@ class Celestial(StdService):
 
         pkt['NextEquinox']  = ephem.next_equinox( pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
         pkt['NextSolstice'] = ephem.next_solstice(pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
+
+        pkt['NextNewMoon']  = ephem.next_new_moon( pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['NextFullMoon'] = ephem.next_full_moon(pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
 
     def new_loop(self, event):
         pkt: Dict[str, Any] = event.packet
