@@ -1,6 +1,9 @@
 weewx-celestial change history
 ------------------------------
 
+0.3 Release 2022/12/19
+1. Add current.MoonPhase and current.MoonFullness
+
 0.2 Release 2022/12/19
 1. Add distances from earth to all other planets (plus Pluto)
 

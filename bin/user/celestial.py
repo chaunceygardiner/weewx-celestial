@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict
 
 import ephem
+import weeutil
 import weewx
 
 from weeutil.weeutil import to_bool
@@ -26,7 +27,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '0.2'
+CELESTIAL_VERSION = '0.3'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 7):
     raise weewx.UnsupportedFeature(
@@ -55,6 +56,8 @@ weewx.units.obs_group_dict['MoonAzimuth']          = 'group_direction'
 weewx.units.obs_group_dict['MoonAltitude']         = 'group_direction'
 weewx.units.obs_group_dict['MoonRightAscension']   = 'group_direction'
 weewx.units.obs_group_dict['MoonDeclination']      = 'group_direction'
+weewx.units.obs_group_dict['MoonFullness']         = 'group_percent'
+weewx.units.obs_group_dict['MoonPhase']            = 'group_data'
 
 distance_types = [ 'EarthSunDistance', 'EarthMoonDistance' ]
 
@@ -77,6 +80,12 @@ class Celestial(StdService):
         else:
             log.info("Celestial is disabled. Enable it in the Celestial section of weewx.conf.")
             return
+
+        self.moon_phases = weeutil.Moon.moon_phases
+        if 'Defaults' in config_dict['StdReport']:
+            if 'Almanac' in config_dict['StdReport']['Defaults']:
+                if 'moon_phases' in config_dict['StdReport']['Defaults']['Almanac']:
+                    self.moon_phases = config_dict['StdReport']['Defaults']['Almanac']['moon_phases']
 
         latitude = config_dict['Station'].get('latitude', None)
         longitude = config_dict['Station'].get('longitude', None)
@@ -127,6 +136,9 @@ class Celestial(StdService):
         pkt['MoonAltitude'] = math.degrees(moon.alt)
         pkt['MoonRightAscension'] = math.degrees(moon.ra)
         pkt['MoonDeclination'] = math.degrees(moon.dec)
+        pkt['MoonFullness'] = 100.0 * moon.moon_phase
+        index, _ = weeutil.Moon.moon_phase_ts(pkt_time)
+        pkt['MoonPhase'] = self.moon_phases[index]
 
         # Convert astrological units to kilometers or miles
         if pkt['usUnits'] == weewx.METRIC:

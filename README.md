@@ -25,6 +25,8 @@ The following observations are available in the LOOP packet:
 `current.MoonAltitude`
 `current.MoonRightAscension`
 `current.MoonDeclination`
+`current.MoonFullness`
+`current.MoonPhase`
 `current.EarthSunDistance`
 `current.EarthMoonDistance`
 `current.EarthMercuryDistance`
@@ -41,12 +43,12 @@ The following observations are available in the LOOP packet:
 1. Install the prerequisite pyephem package.  On debian, that can be accomplished with:
    `sudo apt install python3-ephem` 
 
-1. Download the lastest release, weewx-celestial-0.2.zip, from the
+1. Download the lastest release, weewx-celestial-0.3.zip, from the
    [GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Run the following command.
 
-   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.2.zip`
+   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.3.zip`
 
    Note: this command assumes weewx is installed in /home/weewx.  If it's installed
    elsewhere, adjust the path of wee_extension accordingly.
