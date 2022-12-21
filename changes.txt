@@ -1,11 +1,23 @@
 weewx-celestial change history
 ------------------------------
 
-0.4 Release 2022/12/??
+0.4 Release 2022/12/20
 ----------------------
 1. Added the following:
+   current.Sunrise
+   current.SunTransit
+   current.Sunset
+   current.CivilTwilightStart
+   current.CivilTwilightEnd
+   current.NauticalTwilightStart
+   current.NauticalTwilightEnd
+   current.AstronomicalTwilightStart
+   current.AstronomicalTwilightEnd
    current.NextSolstice
    current.NextEquinox
+   current.Moonrise
+   current.MoonTransit
+   current.Moonset
    current.NextNewMoon
    current.NextFullMoon
 

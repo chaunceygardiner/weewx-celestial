@@ -27,7 +27,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '0.3'
+CELESTIAL_VERSION = '0.4'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -38,30 +38,42 @@ if weewx.__version__ < "4":
         "weewx-celestial requires WeeWX, found %s" % weewx.__version__)
 
 # Set up celestial observation type.
-weewx.units.obs_group_dict['EarthSunDistance']     = 'group_distance'
-weewx.units.obs_group_dict['EarthMoonDistance']    = 'group_distance'
-weewx.units.obs_group_dict['EarthMercuryDistance'] = 'group_distance'
-weewx.units.obs_group_dict['EarthVenusDistance']   = 'group_distance'
-weewx.units.obs_group_dict['EarthMarsDistance']    = 'group_distance'
-weewx.units.obs_group_dict['EarthJupiterDistance'] = 'group_distance'
-weewx.units.obs_group_dict['EarthSaturnDistance']  = 'group_distance'
-weewx.units.obs_group_dict['EarthUranusDistance']  = 'group_distance'
-weewx.units.obs_group_dict['EarthNeptuneDistance'] = 'group_distance'
-weewx.units.obs_group_dict['EarthPlutoDistance']   = 'group_distance'
-weewx.units.obs_group_dict['SunAzimuth']           = 'group_direction'
-weewx.units.obs_group_dict['SunAltitude']          = 'group_direction'
-weewx.units.obs_group_dict['SunRightAscension']    = 'group_direction'
-weewx.units.obs_group_dict['SunDeclination']       = 'group_direction'
-weewx.units.obs_group_dict['NextEquinox']          = 'group_time'
-weewx.units.obs_group_dict['NextSolstice']         = 'group_time'
-weewx.units.obs_group_dict['MoonAzimuth']          = 'group_direction'
-weewx.units.obs_group_dict['MoonAltitude']         = 'group_direction'
-weewx.units.obs_group_dict['MoonRightAscension']   = 'group_direction'
-weewx.units.obs_group_dict['MoonDeclination']      = 'group_direction'
-weewx.units.obs_group_dict['MoonFullness']         = 'group_percent'
-weewx.units.obs_group_dict['MoonPhase']            = 'group_data'
-weewx.units.obs_group_dict['NextNewMoon']          = 'group_time'
-weewx.units.obs_group_dict['NextFullMoon']         = 'group_time'
+weewx.units.obs_group_dict['EarthSunDistance']          = 'group_distance'
+weewx.units.obs_group_dict['EarthMoonDistance']         = 'group_distance'
+weewx.units.obs_group_dict['EarthMercuryDistance']      = 'group_distance'
+weewx.units.obs_group_dict['EarthVenusDistance']        = 'group_distance'
+weewx.units.obs_group_dict['EarthMarsDistance']         = 'group_distance'
+weewx.units.obs_group_dict['EarthJupiterDistance']      = 'group_distance'
+weewx.units.obs_group_dict['EarthSaturnDistance']       = 'group_distance'
+weewx.units.obs_group_dict['EarthUranusDistance']       = 'group_distance'
+weewx.units.obs_group_dict['EarthNeptuneDistance']      = 'group_distance'
+weewx.units.obs_group_dict['EarthPlutoDistance']        = 'group_distance'
+weewx.units.obs_group_dict['SunAzimuth']                = 'group_direction'
+weewx.units.obs_group_dict['SunAltitude']               = 'group_direction'
+weewx.units.obs_group_dict['SunRightAscension']         = 'group_direction'
+weewx.units.obs_group_dict['SunDeclination']            = 'group_direction'
+weewx.units.obs_group_dict['Sunrise']                   = 'group_time'
+weewx.units.obs_group_dict['SunTransit']                = 'group_time'
+weewx.units.obs_group_dict['Sunset']                    = 'group_time'
+weewx.units.obs_group_dict['AstronomicalTwilightStart'] = 'group_time'
+weewx.units.obs_group_dict['NauticalTwilightStart']     = 'group_time'
+weewx.units.obs_group_dict['CivilTwilightStart']        = 'group_time'
+weewx.units.obs_group_dict['CivilTwilightEnd']          = 'group_time'
+weewx.units.obs_group_dict['NauticalTwilightEnd']       = 'group_time'
+weewx.units.obs_group_dict['AstronomicalTwilightEnd']   = 'group_time'
+weewx.units.obs_group_dict['NextEquinox']               = 'group_time'
+weewx.units.obs_group_dict['NextSolstice']              = 'group_time'
+weewx.units.obs_group_dict['MoonAzimuth']               = 'group_direction'
+weewx.units.obs_group_dict['MoonAltitude']              = 'group_direction'
+weewx.units.obs_group_dict['MoonRightAscension']        = 'group_direction'
+weewx.units.obs_group_dict['MoonDeclination']           = 'group_direction'
+weewx.units.obs_group_dict['MoonFullness']              = 'group_percent'
+weewx.units.obs_group_dict['MoonPhase']                 = 'group_data'
+weewx.units.obs_group_dict['NextNewMoon']               = 'group_time'
+weewx.units.obs_group_dict['NextFullMoon']              = 'group_time'
+weewx.units.obs_group_dict['Moonrise']                  = 'group_time'
+weewx.units.obs_group_dict['MoonTransit']               = 'group_time'
+weewx.units.obs_group_dict['Moonset']                   = 'group_time'
 
 class Celestial(StdService):
     def __init__(self, engine, config_dict):
@@ -170,6 +182,35 @@ class Celestial(StdService):
 
         pkt['NextNewMoon']  = ephem.next_new_moon( pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
         pkt['NextFullMoon'] = ephem.next_full_moon(pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
+
+        # Sun/Moon rise/set/transit, etc. are always reported for the curent day (i.e., the event may have already passed.
+        # As such, use the beginning of day for the observer, and recompute.
+        pkt_now = datetime.fromtimestamp(pkt_time)
+        local_day_start = datetime.strptime(pkt_now.strftime('%Y-%m-%d'), '%Y-%m-%d')
+        day_start  = datetime.fromtimestamp(local_day_start.timestamp(), timezone.utc)
+        obs.date = day_start
+        try:
+            pkt['Sunrise'] = obs.next_rising(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+            pkt['SunTransit'] = obs.next_transit(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+            pkt['Sunset'] = obs.next_setting(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+        except (ephem.AlwaysUpError, ephem.NeverUpError):
+            pass
+        try:
+            pkt['Moonrise'] = obs.next_rising(moon).datetime().replace(tzinfo=timezone.utc).timestamp()
+            pkt['MoonTransit'] = obs.next_transit(moon).datetime().replace(tzinfo=timezone.utc).timestamp()
+            pkt['Moonset'] = obs.next_setting(moon).datetime().replace(tzinfo=timezone.utc).timestamp()
+        except (ephem.AlwaysUpError, ephem.NeverUpError):
+            pass
+        # Now we need to mess with altitudes to compute twilight start/ends
+        obs.horizon = '-18'
+        pkt['AstronomicalTwilightStart'] = obs.next_rising(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['AstronomicalTwilightEnd'] = obs.next_setting(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
+        obs.horizon = '-12'
+        pkt['NauticalTwilightStart'] = obs.next_rising(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['NauticalTwilightEnd'] = obs.next_setting(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
+        obs.horizon = '-6'
+        pkt['CivilTwilightStart'] = obs.next_rising(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['CivilTwilightEnd'] = obs.next_setting(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
 
     def new_loop(self, event):
         pkt: Dict[str, Any] = event.packet
