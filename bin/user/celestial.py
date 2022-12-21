@@ -27,7 +27,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '0.4'
+CELESTIAL_VERSION = '0.5'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -55,6 +55,7 @@ weewx.units.obs_group_dict['SunDeclination']            = 'group_direction'
 weewx.units.obs_group_dict['Sunrise']                   = 'group_time'
 weewx.units.obs_group_dict['SunTransit']                = 'group_time'
 weewx.units.obs_group_dict['Sunset']                    = 'group_time'
+weewx.units.obs_group_dict['yesterdaySunshineDur']      = 'group_deltatime'
 weewx.units.obs_group_dict['AstronomicalTwilightStart'] = 'group_time'
 weewx.units.obs_group_dict['NauticalTwilightStart']     = 'group_time'
 weewx.units.obs_group_dict['CivilTwilightStart']        = 'group_time'
@@ -177,24 +178,30 @@ class Celestial(StdService):
         pkt['EarthNeptuneDistance'] = neptune.earth_distance * multiplier
         pkt['EarthPlutoDistance'] = pluto.earth_distance * multiplier
 
-        pkt['NextEquinox']  = ephem.next_equinox( pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
-        pkt['NextSolstice'] = ephem.next_solstice(pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
-
-        pkt['NextNewMoon']  = ephem.next_new_moon( pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
-        pkt['NextFullMoon'] = ephem.next_full_moon(pkt_datetime).datetime().replace(tzinfo=timezone.utc).timestamp()
-
         # Sun/Moon rise/set/transit, etc. are always reported for the curent day (i.e., the event may have already passed.
+        # We also don't want Equinox/Solstice/NewMoon/FullMoon to disappear as soon as it is hit (keep it around for the day)
         # As such, use the beginning of day for the observer, and recompute.
         pkt_now = datetime.fromtimestamp(pkt_time)
         local_day_start = datetime.strptime(pkt_now.strftime('%Y-%m-%d'), '%Y-%m-%d')
         day_start  = datetime.fromtimestamp(local_day_start.timestamp(), timezone.utc)
         obs.date = day_start
+
+        pkt['NextEquinox']  = ephem.next_equinox( day_start).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['NextSolstice'] = ephem.next_solstice(day_start).datetime().replace(tzinfo=timezone.utc).timestamp()
+
+        pkt['NextNewMoon']  = ephem.next_new_moon( day_start).datetime().replace(tzinfo=timezone.utc).timestamp()
+        pkt['NextFullMoon'] = ephem.next_full_moon(day_start).datetime().replace(tzinfo=timezone.utc).timestamp()
+
         try:
             pkt['Sunrise'] = obs.next_rising(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
             pkt['SunTransit'] = obs.next_transit(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
             pkt['Sunset'] = obs.next_setting(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
-        except (ephem.AlwaysUpError, ephem.NeverUpError):
-            pass
+            daylight = pkt['Sunset'] - pkt['Sunrise']
+        except ephem.AlwaysUpError:
+            daylight = 86400
+        except ephem.NeverUpError:
+            daylight = 0
+        pkt['daySunshineDur'] = daylight
         try:
             pkt['Moonrise'] = obs.next_rising(moon).datetime().replace(tzinfo=timezone.utc).timestamp()
             pkt['MoonTransit'] = obs.next_transit(moon).datetime().replace(tzinfo=timezone.utc).timestamp()
@@ -211,6 +218,19 @@ class Celestial(StdService):
         obs.horizon = '-6'
         pkt['CivilTwilightStart'] = obs.next_rising(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
         pkt['CivilTwilightEnd'] = obs.next_setting(sun, use_center=True).datetime().replace(tzinfo=timezone.utc).timestamp()
+        # Lastly, we need yesterday's sunshine duration
+        obs.horizon = '0'
+        yesterday_start  = datetime.fromtimestamp(local_day_start.timestamp() - 86400, timezone.utc)
+        obs.date = yesterday_start
+        try:
+            yesterday_sunrise = obs.next_rising(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+            yesterday_sunset = obs.next_setting(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+            yesterday_daylight = yesterday_sunset - yesterday_sunrise
+        except ephem.AlwaysUpError:
+            yesterday_daylight = 86400
+        except ephem.NeverUpError:
+            yesterday_daylight = 0
+        pkt['yesterdaySunshineDur'] = yesterday_daylight
 
     def new_loop(self, event):
         pkt: Dict[str, Any] = event.packet

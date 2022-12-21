@@ -1,6 +1,12 @@
 weewx-celestial change history
 ------------------------------
 
+0.5 Releasae 2022/12/21
+-----------------------
+Added the following:
+  current.daySunshineDur
+  current.yesterdaySunshineDur
+
 0.4 Release 2022/12/20
 ----------------------
 1. Added the following:
