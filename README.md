@@ -17,54 +17,56 @@ See weewx-celestial in action with at
 
 The following observations are available in the LOOP packet:
 
-`current.Sunrise`
-`current.SunTransit`
-`current.Sunset`
-`current.daySunshineDur`
-`current.yesterdaySunshineDur`
-`current.CivilTwilightStart`
-`current.CivilTwilightEnd`
-`current.NauticalTwilightStart`
-`current.NauticalTwilightEnd`
-`current.AstronomicalTwilightStart`
-`current.AstronomicalTwilightEnd`
-`current.SunAzimuth`
-`current.SunAltitude`
-`current.SunRightAscension`
-`current.SunDeclination`
-`current.NextSolstice`
-`current.NextEquinox`
-`current.Moonrise`
-`current.MoonTransit`
-`current.Moonset`
-`current.MoonAzimuth`
-`current.MoonAltitude`
-`current.MoonRightAscension`
-`current.MoonDeclination`
-`current.MoonFullness`
-`current.MoonPhase`
-`current.NextNewMoon`
-`current.NextFullMoon`
-`current.EarthSunDistance`
-`current.EarthMoonDistance`
-`current.EarthMercuryDistance`
-`current.EarthVenusDistance`
-`current.EarthMarsDistance`
-`current.EarthJupiterDistance`
-`current.EarthSaturnDistance`
-`current.EarthUranusDistance`
-`current.EarthNeptuneDistance`
-`current.EarthPlutoDistance`
+- `AstronomicalTwilightEnd`
+- `AstronomicalTwilightStart`
+- `CivilTwilightEnd`
+- `CivilTwilightStart`
+- `daySunshineDur`
+- `EarthJupiterDistance`
+- `EarthMarsDistance`
+- `EarthMercuryDistance`
+- `EarthNeptuneDistance`
+- `EarthMoonDistance`
+- `EarthPlutoDistance`
+- `EarthSaturnDistance`
+- `EarthSunDistance`
+- `EarthUranusDistance`
+- `EarthVenusDistance`
+- `MoonAltitude`
+- `MoonAzimuth`
+- `MoonDeclination`
+- `MoonFullness`
+- `MoonPhase`
+- `MoonRightAscension`
+- `Moonrise`
+- `Moonset`
+- `MoonTransit`
+- `NauticalTwilightEnd`
+- `NauticalTwilightStart`
+- `NextEquinox`
+- `NextFullMoon`
+- `NextNewMoon`
+- `NextSolstice`
+- `SunAltitude`
+- `SunAzimuth`
+- `SunDeclination`
+- `SunRightAscension`
+- `Sunrise`
+- `Sunset`
+- `SunTransit`
+- `yesterdaySunshineDur`
 
 # Installation Instructions
 
 1. Install the prerequisite pyephem package.  On debian, that can be accomplished with:
    `sudo apt install python3-ephem` 
 
-1. Download the latest version of weewx-loopdata at
+1. Install the latest release of weewx-loopdata at
+
    [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
 
-1. Download the lastest release, weewx-celestial-0.5.zip, from the
+1. Download the lastest release, weewx-celestial-0.5.zip, from
+
    [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Run the following command.
