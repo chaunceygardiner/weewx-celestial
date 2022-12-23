@@ -1,7 +1,7 @@
 """
 celestial.py
 
-Copyright (C)2020 by John A Kline (john@johnkline.com)
+Copyright (C)2022 by John A Kline (john@johnkline.com)
 Distributed under the terms of the GNU Public License (GPLv3)
 
 Celestial is a WeeWX service that generates Celestial observations
