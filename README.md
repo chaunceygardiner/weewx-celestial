@@ -3,7 +3,7 @@
 
 Copyright (C)2022 by John A Kline (john@johnkline.com)
 
-**This extension requires Python 3.7 or later and WeeWX 4.**
+**This extension requires Python 3.9 or later and WeeWX 4.**
 
 
 ## Description
