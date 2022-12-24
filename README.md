@@ -94,13 +94,16 @@ The following observations are available in the LOOP packet:
 1. After a reporting cycle runs, check navigate to `<weewx-url>/celestial/ in your browser
    to see the default celestial sample report. (Reports typcially run every 5 minutes.)
 
+## Entries in `Celestial` section of `weewx.conf`:
+
 ```
 [Celestial]
     enable = true
 ```
 
-## Entries in `Celestial` section of `weewx.conf`:
  * `enable`: When true, the celestial observations are added to every loop record.
+
+## Entries in `CelestialReport` section of `weewx.conf`:
 
 ```
     [[CelestialReport]]
@@ -113,7 +116,6 @@ The following observations are available in the LOOP packet:
             page_update_pwd = foobar
 ```
 
-## Entries in `CelestialReport` section of `weewx.conf`:
  * HTML_ROOT        : The HTML output directory in which to write the report.
  * `enable`         : When true, the report is generated.
  * `skin`           : Must be `Celestial`
