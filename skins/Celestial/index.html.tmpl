@@ -15,9 +15,7 @@
     #else
       <title>$station.location</title>
     #end if
-    <meta name="description" content="Up to date weather readings for $station.location.">
-  </head>
-  <body style="background-color:black;font-family:monospace;color:#00FFFF;">
+    <meta name="description" content="Up-to-date celestial data for $station.location.">
     <style>
       .label {
           font-size: 80%;
@@ -38,6 +36,8 @@
           float: left;
       }
     </style>
+  </head>
+  <body style="background-color:black;font-family:monospace;color:#00FFFF;">
     #include "realtime_updater.inc"
     <div>
       <div>
@@ -63,7 +63,6 @@
       </div>
     </div>
     <div>
-      <div>
       <div class="celestial_body">
         <table class="celestial">
           <tr><th>&#9728; Sun</th><th></th></tr>
@@ -101,7 +100,7 @@
           </tr>
           <tr>
             <td class="label">End astronomical twilight</td>
-            <td class="data" id="current.AstronomicalTwilightEnd.raw"><td>
+            <td class="data" id="current.AstronomicalTwilightEnd.raw"></td>
           </tr>
           <tr>
             <td class="label">Azimuth</td>
@@ -119,14 +118,27 @@
             <td class="label">Declination</td>
             <td class="data" id="current.SunDeclination.raw"></td>
           </tr>
-          <tr>
-            <td class="label">Equinox</td>
-            <td class="data" id="current.NextEquinox"></td>
-          </tr>
-          <tr>
-            <td class="label">Solstice</td>
-            <td class="data" id="current.NextSolstice"></td>
-          </tr>
+          #if $almanac.next_equinox.raw < $almanac.next_solstice.raw
+            ## The equinox is before the solstice. Display them in order.
+            <tr>
+              <td class="label">Equinox</td>
+              <td class="data" id="current.NextEquinox"></td>
+            </tr>
+            <tr>
+              <td class="label">Solstice</td>
+              <td class="data" id="current.NextSolstice"></td>
+            </tr>
+          #else
+            ## The solstice is before the equinox. Display them in order.
+            <tr>
+              <td class="label">Solstice</td>
+              <td class="data" id="current.NextSolstice"></td>
+            </tr>
+            <tr>
+              <td class="label">Equinox</td>
+              <td class="data" id="current.NextEquinox"></td>
+            </tr>
+          #end if
           <tr>
             <td class="label">Total daylight</td>
             <td class="data" id="daylight"></td>
