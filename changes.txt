@@ -1,8 +1,13 @@
 weewx-celestial change history
 ------------------------------
 
-0.5 Releasae 2022/12/21
------------------------
+0.6 Release 2022/12/??
+----------------------
+Added a sample report modeled after WeeWX's Seasons' Celestial page.
+All values in the sample report update on every loop record.
+
+0.5 Release 2022/12/21
+----------------------
 Added the following:
   current.daySunshineDur
   current.yesterdaySunshineDur

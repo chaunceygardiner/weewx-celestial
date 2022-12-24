@@ -1,0 +1,237 @@
+## Copyright (C)2022 by John A Kline (john@johnkline.com)
+## This sample report is based on WeeWX's Seasons Report
+## Copyright Tom Keffer and Matthew Wall.
+## Distributed under the terms of the GNU Public License (GPLv3)
+## See LICENSE for your rights.
+#errorCatcher Echo
+#encoding UTF-8
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=1124">
+    #if $Extras.has_key('meta_title')
+      <title>$Extras.meta_title</title>
+    #else
+      <title>$station.location</title>
+    #end if
+    <meta name="description" content="Up to date weather readings for $station.location.">
+  </head>
+  <body style="background-color:black;font-family:monospace;color:#00FFFF;">
+    <style>
+      .label {
+          font-size: 80%;
+          vertical-align: top;
+          text-align: right;
+          padding-top: 4px;
+          padding-right: 5px;
+      }
+      .data {
+          font-weight: bold;
+          font-size: 80%;
+          vertical-align: top;
+          text-align: left;
+          padding-top: 4px;
+      }
+      .celestial_body {
+          margin-bottom: 30px;
+          float: left;
+      }
+    </style>
+    #include "realtime_updater.inc"
+    <div>
+      <div>
+        <table style="font-size:32px;width:100%;margin:auto;">
+          <tr>
+            <td style="text-align:left;width:220px;">
+              <span id="last-update"></span>
+            </td>
+            <td style="text-align:center;">
+              <h1 style="font-size:32px;text-decoration:underline;">
+                #if $Extras.has_key('title')
+                  $Extras.title
+                #else
+                  $station.location
+                #end if
+              </h1>
+            </td>
+            <td style="text-align:right;width:220px;">
+              <span id="live-label"></span>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div>
+      <div class="celestial_body">
+        <table class="celestial">
+          <tr><th>&#9728; Sun</th><th></th></tr>
+          <tr>
+            <td class="label">Start astronomical twilight</td>
+            <td class="data" id="current.AstronomicalTwilightStart.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Start nautical twilight</td>
+            <td class="data" id="current.NauticalTwilightStart.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Start civil twilight</td>
+            <td class="data" id="current.CivilTwilightStart.raw"></td>
+          </tr>
+          <tr>
+            <td class="label" style="font-weight:bold;">Sunrise</td>
+            <td class="data" id="current.Sunrise.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Transit</td>
+            <td class="data" id="current.SunTransit.raw"></td>
+          </tr>
+          <tr>
+            <td class="label" style="font-weight:bold;">Sunset</td>
+            <td class="data" id="current.Sunset.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">End civil twilight</td>
+            <td class="data" id="current.CivilTwilightEnd.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">End nautical twilight</td>
+            <td class="data" id="current.NauticalTwilightEnd.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">End astronomical twilight</td>
+            <td class="data" id="current.AstronomicalTwilightEnd.raw"><td>
+          </tr>
+          <tr>
+            <td class="label">Azimuth</td>
+            <td class="data" id="current.SunAzimuth.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Altitude</td>
+            <td class="data" id="current.SunAltitude.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Right ascension</td>
+            <td class="data" id="current.SunRightAscension.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Declination</td>
+            <td class="data" id="current.SunDeclination.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Equinox</td>
+            <td class="data" id="current.NextEquinox"></td>
+          </tr>
+          <tr>
+            <td class="label">Solstice</td>
+            <td class="data" id="current.NextSolstice"></td>
+          </tr>
+          <tr>
+            <td class="label">Total daylight</td>
+            <td class="data" id="daylight"></td>
+          </tr>
+        </table>
+      </div>
+      <div>
+        <table class="celestial">
+          <tr><th>&#9789; Moon</th><th></th></tr>
+          <tr>
+            <td class="label" style="font-weight:bold;">Moonrise</td>
+            <td class="data" id="current.Moonrise.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Transit</td>
+            <td class="data" id="current.MoonTransit.raw"></td>
+          </tr>
+          <tr>
+            <td class="label" style="font-weight:bold;">Moonset</td>
+            <td class="data" id="current.Moonset.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Azimuth</td>
+            <td class="data" id="current.MoonAzimuth.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Altitude</td>
+            <td class="data" id="current.MoonAltitude.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Right ascension</td>
+            <td class="data" id="current.MoonRightAscension.raw"></td>
+          </tr>
+          <tr>
+            <td class="label">Declination</td>
+            <td class="data" id="current.MoonDeclination.raw"></td>
+          </tr>
+          #if $almanac.next_full_moon.raw < $almanac.next_new_moon.raw
+            <tr>
+              <td class="label">Full moon</td>
+              <td class="data" id="current.NextFullMoon"></td>
+            </tr>
+            <tr>
+              <td class="label">New moon</td>
+              <td class="data" id="current.NextNewMoon"></td>
+            </tr>
+          #else
+            <tr>
+              <td class="label">New moon</td>
+              <td class="data" id="current.NextNewMoon"></td>
+            </tr>
+            <tr>
+              <td class="label">Full moon</td>
+              <td class="data" id="current.NextFullMoon"></td>
+            </tr>
+          #end if
+          <tr>
+            <td class="label">Phase</td>
+            <td class="data"><span id="current.MoonPhase"></span><br>
+              <span id="current.MoonFullness"></span></td>
+          </tr>
+          <tr><td class="label">&nbsp;</td><td>&nbsp;</td></tr>
+          <tr><th>Distances to Heavenly Bodies</th><th></th></tr>
+          <tr>
+            <td class="label">Moon</td>
+            <td class="data" id="current.EarthMoonDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Sun</td>
+            <td class="data" id="current.EarthSunDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Mercury</td>
+            <td class="data" id="current.EarthMercuryDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Venus</td>
+            <td class="data" id="current.EarthVenusDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Mars</td>
+            <td class="data" id="current.EarthMarsDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Jupiter</td>
+            <td class="data" id="current.EarthJupiterDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Saturn</td>
+            <td class="data" id="current.EarthSaturnDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Uranus</td>
+            <td class="data" id="current.EarthUranusDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Neptune</td>
+            <td class="data" id="current.EarthNeptuneDistance" style="text-align:right"></td>
+          </tr>
+          <tr>
+            <td class="label">Pluto</td>
+            <td class="data" id="current.EarthPlutoDistance" style="text-align:right"></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>

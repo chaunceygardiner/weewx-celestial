@@ -12,6 +12,15 @@ Celestial is a WeeWX service that inserts celestial observations into loop packe
 The information is then available via
 [weewx-loopdata plugin](https://github.com/chaunceygardiner/weewx-loopdata), as `current.<celestial-obs>`
 
+The information available in loop records, as well as the sample report provided is based on WeeWX's
+Seasons Report (Copyright Tom Keffer and Matthew Wall).  More fields are provided than in the Seasons
+report, including start/end times for astronomical and nautical twilight.  Also, distances from earth to
+the other planets (and Pluto); as well as the current distance to the moon and sun.
+
+In the sample report, none of the values are generated at report time.  All are provided via javascript,
+reading the loop-data.txt file, and updated on every loop record (for the Vantage driver, that happens
+every 2 seconds).
+
 See weewx-celestial in action with at
 [www.paloaltoweather.com/celestial.html](https://www.paloaltoweather.com/celestial.html)
 
@@ -65,25 +74,55 @@ The following observations are available in the LOOP packet:
 
    [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
 
-1. Download the lastest release, weewx-celestial-0.5.zip, from
+1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
+
+   `current.AstronomicalTwilightEnd.raw, current.AstronomicalTwilightStart.raw, current.CivilTwilightEnd.raw, current.CivilTwilightStart.raw, current.EarthJupiterDistance, current.EarthMarsDistance, current.EarthMercuryDistance, current.EarthMoonDistance, current.EarthNeptuneDistance, current.EarthPlutoDistance, current.EarthSaturnDistance, current.EarthSunDistance, current.EarthUranusDistance, current.EarthVenusDistance, current.MoonAltitude.raw, current.MoonAzimuth.raw, current.MoonDeclination.raw, current.MoonFullness, current.MoonPhase, current.MoonRightAscension.raw, current.MoonTransit.raw, current.Moonrise.raw, current.Moonset.raw, current.NauticalTwilightEnd.raw, current.NauticalTwilightStart.raw, current.NextEquinox, current.NextFullMoon, current.NextNewMoon, current.NextSolstice, current.SunAltitude.raw, current.SunAzimuth.raw, current.SunDeclination.raw, current.SunRightAscension.raw, current.SunTransit.raw, current.Sunrise.raw, current.Sunset.raw, current.daySunshineDur.raw, current.yesterdaySunshineDur.raw`
+
+1. Download the lastest release, weewx-celestial-0.6.zip, from
 
    [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Run the following command.
 
-   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.5.zip`
+   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.6.zip`
 
    Note: this command assumes weewx is installed in /home/weewx.  If it's installed
    elsewhere, adjust the path of wee_extension accordingly.
 
 1. Restart WeeWX.
 
-1. The following entry is created in `weewx.conf`.  To disable `weewx-celestial` without
-   uninstalling it, change the enable line to false.
+1. After a reporting cycle runs, check navigate to `<weewx-url>/celestial/ in your browser
+   to see the default celestial sample report. (Reports typcially run every 5 minutes.)
+
 ```
 [Celestial]
     enable = true
 ```
+
+## Entries in `Celestial` section of `weewx.conf`:
+ * `enable`: When true, the celestial observations are added to every loop record.
+
+```
+    [[CelestialReport]]
+        HTML_ROOT = public_html/celestial
+        enable = true
+        skin = Celestial
+        [[[Extras]]]
+            loop_data_file = ../loop-data.txt
+            expiration_time = 24
+            page_update_pwd = foobar
+```
+
+## Entries in `CelestialReport` section of `weewx.conf`:
+ * HTML_ROOT        : The HTML output directory in which to write the report.
+ * `enable`         : When true, the report is generated.
+ * `skin`           : Must be `Celestial`
+ * `loop_data_file` : The path of the loop-dat.txt file (written by the loopdata extension).
+                      If a relative path is specified, it is relative to the
+                     `target_report` directory.
+ * `expiration_time`: The number of hours before expiring the autoupdate of the report.
+ * `page_update_pwd`: The password to specify in the URL such that the page never expires.
+                      That is, `<machine>/weewx/celestial/?pageUpdate=foobar`
 
 
 ## Why require Python 3.9 or later?
