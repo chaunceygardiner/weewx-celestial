@@ -23,6 +23,11 @@ every 2 seconds).
 
 See weewx-celestial in action with at
 [www.paloaltoweather.com/celestial.html](https://www.paloaltoweather.com/celestial.html)
+A screen shot is below:
+![Celestial Page at PaloAltoWeather.com](PAWCelestialReport.png)
+
+This extension also comes with a sample report.
+![Celestial Sample Report](CelestialSampleReport.png)
 
 The following observations are available in the LOOP packet:
 
