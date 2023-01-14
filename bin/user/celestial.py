@@ -17,7 +17,7 @@ from datetime import timezone
 from typing import Any, Dict
 
 import ephem
-import weeutil
+import weeutil.Moon
 import weewx
 
 from weeutil.weeutil import to_bool
@@ -27,7 +27,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '0.6'
+CELESTIAL_VERSION = '0.7'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(

@@ -1,6 +1,10 @@
 weewx-celestial change history
 ------------------------------
 
+0.7 Release 2023/01/14
+----------------------
+Fixed import (weeutil.Moon) as reported by user.
+
 0.6 Release 2022/12/??
 ----------------------
 Added a sample report modeled after WeeWX's Seasons' Celestial page.
