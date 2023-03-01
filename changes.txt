@@ -1,6 +1,12 @@
 weewx-celestial change history
 ------------------------------
 
+1.0 Release 2023/03/01
+----------------------
+Add the following fields:
+  current.tomorrowSunrise
+  current.tomorrowSunset
+
 0.7 Release 2023/01/14
 ----------------------
 Fixed import (weeutil.Moon) as reported by user.

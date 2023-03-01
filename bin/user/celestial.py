@@ -1,7 +1,7 @@
 """
 celestial.py
 
-Copyright (C)2022 by John A Kline (john@johnkline.com)
+Copyright (C)2022-2023 by John A Kline (john@johnkline.com)
 Distributed under the terms of the GNU Public License (GPLv3)
 
 Celestial is a WeeWX service that generates Celestial observations
@@ -27,7 +27,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '0.7'
+CELESTIAL_VERSION = '1.0'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -231,6 +231,19 @@ class Celestial(StdService):
         except ephem.NeverUpError:
             yesterday_daylight = 0
         pkt['yesterdaySunshineDur'] = yesterday_daylight
+        tomorrow_start  = datetime.fromtimestamp(local_day_start.timestamp() + 86400, timezone.utc)
+        obs.date = tomorrow_start
+        try:
+            tomorrow_sunrise = obs.next_rising(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+            tomorrow_sunset = obs.next_setting(sun).datetime().replace(tzinfo=timezone.utc).timestamp()
+            tomorrow_daylight = tomorrow_sunset - tomorrow_sunrise
+        except ephem.AlwaysUpError:
+            tomorrow_daylight = 86400
+        except ephem.NeverUpError:
+            tomorrow_daylight = 0
+        pkt['tomorrowSunrise'] = tomorrow_sunrise
+        pkt['tomorrowSunset'] = tomorrow_sunset
+        # Perhaps offer tomrrow daylight at some point.
 
     def new_loop(self, event):
         pkt: Dict[str, Any] = event.packet

@@ -1,4 +1,4 @@
-# Copyright 2022 by John A Kline <john@johnkline.com>
+# Copyright 2022-2023 by John A Kline <john@johnkline.com>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -31,7 +31,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "0.7",
+            version = "1.0",
             name = 'celestial',
             description = 'Inserts celestial observations into loop packets.',
             author = "John A Kline",

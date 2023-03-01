@@ -1,7 +1,7 @@
 # weewx-celestial
 *Open source plugin for WeeWX software.
 
-Copyright (C)2022 by John A Kline (john@johnkline.com)
+Copyright (C)2022-2023 by John A Kline (john@johnkline.com)
 
 **This extension requires Python 3.9 or later and WeeWX 4.**
 
@@ -68,7 +68,15 @@ The following observations are available in the LOOP packet:
 - `Sunrise`
 - `Sunset`
 - `SunTransit`
+- `tomorrowSunrise`
+- `tomorrowSunset`
 - `yesterdaySunshineDur`
+
+# Upgrade Instructions
+
+1. Note: if you re upgrading from a previous version to 1.x, and you are using the sample skin, you'll need to add the following
+   two fields to the `fields` line in `weewx.conf`:
+   `current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
 # Installation Instructions
 
@@ -81,15 +89,15 @@ The following observations are available in the LOOP packet:
 
 1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
 
-   `current.AstronomicalTwilightEnd.raw, current.AstronomicalTwilightStart.raw, current.CivilTwilightEnd.raw, current.CivilTwilightStart.raw, current.EarthJupiterDistance, current.EarthMarsDistance, current.EarthMercuryDistance, current.EarthMoonDistance, current.EarthNeptuneDistance, current.EarthPlutoDistance, current.EarthSaturnDistance, current.EarthSunDistance, current.EarthUranusDistance, current.EarthVenusDistance, current.MoonAltitude.raw, current.MoonAzimuth.raw, current.MoonDeclination.raw, current.MoonFullness, current.MoonPhase, current.MoonRightAscension.raw, current.MoonTransit.raw, current.Moonrise.raw, current.Moonset.raw, current.NauticalTwilightEnd.raw, current.NauticalTwilightStart.raw, current.NextEquinox, current.NextFullMoon, current.NextNewMoon, current.NextSolstice, current.SunAltitude.raw, current.SunAzimuth.raw, current.SunDeclination.raw, current.SunRightAscension.raw, current.SunTransit.raw, current.Sunrise.raw, current.Sunset.raw, current.daySunshineDur.raw, current.yesterdaySunshineDur.raw`
+   `current.AstronomicalTwilightEnd.raw, current.AstronomicalTwilightStart.raw, current.CivilTwilightEnd.raw, current.CivilTwilightStart.raw, current.EarthJupiterDistance, current.EarthMarsDistance, current.EarthMercuryDistance, current.EarthMoonDistance, current.EarthNeptuneDistance, current.EarthPlutoDistance, current.EarthSaturnDistance, current.EarthSunDistance, current.EarthUranusDistance, current.EarthVenusDistance, current.MoonAltitude.raw, current.MoonAzimuth.raw, current.MoonDeclination.raw, current.MoonFullness, current.MoonPhase, current.MoonRightAscension.raw, current.MoonTransit.raw, current.Moonrise.raw, current.Moonset.raw, current.NauticalTwilightEnd.raw, current.NauticalTwilightStart.raw, current.NextEquinox, current.NextFullMoon, current.NextNewMoon, current.NextSolstice, current.SunAltitude.raw, current.SunAzimuth.raw, current.SunDeclination.raw, current.SunRightAscension.raw, current.SunTransit.raw, current.Sunrise.raw, current.Sunset.raw, current.daySunshineDur.raw, current.yesterdaySunshineDur.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
-1. Download the lastest release, weewx-celestial-0.7.zip, from
+1. Download the lastest release, weewx-celestial-1.0.zip, from
 
    [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Run the following command.
 
-   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-0.7.zip`
+   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-1.0.zip`
 
    Note: this command assumes weewx is installed in /home/weewx.  If it's installed
    elsewhere, adjust the path of wee_extension accordingly.
