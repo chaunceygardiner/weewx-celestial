@@ -244,6 +244,7 @@ class Celestial(StdService):
         pkt['tomorrowSunrise'] = tomorrow_sunrise
         pkt['tomorrowSunset'] = tomorrow_sunset
         # Perhaps offer tomrrow daylight at some point.
+        tomorrow_daylight = tomorrow_daylight # to make pyflakes3 happy
 
     def new_loop(self, event):
         pkt: Dict[str, Any] = event.packet
