@@ -1,4 +1,4 @@
-# Copyright 2022-2023 by John A Kline <john@johnkline.com>
+# Copyright 2022-2025 by John A Kline <john@johnkline.com>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -31,7 +31,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "1.0",
+            version = "2.0",
             name = 'celestial',
             description = 'Inserts celestial observations into loop packets.',
             author = "John A Kline",
@@ -59,6 +59,7 @@ class CelestialInstaller(ExtensionInstaller):
                     'bin/user/celestial.py',
                     ]),
                 ('skins/Celestial', [
+                    'skins/Celestial/de421.bsp',
                     'skins/Celestial/index.html.tmpl',
                     'skins/Celestial/realtime_updater.inc',
                     'skins/Celestial/skin.conf',

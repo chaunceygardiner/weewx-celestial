@@ -1,7 +1,7 @@
 # weewx-celestial
 *Open source plugin for WeeWX software.
 
-Copyright (C)2022-2023 by John A Kline (john@johnkline.com)
+Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
 
 **This extension requires Python 3.9 or later and WeeWX 4 or 5.**
 
@@ -11,6 +11,9 @@ Copyright (C)2022-2023 by John A Kline (john@johnkline.com)
 Celestial is a WeeWX service that inserts celestial observations into loop packets.
 The information is then available via
 [weewx-loopdata plugin](https://github.com/chaunceygardiner/weewx-loopdata), as `current.<celestial-obs>`
+
+As of version 2.0, weewx-celestial uses [Skyfield](https://rhodesmill.org/skyfield/) for *much* more accurate
+information than [PyEphem](https://rhodesmill.org/pyephem/index.html), which is currently used by WeeWX.
 
 The information available in loop records, as well as the sample report provided is based on WeeWX's
 Seasons Report (Copyright Tom Keffer and Matthew Wall).  More fields are provided than in the Seasons
@@ -78,6 +81,8 @@ The following observations are available in the LOOP packet:
    two fields to the `fields` line in `weewx.conf`:
    `current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
+1. Note: if you are upgrading from 1.x versioun, you'll need to install skyfield.  See the install instructions above for how to install skyfield.
+
 # Installation Instructions
 
 ## WeeWX 5 Installation Instructions
@@ -85,24 +90,24 @@ The following observations are available in the LOOP packet:
 1. If pip install,
    Activate the virtual environment (actual syntax varies by type of WeeWX install):
    `/home/weewx/weewx-venv/bin/activate`
-   Install the prerequisite ephem package.
-   `pip install ephem`
+   Install the prerequisite skyfield package.
+   `pip install skyfield`
 
 1. If package install:
-   Install the prerequisite pyephem package.  On debian, that can be accomplished with:
-   `sudo apt install python3-ephem` 
+   Install the prerequisite skyfield package.  On debian, that can be accomplished with:
+   `sudo apt install python3-skyfield` 
 
 1. Install the latest release of weewx-loopdata at
 
    [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
 
-1. Download the lastest release, weewx-celestial-1.0.zip, from
+1. Download the lastest release, weewx-celestial.zip, from
 
    [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Install the celestial extension.
 
-   `weectl extension install weewx-celestial-1.0.zip`
+   `weectl extension install weewx-celestial.zip`
 
 1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
 
@@ -115,8 +120,8 @@ The following observations are available in the LOOP packet:
 
 ## WeeWX 4 Installation Instructions
 
-1. Install the prerequisite pyephem package.  On debian, that can be accomplished with:
-   `sudo apt install python3-ephem` 
+1. Install the prerequisite skyfield package.  On debian, that can be accomplished with:
+   `sudo apt install python3-skyfield` 
 
 1. Install the latest release of weewx-loopdata at
 
@@ -126,13 +131,13 @@ The following observations are available in the LOOP packet:
 
    `current.AstronomicalTwilightEnd.raw, current.AstronomicalTwilightStart.raw, current.CivilTwilightEnd.raw, current.CivilTwilightStart.raw, current.EarthJupiterDistance, current.EarthMarsDistance, current.EarthMercuryDistance, current.EarthMoonDistance, current.EarthNeptuneDistance, current.EarthPlutoDistance, current.EarthSaturnDistance, current.EarthSunDistance, current.EarthUranusDistance, current.EarthVenusDistance, current.MoonAltitude.raw, current.MoonAzimuth.raw, current.MoonDeclination.raw, current.MoonFullness, current.MoonPhase, current.MoonRightAscension.raw, current.MoonTransit.raw, current.Moonrise.raw, current.Moonset.raw, current.NauticalTwilightEnd.raw, current.NauticalTwilightStart.raw, current.NextEquinox, current.NextFullMoon, current.NextNewMoon, current.NextSolstice, current.SunAltitude.raw, current.SunAzimuth.raw, current.SunDeclination.raw, current.SunRightAscension.raw, current.SunTransit.raw, current.Sunrise.raw, current.Sunset.raw, current.daySunshineDur.raw, current.yesterdaySunshineDur.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
-1. Download the lastest release, weewx-celestial-1.0.zip, from
+1. Download the lastest release, weewx-celestial.zip, from
 
    [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
 1. Run the following command.
 
-   `sudo /home/weewx/bin/wee_extension --install weewx-celestial-1.0.zip`
+   `sudo /home/weewx/bin/wee_extension --install weewx-celestial.zip`
 
    Note: this command assumes weewx is installed in /home/weewx.  If it's installed
    elsewhere, adjust the path of wee_extension accordingly.

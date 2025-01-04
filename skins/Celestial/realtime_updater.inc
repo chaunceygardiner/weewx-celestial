@@ -1,4 +1,4 @@
-## Copyright (C)2022-2023 by John A Kline (john@johnkline.com)
+## Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
 ## See LICENSE.txt for your rights
 #errorCatcher Echo
 #encoding UTF-8
