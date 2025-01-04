@@ -295,7 +295,7 @@ class Celestial(StdService):
         pkt['SunRightAscension'] = sun_ra
         pkt['SunDeclination'] = sun_dec
 
-        moon_az, moon_alt, moon_ra, moon_dec= self.get_az_alt_ra_dec(ts, self.moon, pkt_datetime)
+        moon_az, moon_alt, moon_ra, moon_dec= self.get_az_alt_ra_dec(ts, self.moon, pkt_datetime, tempC, pressureMbar)
         pkt['MoonAzimuth'] = moon_az
         pkt['MoonAltitude'] = moon_alt
         pkt['MoonRightAscension'] = moon_ra
