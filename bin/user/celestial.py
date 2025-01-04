@@ -97,12 +97,11 @@ class Celestial(StdService):
             log.info("Celestial is disabled. Enable it in the Celestial section of weewx.conf.")
             return
 
-        # Compose report directory
-        weewx_root: str              = str(config_dict.get('WEEWX_ROOT'))
-        celestial_report_config_dict = config_dict['StdReport'].get('CelestialReport', {})
-        self.html_root : str         = celestial_report_config_dict.get('HTML_ROOT')
-        if not self.html_root.startswith('/'):
-            self.html_root = "%s/%s" % (weewx_root, self.html_root)
+        # Compose USER_ROOT directory (it's where Skyfield's planets file was installed.
+        weewx_root: str = config_dict.get('WEEWX_ROOT')
+        self.user_root : str = config_dict.get('USER_ROOT', 'bin/user')
+        if not self.user_root.startswith('/'):
+            self.user_root = "%s/%s" % (weewx_root, self.user_root)
 
         self.moon_phases = weeutil.Moon.moon_phases
         if 'Defaults' in config_dict['StdReport']:
@@ -123,20 +122,13 @@ class Celestial(StdService):
             log.error("Could not determine station's altitude.")
             return
 
-        # Need to delay some Skyfield initialization until the CopyGenerator copies the de421.bsp file.
-        # The file will be loaded on the first loop packet.
-        self.first_time = True
-
-        self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
-
-    def perform_skyfield_init(self) -> bool:
-
         # Load the JPL ephemeris DE421 (covers 1900-2050).
         try:
-            self.planets = skyfield.api.load_file('%s/de421.bsp' % self.html_root)
-        except:
-            log.info('Could not load de421.bsp file.')
-            return False
+            planets_file = '%s/de421.bsp' % self.user_root
+            self.planets = skyfield.api.load_file(planets_file)
+        except Exception as e:
+            log.info('Could not load %s: %s.  Celestial will not run.' % (planets_file, e))
+            return
             
         self.sun = self.planets['sun']
         self.moon = self.planets['moon']
@@ -153,7 +145,7 @@ class Celestial(StdService):
         self.bluffton = skyfield.api.wgs84.latlon(self.latitude, self.longitude, elevation_m=self.altitude)
         self.observer = self.earth + self.bluffton
 
-        return True
+        self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
 
     @staticmethod
     def distance_from_earth(ts_pkt_datetime: datetime, earth, orb):
@@ -411,11 +403,6 @@ class Celestial(StdService):
             pkt['tomorrowSunset'] = tomorrow_sunset
 
     def new_loop(self, event):
-        if self.first_time:
-            if self.perform_skyfield_init():
-                self.first_time = False
-            else:
-                return
         pkt: Dict[str, Any] = event.packet
         assert event.event_type == weewx.NEW_LOOP_PACKET
         log.debug(pkt)

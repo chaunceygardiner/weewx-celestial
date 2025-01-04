@@ -57,9 +57,9 @@ class CelestialInstaller(ExtensionInstaller):
             files = [
                 ('bin/user', [
                     'bin/user/celestial.py',
+                    'bin/user/de421.bsp',
                     ]),
                 ('skins/Celestial', [
-                    'skins/Celestial/de421.bsp',
                     'skins/Celestial/index.html.tmpl',
                     'skins/Celestial/realtime_updater.inc',
                     'skins/Celestial/skin.conf',
