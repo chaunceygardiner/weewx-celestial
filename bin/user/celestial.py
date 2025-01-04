@@ -100,12 +100,44 @@ class Celestial(StdService):
         # Compose report directory
         weewx_root: str              = str(config_dict.get('WEEWX_ROOT'))
         celestial_report_config_dict = config_dict['StdReport'].get('CelestialReport', {})
-        html_root : str              = celestial_report_config_dict.get('HTML_ROOT')
-        if not html_root.startswith('/'):
-            html_root = "%s/%s" % (weewx_root, html_root)
+        self.html_root : str         = celestial_report_config_dict.get('HTML_ROOT')
+        if not self.html_root.startswith('/'):
+            self.html_root = "%s/%s" % (weewx_root, self.html_root)
+
+        self.moon_phases = weeutil.Moon.moon_phases
+        if 'Defaults' in config_dict['StdReport']:
+            if 'Almanac' in config_dict['StdReport']['Defaults']:
+                if 'moon_phases' in config_dict['StdReport']['Defaults']['Almanac']:
+                    self.moon_phases = config_dict['StdReport']['Defaults']['Almanac']['moon_phases']
+
+        # observer usually needs latitude and longitude
+        altitude_vt = engine.stn_info.altitude_vt
+        altitude_vt = weewx.units.StdUnitConverters[weewx.METRIC].convert(altitude_vt)
+        self.altitude = altitude_vt[0]
+        self.latitude = engine.stn_info.latitude_f
+        self.longitude = engine.stn_info.longitude_f
+        if self.latitude is None or self.longitude is None:
+            log.error("Could not determine station's latitude and longitude.")
+            return
+        if self.altitude is None:
+            log.error("Could not determine station's altitude.")
+            return
+
+        # Need to delay some Skyfield initialization until the CopyGenerator copies the de421.bsp file.
+        # The file will be loaded on the first loop packet.
+        self.first_time = True
+
+        self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
+
+    def perform_skyfield_init(self) -> bool:
 
         # Load the JPL ephemeris DE421 (covers 1900-2050).
-        self.planets = skyfield.api.load_file('%s/de421.bsp' % html_root)
+        try:
+            self.planets = skyfield.api.load_file('%s/de421.bsp' % self.html_root)
+        except:
+            log.info('Could not load de421.bsp file.')
+            return False
+            
         self.sun = self.planets['sun']
         self.moon = self.planets['moon']
         self.earth  = self.planets['earth']
@@ -118,29 +150,10 @@ class Celestial(StdService):
         self.neptune  = self.planets['neptune barycenter']
         self.pluto  = self.planets['pluto barycenter']
 
-
-        # Set up observer (with latitude and longitude)
-        altitude_vt = engine.stn_info.altitude_vt
-        altitude_vt = weewx.units.StdUnitConverters[weewx.METRIC].convert(altitude_vt)
-        self.altitude = altitude_vt[0]
-        self.latitude = engine.stn_info.latitude_f
-        self.longitude = engine.stn_info.longitude_f
-        if self.latitude is None or self.longitude is None:
-            log.error("Could not determine station's latitude and longitude.")
-            return
-        if self.altitude is None:
-            log.error("Could not determine station's altitude.")
-            return
         self.bluffton = skyfield.api.wgs84.latlon(self.latitude, self.longitude, elevation_m=self.altitude)
         self.observer = self.earth + self.bluffton
 
-        self.moon_phases = weeutil.Moon.moon_phases
-        if 'Defaults' in config_dict['StdReport']:
-            if 'Almanac' in config_dict['StdReport']['Defaults']:
-                if 'moon_phases' in config_dict['StdReport']['Defaults']['Almanac']:
-                    self.moon_phases = config_dict['StdReport']['Defaults']['Almanac']['moon_phases']
-
-        self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
+        return True
 
     @staticmethod
     def distance_from_earth(ts_pkt_datetime: datetime, earth, orb):
@@ -398,6 +411,11 @@ class Celestial(StdService):
             pkt['tomorrowSunset'] = tomorrow_sunset
 
     def new_loop(self, event):
+        if self.first_time:
+            if self.perform_skyfield_init():
+                self.first_time = False
+            else:
+                return
         pkt: Dict[str, Any] = event.packet
         assert event.event_type == weewx.NEW_LOOP_PACKET
         log.debug(pkt)

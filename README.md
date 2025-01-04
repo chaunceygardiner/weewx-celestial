@@ -8,6 +8,10 @@ Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
 
 ## Description
 
+IMPORTANT: v2.0 is not yet ready.  If you use it now, you will notice that the loop records won't start
+being populated until the first report cycle runs.  This is because the necessary skyfield file is not
+copied until a report cycle.  This will be resolved before v2.0 is released.
+
 Celestial is a WeeWX service that inserts celestial observations into loop packets.
 The information is then available via
 [weewx-loopdata plugin](https://github.com/chaunceygardiner/weewx-loopdata), as `current.<celestial-obs>`
