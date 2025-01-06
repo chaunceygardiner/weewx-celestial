@@ -30,7 +30,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '2.0'
+CELESTIAL_VERSION = '2.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -226,19 +226,20 @@ class Celestial(StdService):
         transit = None
 
         ts_day_start = ts.from_datetime(day_start)
-        ts_day_end = ts.from_datetime(day_start + timedelta(days=1))
+        ts_day_end = ts.from_datetime(day_start + timedelta(days=2))  # Assume we'll see a rise and set in the next 2 days
 
         # rise/set
         rise_times, rise_crosses_horizons = skyfield.almanac.find_risings(self.observer, orb, ts_day_start, ts_day_end)
         set_times, set_crosses_horizons = skyfield.almanac.find_settings(self.observer, orb, ts_day_start, ts_day_end)
-        if  rise_crosses_horizons[0]:
+        if  len(rise_crosses_horizons) > 0 and rise_crosses_horizons[0]:
             rise = rise_times[0].utc_datetime().timestamp()
         if  len(set_crosses_horizons) > 0 and set_crosses_horizons[0]:
             set = set_times[0].utc_datetime().timestamp()
 
         #transit
         transit_times = skyfield.almanac.find_transits(self.observer, orb, ts_day_start, ts_day_end)
-        transit = transit_times[0].utc_datetime().timestamp()
+        if len(transit_times) > 0:
+            transit = transit_times[0].utc_datetime().timestamp()
 
         return rise, set, transit
 
@@ -253,13 +254,13 @@ class Celestial(StdService):
         # Sunrise/Sunset/SunTransit/daySunshineDur
         sunrise_times, sunrise_crosses_horizons = skyfield.almanac.find_risings(self.observer, self.sun, ts_day_start, ts_day_end)
         sunset_times, sunset_crosses_horizons = skyfield.almanac.find_settings(self.observer, self.sun, ts_day_start, ts_day_end)
-        if  sunrise_crosses_horizons[0]:
+        if  len(sunrise_crosses_horizons) > 0 and sunrise_crosses_horizons[0]:
             sunrise = sunrise_times[0].utc_datetime().timestamp()
-        if  sunset_crosses_horizons[0]:
+        if  len(sunrise_crosses_horizons) > 0 and sunset_crosses_horizons[0]:
             sunset = sunset_times[0].utc_datetime().timestamp()
-        if  sunrise_crosses_horizons[0] and sunset_crosses_horizons[0]:
+        if  len(sunrise_crosses_horizons) > 0 and sunrise_crosses_horizons[0] and len(sunset_crosses_horizons) > 0 and sunset_crosses_horizons[0]:
             daylight = sunset - sunrise
-        elif not sunrise_crosses_horizons[0] and not sunset_crosses_horizons[0]:
+        elif len(sunrise_crosses_horizons) > 0 and not sunrise_crosses_horizons[0] and len(sunset_crosses_horizons) > 0 and not sunset_crosses_horizons[0]:
             # The sun neither rose nor set.
             alt, _, _ = self.observer.at(sunrise_times[0]).observe(self.sun).apparent().altaz()
             if alt.degrees > -0.833333:
@@ -268,7 +269,7 @@ class Celestial(StdService):
             else:
                 # 24 hours of darkness
                 daylight = 0
-        elif sunrise_crosses_horizons[0] and not sunset_crosses_horizons[0]:
+        elif len(sunrise_crosses_horizons) > 0 and sunrise_crosses_horizons[0] and len(sunset_crosses_horizons) > 0 and not sunset_crosses_horizons[0]:
             # The sun rose, but never set.
             daylight = ts_day_end.timestamp() - sunrise
         else:
@@ -276,7 +277,8 @@ class Celestial(StdService):
             daylight = sunset - ts_day_start.timestamp()
 
         transit_times = skyfield.almanac.find_transits(self.observer, self.sun, ts_day_start, ts_day_end)
-        transit = transit_times[0].utc_datetime().timestamp()
+        if len(transit_times) > 0:
+            transit = transit_times[0].utc_datetime().timestamp()
 
         return sunrise, sunset, transit, daylight
 

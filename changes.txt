@@ -1,6 +1,11 @@
 weewx-celestial change history
 ------------------------------
 
+2.1 Release 2025/01/06
+----------------------
+Critical bug fix: fix crash due to false assumption that moonrise (or moonset) to the next moonrise (or moonset) <= 24 hours.
+include date (not just time) on report for moonrise/moonset.
+
 2.0 Release 2025/01/03
 ----------------------
 Switch to Skyfield for more accurate results than PyEphem.

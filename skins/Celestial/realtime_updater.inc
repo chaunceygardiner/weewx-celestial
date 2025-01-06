@@ -141,9 +141,9 @@
         document.getElementById("current.SunDeclination.raw").innerHTML = result["current.SunDeclination.raw"].toFixed(1) + "&deg;";
         document.getElementById("current.NextEquinox").innerHTML = result["current.NextEquinox"];
         document.getElementById("current.NextSolstice").innerHTML = result["current.NextSolstice"];
-        document.getElementById("current.Moonrise.raw").innerHTML = pacificHMS(result["current.Moonrise.raw"]);
-        document.getElementById("current.MoonTransit.raw").innerHTML = pacificHMS(result["current.MoonTransit.raw"]);
-        document.getElementById("current.Moonset.raw").innerHTML = pacificHMS(result["current.Moonset.raw"]);
+        document.getElementById("current.Moonrise").innerHTML = result["current.Moonrise"];
+        document.getElementById("current.MoonTransit").innerHTML = result["current.MoonTransit"];
+        document.getElementById("current.Moonset").innerHTML = result["current.Moonset"];
         document.getElementById("current.MoonAzimuth.raw").innerHTML = result["current.MoonAzimuth.raw"].toFixed(1) + "&deg;";
         document.getElementById("current.MoonAltitude.raw").innerHTML = result["current.MoonAltitude.raw"].toFixed(1) + "&deg;";
         document.getElementById("current.MoonRightAscension.raw").innerHTML = result["current.MoonRightAscension.raw"].toFixed(1) + "&deg;";

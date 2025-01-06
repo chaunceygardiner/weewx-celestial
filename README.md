@@ -83,6 +83,12 @@ The following observations are available in the LOOP packet:
 
 1. Note: if you are upgrading from 1.x versioun, you'll need to install skyfield.  See the install instructions above for how to install skyfield.
 
+1. Note: if you are upgrading from 2.0 to a later version, you'll need to add the following fields in the `fields` line in `weewx.conf`:
+   `current.MoonTransit`
+   `current.Moonrise`
+   `current.Moonset`
+
+
 # Installation Instructions
 
 ## WeeWX 5 Installation Instructions
@@ -111,7 +117,7 @@ The following observations are available in the LOOP packet:
 
 1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
 
-   `current.AstronomicalTwilightEnd.raw, current.AstronomicalTwilightStart.raw, current.CivilTwilightEnd.raw, current.CivilTwilightStart.raw, current.EarthJupiterDistance, current.EarthMarsDistance, current.EarthMercuryDistance, current.EarthMoonDistance, current.EarthNeptuneDistance, current.EarthPlutoDistance, current.EarthSaturnDistance, current.EarthSunDistance, current.EarthUranusDistance, current.EarthVenusDistance, current.MoonAltitude.raw, current.MoonAzimuth.raw, current.MoonDeclination.raw, current.MoonFullness, current.MoonPhase, current.MoonRightAscension.raw, current.MoonTransit.raw, current.Moonrise.raw, current.Moonset.raw, current.NauticalTwilightEnd.raw, current.NauticalTwilightStart.raw, current.NextEquinox, current.NextFullMoon, current.NextNewMoon, current.NextSolstice, current.SunAltitude.raw, current.SunAzimuth.raw, current.SunDeclination.raw, current.SunRightAscension.raw, current.SunTransit.raw, current.Sunrise.raw, current.Sunset.raw, current.daySunshineDur.raw, current.yesterdaySunshineDur.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
+   `current.AstronomicalTwilightEnd.raw, current.AstronomicalTwilightStart.raw, current.CivilTwilightEnd.raw, current.CivilTwilightStart.raw, current.EarthJupiterDistance, current.EarthMarsDistance, current.EarthMercuryDistance, current.EarthMoonDistance, current.EarthNeptuneDistance, current.EarthPlutoDistance, current.EarthSaturnDistance, current.EarthSunDistance, current.EarthUranusDistance, current.EarthVenusDistance, current.MoonAltitude.raw, current.MoonAzimuth.raw, current.MoonDeclination.raw, current.MoonFullness, current.MoonPhase, current.MoonRightAscension.raw, current.MoonTransit, current.MoonTransit.raw, current.Moonrise, current.Moonrise.raw, current.Moonset, current.Moonset.raw, current.NauticalTwilightEnd.raw, current.NauticalTwilightStart.raw, current.NextEquinox, current.NextFullMoon, current.NextNewMoon, current.NextSolstice, current.SunAltitude.raw, current.SunAzimuth.raw, current.SunDeclination.raw, current.SunRightAscension.raw, current.SunTransit.raw, current.Sunrise.raw, current.Sunset.raw, current.daySunshineDur.raw, current.yesterdaySunshineDur.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
 1. Restart WeeWX.
 
