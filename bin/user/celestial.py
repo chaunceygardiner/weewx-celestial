@@ -233,7 +233,7 @@ class Celestial(StdService):
         set_times, set_crosses_horizons = skyfield.almanac.find_settings(self.observer, orb, ts_day_start, ts_day_end)
         if  rise_crosses_horizons[0]:
             rise = rise_times[0].utc_datetime().timestamp()
-        if  set_crosses_horizons[0]:
+        if  len(set_crosses_horizons) > 0 and set_crosses_horizons[0]:
             set = set_times[0].utc_datetime().timestamp()
 
         #transit
