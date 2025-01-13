@@ -1,6 +1,19 @@
 weewx-celestial change history
 ------------------------------
 
+2.2 Release 2025/01/12
+----------------------
+- Rework code to make it testable.
+- Add a test which can be invoked with:
+  PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --test --out-temp=65.1 --barometer=30.128
+  PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --test --out-temp=18.4 --barometer=1020.25 --metric
+- Add more type annotations and pass mypy check (in addition to pyflakes3).
+- To be safe, make sure no skyfield exception are raised to WeeWX.  Rather,
+  catch them and report in the log.
+  Note: if the init successfully loads the ephemneris, these exceptions are
+        not expected.  This is just a safety measure in case there are coding errors.
+- Add footnote to sample report that the report uses Skyfield and JPL's ephemeris.
+
 2.1 Release 2025/01/06
 ----------------------
 Critical bug fix: fix crash due to false assumption that moonrise (or moonset) to the next moonrise (or moonset) <= 24 hours.

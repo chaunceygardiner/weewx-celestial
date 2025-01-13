@@ -3,7 +3,7 @@
 
 Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
 
-**This extension requires Python 3.9 or later and WeeWX 4 or 5.**
+**This extension requires Python 3.9 or later, WeeWX 4 or 5 and the Skyfield and NumPy libraries.**
 
 
 ## Description
@@ -184,6 +184,15 @@ The following observations are available in the LOOP packet:
  * `expiration_time`: The number of hours before expiring the autoupdate of the report.
  * `page_update_pwd`: The password to specify in the URL such that the page never expires.
                       That is, `<machine>/weewx/celestial/?pageUpdate=foobar`
+
+## Testing
+
+Celestial can be run from the command line to verify the readings.  Below are examples.  Use --help for all of the options.
+`PYTHON_PATH` needs to point to the user directory for weewx.  That is, it needs to point to where extensions are located.
+
+1. `/home/weewx/weewx-venv/bin/activate`
+2. `PYTHONPATH=/home/weewx/bin python -m user.celestial --test --out-temp=65.1 --barometer=30.128` (for inputs in US units)
+   `PYTHONPATH=/home/weewx/bin python -m user.celestial --test --out-temp=18.4 --barometer=1020.25 --metric` (for temp and barometer in Metric units)
 
 
 ## Why require Python 3.9 or later?
