@@ -15,6 +15,10 @@ The information is then available via
 As of version 2.0, weewx-celestial uses [Skyfield](https://rhodesmill.org/skyfield/) for *much* more accurate
 information than [PyEphem](https://rhodesmill.org/pyephem/index.html), which is currently used by WeeWX.
 
+As of version 2.3, celestial observations are only recomputed every ten seconds (by default) rather than
+on every loop record.  That is, the observations will be inserted into every loop record, but the observations
+will only be updated every ten seconds.
+
 The information available in loop records, as well as the sample report provided is based on WeeWX's
 Seasons Report (Copyright Tom Keffer and Matthew Wall).  More fields are provided than in the Seasons
 report, including start/end times for astronomical and nautical twilight.  Also, distances from earth to
@@ -77,16 +81,20 @@ The following observations are available in the LOOP packet:
 
 # Upgrade Instructions
 
-1. Note: if you re upgrading from a previous version to 1.x, and you are using the sample skin, you'll need to add the following
+1. If you re upgrading from a previous version to 1.x, and you are using the sample skin, you'll need to add the following
    two fields to the `fields` line in `weewx.conf`:
    `current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
-1. Note: if you are upgrading from 1.x versioun, you'll need to install skyfield.  See the install instructions above for how to install skyfield.
+1. If you are upgrading from 1.x versioun, you'll need to install skyfield.  See the install instructions above for how to install skyfield.
 
-1. Note: if you are upgrading from 2.0 to a later version, you'll need to add the following fields in the `fields` line in `weewx.conf`:
+1. If you are upgrading from 2.0 to a later version, you'll need to add the following fields in the `fields` line in `weewx.conf`:
    `current.MoonTransit`
    `current.Moonrise`
    `current.Moonset`
+
+1. As of version 2.3, `update_rate_secs = 10` will be added to the `[Celestial]` section of weewx.conf.  This results in celestial fields being
+   updated no more than every 10s or every loop record, whichever is longer.  To return the behavior to updating on every loop record, simply
+   replace the `10` with `0`.
 
 
 # Installation Instructions
@@ -158,9 +166,11 @@ The following observations are available in the LOOP packet:
 ```
 [Celestial]
     enable = true
+    update_rate_secs = 10
 ```
 
- * `enable`: When true, the celestial observations are added to every loop record.
+ * `enable`          : When true, the celestial observations are added to every loop record.
+ * `update_rate_secs`: number of seconds that have to pass to recalculate observations (`0` to recalculate on every loop record).
 
 ## Entries in `CelestialReport` section of `weewx.conf`:
 
@@ -193,6 +203,52 @@ Celestial can be run from the command line to verify the readings.  Below are ex
 1. `/home/weewx/weewx-venv/bin/activate`
 2. `PYTHONPATH=/home/weewx/bin python -m user.celestial --test --out-temp=65.1 --barometer=30.128` (for inputs in US units)
    `PYTHONPATH=/home/weewx/bin python -m user.celestial --test --out-temp=18.4 --barometer=1020.25 --metric` (for temp and barometer in Metric units)
+
+Example output from above test execution:
+```
+Skyfield version: 1.49.
+                MoonPhase:                      Waning gibbous
+     EarthJupiterDistance:                 406,289,210.7 miles
+        EarthMarsDistance:                  60,129,317.7 miles
+     EarthMercuryDistance:                 126,589,292.9 miles
+     EarthNeptuneDistance:               2,825,596,755.3 miles
+        EarthMoonDistance:                     249,266.8 miles
+       EarthPlutoDistance:               3,361,859,320.1 miles
+      EarthSaturnDistance:                 954,622,337.7 miles
+         EarthSunDistance:                  91,463,855.1 miles
+      EarthUranusDistance:               1,777,984,877.0 miles
+       EarthVenusDistance:                  57,437,297.2 miles
+           daySunshineDur:  9 hours, 57 minutes and 23 seconds
+     yesterdaySunshineDur:  9 hours, 55 minutes and 55 seconds
+             MoonFullness:                            76% full
+             MoonAltitude:                              -49.9°
+              MoonAzimuth:                              337.6°
+          MoonDeclination:                                0.6°
+       MoonRightAscension:                              177.5°
+              SunAltitude:                               19.8°
+               SunAzimuth:                              222.2°
+           SunDeclination:                              -20.4°
+        SunRightAscension:                              300.9°
+  AstronomicalTwilightEnd:        January 18, 2025 at 06:49 PM
+AstronomicalTwilightStart:        January 18, 2025 at 05:48 AM
+         CivilTwilightEnd:        January 18, 2025 at 05:46 PM
+       CivilTwilightStart:        January 18, 2025 at 06:52 AM
+                 Moonrise:        January 18, 2025 at 10:20 PM
+                  Moonset:        January 18, 2025 at 10:04 AM
+              MoonTransit:        January 18, 2025 at 03:47 AM
+      NauticalTwilightEnd:        January 18, 2025 at 06:18 PM
+    NauticalTwilightStart:        January 18, 2025 at 06:20 AM
+              NextEquinox:          March 20, 2025 at 02:01 AM
+             NextFullMoon:       February 12, 2025 at 05:53 AM
+              NextNewMoon:        January 29, 2025 at 04:35 AM
+             NextSolstice:           June 20, 2025 at 07:42 PM
+                  Sunrise:        January 18, 2025 at 07:20 AM
+                   Sunset:        January 18, 2025 at 05:17 PM
+               SunTransit:        January 18, 2025 at 12:19 PM
+          tomorrowSunrise:        January 19, 2025 at 07:20 AM
+           tomorrowSunset:        January 19, 2025 at 05:18 PM
+All fields present and of the correct type.  The test passed.
+```
 
 
 ## Why require Python 3.9 or later?

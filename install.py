@@ -31,7 +31,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "2.2",
+            version = "2.3",
             name = 'celestial',
             description = 'Inserts celestial observations into loop packets.',
             author = "John A Kline",
@@ -39,7 +39,8 @@ class CelestialInstaller(ExtensionInstaller):
             data_services = 'user.celestial.Celestial',
             config = {
                 'Celestial': {
-                    'enable':'true',
+                    'enable'           : 'true',
+                    'update_rate_secs' : 10,
                 },
                 'StdReport': {
                     'CelestialReport': {

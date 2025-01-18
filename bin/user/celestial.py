@@ -34,7 +34,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '2.2'
+CELESTIAL_VERSION = '2.3'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -86,7 +86,7 @@ weewx.units.obs_group_dict['Moonset']                   = 'group_time'
 class Celestial(StdService):
     def __init__(self, engine: StdEngine, config_dict: Dict[str, Any]):
         super(Celestial, self).__init__(engine, config_dict)
-        log.info("Service version is %s." % CELESTIAL_VERSION)
+        log.info("Service version : %s" % CELESTIAL_VERSION)
 
         if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 7):
             raise Exception("Python 3.7 or later is required for the celestial plugin.")
@@ -95,10 +95,12 @@ class Celestial(StdService):
         celestial_config_dict = config_dict.get('Celestial', {})
         enable = to_bool(celestial_config_dict.get('enable'))
         if enable:
-            log.info("Celestial is enabled...continuing.")
+            log.info("Celestial status: enabled...continuing.")
         else:
-            log.info("Celestial is disabled. Enable it in the Celestial section of weewx.conf.")
+            log.info("Celestial status: disabled...enable it in the Celestial section of weewx.conf.")
             return
+
+        update_rate_secs = to_int(celestial_config_dict.get('update_rate_secs', 0))
 
         user_root, moon_phases, altitude_m, latitude, longitude = Sky.get_weewx_config_info(config_dict)
         if latitude is None or longitude is None:
@@ -108,7 +110,14 @@ class Celestial(StdService):
             log.error("Could not determine station's altitude.")
             return
 
-        self.sky = Sky(user_root, moon_phases, altitude_m, latitude, longitude)
+        log.info("update_rate_secs: %d" % update_rate_secs)
+        log.info("user_root       : %s" % user_root)
+        log.info("moon_phases     : %r" % moon_phases)
+        log.info("altitude_m      : %f" % altitude_m)
+        log.info("latitude        : %f" % latitude)
+        log.info("longitude       : %f" % longitude)
+
+        self.sky = Sky(update_rate_secs, user_root, moon_phases, altitude_m, latitude, longitude)
         if self.sky.is_valid():
             self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
 
@@ -122,15 +131,17 @@ class Celestial(StdService):
             log.error('new_loop: %s.' % e)
 
 class Sky():
-    def __init__(self, user_root: str, moon_phases: List[str], altitude_m: float, latitude: float, longitude: float):
-        log.info("Skyfield version is %d.%d." % (skyfield.VERSION[0], skyfield.VERSION[1]))
+    def __init__(self, update_rate_secs, user_root: str, moon_phases: List[str], altitude_m: float, latitude: float, longitude: float):
+        log.info("Skyfield version: %d.%d." % (skyfield.VERSION[0], skyfield.VERSION[1]))
 
-        self.valid      : bool      = False
-        self.user_root  : str       = user_root
-        self.moon_phases: List[str] = moon_phases
-        self.altitude_m : float     = altitude_m
-        self.latitude   : float     = latitude
-        self.longitude  : float     = longitude
+        self.valid           : bool           = False
+        self.update_rate_secs: int            = update_rate_secs
+        self.user_root       : str            = user_root
+        self.moon_phases     : List[str]      = moon_phases
+        self.altitude_m      : float          = altitude_m
+        self.latitude        : float          = latitude
+        self.longitude       : float          = longitude
+        self.prev_reading    : Dict[str, Any] = { 'dateTime': 0 } # Set to epoch so it will be too old to use
 
         # Load the JPL ephemeris DE421 (covers 1900-2050).
         try:
@@ -366,6 +377,13 @@ class Sky():
         pkt_time: int = to_int(pkt['dateTime'])
         pkt_datetime  = datetime.fromtimestamp(pkt_time, timezone.utc)
 
+        # If prev_reading is more than update_rate_secs ago, just use the previous readings.
+        if pkt_time - self.prev_reading['dateTime'] < self.update_rate_secs:
+            for key in self.prev_reading:
+                if key != 'dateTime':
+                    pkt[key] = self.prev_reading[key]
+            return
+
         # Create a skyfield timescale with pkt_datetime.
         ts = skyfield.api.load.timescale()
         ts_pkt_time = ts.from_datetime(pkt_datetime)
@@ -535,6 +553,20 @@ class Sky():
                 pkt['tomorrowSunset'] = tomorrow_sunset
         except Exception as e:
             log.error('insert_fields: get_sunrise_sunset_transit_daylight(tomorrow_start: %r): %s.' % (tomorrow_start, e))
+
+        # Update prev_reading to current reading.
+        if self.update_rate_secs != 0:
+            self.prev_reading['dateTime'] = pkt['dateTime']
+            for key in (['SunAzimuth', 'SunAltitude', 'SunRightAscension', 'SunDeclination', 'MoonAzimuth', 'MoonAltitude',
+                    'MoonRightAscension', 'MoonDeclination', 'MoonFullness', 'MoonPhase', 'EarthSunDistance', 'EarthMoonDistance',
+                    'EarthMercuryDistance', 'EarthVenusDistance', 'EarthMarsDistance', 'EarthJupiterDistance',
+                    'EarthSaturnDistance', 'EarthUranusDistance', 'EarthNeptuneDistance', 'EarthPlutoDistance',
+                    'Sunrise', 'Sunset', 'daySunshineDur', 'SunTransit', 'Moonrise', 'Moonset', 'MoonTransit', 'NextEquinox',
+                    'NextSolstice', 'NextFullMoon', 'NextNewMoon', 'AstronomicalTwilightStart', 'AstronomicalTwilightEnd',
+                    'NauticalTwilightStart', 'NauticalTwilightEnd', 'CivilTwilightStart', 'CivilTwilightEnd', 'yesterdaySunshineDur',
+                    'tomorrowSunrise', 'tomorrowSunset']):
+                if key in pkt:
+                    self.prev_reading[key] = pkt[key]
 
 # Define a main entry point for basic testing.
 # Invoke this as follows:
@@ -710,7 +742,7 @@ if __name__ == '__main__':
         config_dict: Dict[str, Any] = get_configuration(config_file)
 
         user_root, moon_phases, altitude_m, latitude, longitude = Sky.get_weewx_config_info(config_dict)
-        sky = Sky(user_root, moon_phases, altitude_m, latitude, longitude)
+        sky = Sky(0, user_root, moon_phases, altitude_m, latitude, longitude)
         if not sky.is_valid():
             log.error('Could not instantiate Sky object.')
             exit(0)
