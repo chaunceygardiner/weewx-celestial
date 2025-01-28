@@ -1,6 +1,10 @@
 weewx-celestial change history
 ------------------------------
 
+2.4 Release 2025/01/28
+----------------------
+Bugfix for index out of range when moon phase is new moon.
+
 2.3 Release 2025/01/18
 ----------------------
 - Add update_rate_secs field to the Celestial section of weewx.conf to limit updating to every 10s (by default).
