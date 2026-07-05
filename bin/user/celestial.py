@@ -30,6 +30,7 @@ import numpy
 import skyfield
 import skyfield.almanac
 import skyfield.api
+import skyfield.errors
 import skyfield.framelib
 import skyfield.magnitudelib
 import skyfield.timelib
@@ -49,7 +50,7 @@ from weewx.units import ValueTuple
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '3.0'
+CELESTIAL_VERSION = '3.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -742,6 +743,15 @@ class Sky():
         self.longitude       : float          = longitude
         self.prev_reading    : Dict[str, Any] = { 'dateTime': 0 } # Set to epoch so it will be too old to use
 
+        # find_risings/find_settings arrived in Skyfield 1.47; on anything
+        # older every rise/set computation would fail, so decline up front
+        # (e.g., Debian 12 packages Skyfield 1.45).
+        if tuple(skyfield.VERSION[:2]) < (1, 47):
+            log.error('init: weewx-celestial requires Skyfield 1.47 or later, found %d.%d.'
+                      '  Celestial will not run.'
+                      % (skyfield.VERSION[0], skyfield.VERSION[1]))
+            return
+
         # The timescale is built once and reused; building it parses
         # skyfield's leap second and delta-T tables.
         try:
@@ -773,6 +783,18 @@ class Sky():
                 self.orbs[orb] = self.planets[key]
         except Exception as e:
             log.error('init: Could not find %s in ephermis file %s: %s.  Celestial will not run.' % (orb, planets_file, e))
+            return
+
+        # The span the ephemeris covers (DE421: 1899-07-29 through
+        # 2053-10-09), as unix timestamps.  Almanac requests outside it are
+        # declined (see covers) so the built-in almanac can serve them.
+        try:
+            self.start_ts: float = self.ts.tdb_jd(
+                max(seg.start_jd for seg in self.planets.spk.segments)).utc_datetime().timestamp()
+            self.end_ts: float = self.ts.tdb_jd(
+                min(seg.end_jd for seg in self.planets.spk.segments)).utc_datetime().timestamp()
+        except Exception as e:
+            log.error('init: Could not determine the span of %s: %s.  Celestial will not run.' % (planets_file, e))
             return
 
         # The same bodies as attributes, used by the loop packet code.
@@ -836,9 +858,11 @@ class Sky():
                 return True
         try:
             by_hip = Sky.load_stars_by_hip(self.user_root, {hip})
-        except OSError as e:
-            # A missing/unreadable catalog must degrade to a per-tag miss,
-            # never propagate into report generation.
+        except Exception as e:
+            # An unreadable catalog -- missing, permission-denied, or not
+            # text at all (a corrupt or still-compressed hip_main.dat raises
+            # UnicodeDecodeError) -- must degrade to a per-tag miss, never
+            # propagate into report generation.
             log.error('get_star_by_hip: could not read the star catalog: %s' % e)
             self.hip_misses.add(hip)
             return False
@@ -850,18 +874,28 @@ class Sky():
 
     @staticmethod
     def load_named_stars(user_root: str) -> Dict[str, Tuple[Any, Optional[float]]]:
-        """Load the stars in NAMED_STARS from the Hipparcos catalog."""
-        by_hip = Sky.load_stars_by_hip(user_root, set(NAMED_STARS.values()))
+        """Load the stars in NAMED_STARS from the Hipparcos catalog.  The
+        bundled excerpt covers exactly these stars (with records identical
+        to the full catalog's), so it is read even when a full hip_main.dat
+        is installed: scanning 118,218 records at every startup would buy
+        nothing."""
+        by_hip = Sky.load_stars_by_hip(user_root, set(NAMED_STARS.values()),
+                                       prefer_full_catalog=False)
         return {name: by_hip[hip] for name, hip in NAMED_STARS.items() if hip in by_hip}
 
     @staticmethod
-    def load_stars_by_hip(user_root: str, wanted_hips: set) -> Dict[int, Tuple[Any, Optional[float]]]:
-        """Load the requested Hipparcos numbers from the bundled excerpt
-        (celestial_stars.dat).  A full hip_main.dat, if present, is preferred,
-        since it serves every Hipparcos star, not just the named ones."""
-        path = '%s/%s' % (user_root, 'hip_main.dat')
+    def load_stars_by_hip(user_root: str, wanted_hips: set,
+                          prefer_full_catalog: bool = True) -> Dict[int, Tuple[Any, Optional[float]]]:
+        """Load the requested Hipparcos numbers from the star catalog.  By
+        default a full hip_main.dat, if present, is preferred, since it
+        serves every Hipparcos star, not just the named ones; either file
+        stands in for the other when only one is present."""
+        first, second = 'hip_main.dat', STAR_FILE
+        if not prefer_full_catalog:
+            first, second = second, first
+        path = '%s/%s' % (user_root, first)
         if not os.path.exists(path):
-            path = '%s/%s' % (user_root, STAR_FILE)
+            path = '%s/%s' % (user_root, second)
 
         def parse_float(field: str) -> float:
             field = field.strip()
@@ -947,6 +981,11 @@ class Sky():
 
     def is_valid(self) -> bool:
         return self.valid
+
+    def covers(self, time_ts: float) -> bool:
+        """Whether the ephemeris covers time_ts, with enough margin for
+        the two-day search windows used by rise/set and visible."""
+        return self.start_ts + 2 * 86400 <= time_ts <= self.end_ts - 2 * 86400
 
     def distance_au(self, t: skyfield.timelib.Time, orb: skyfield.vectorlib.VectorSum,
                     origin: Optional[skyfield.vectorlib.VectorSum] = None) -> float:
@@ -1423,11 +1462,24 @@ class SkyfieldAlmanacType(_AlmanacTypeBase):
         else:
             t0 = self.skyfield_time(almanac_obj.time_ts)
             t1 = self.skyfield_time(almanac_obj.time_ts + window_days * 86400)
-        event_ts = find_discrete_events(f, t0, t1, (codes,), previous)[0]
+        try:
+            event_ts = find_discrete_events(f, t0, t1, (codes,), previous)[0]
+        except skyfield.errors.EphemerisRangeError:
+            # The search window pokes past the ephemeris' span (the almanac's
+            # time itself is inside it, or get_almanac_data would already
+            # have declined).  Let the next almanac serve the tag.
+            raise weewx.UnknownType('event search outside the ephemeris span')
         return self.time_value(almanac_obj, event_ts, 'ephem_year')
 
     def get_almanac_data(self, almanac_obj, attr: str):
         if attr.startswith('__'):
+            raise weewx.UnknownType(attr)
+
+        # A time the ephemeris does not cover (DE421: 1899-2053) cannot be
+        # computed; decline it so the next almanac (PyEphem or weeutil)
+        # serves the tag, rather than EphemerisRangeError aborting report
+        # generation.
+        if not self.sky.covers(almanac_obj.time_ts):
             raise weewx.UnknownType(attr)
 
         if attr == 'sunrise':
@@ -1485,12 +1537,16 @@ class SkyfieldAlmanacType(_AlmanacTypeBase):
         two.  Each binder is observed at its own almanac's time.  Anything
         else (e.g., PyEphem Body objects) is deferred to the next almanac
         rather than crashed on."""
-        if isinstance(body1, SkyfieldAlmanacBinder) and isinstance(body2, SkyfieldAlmanacBinder):
-            p1 = self.sky.earth.at(self.skyfield_time(body1.almanac.time_ts)).observe(body1.target_body())
-            p2 = self.sky.earth.at(self.skyfield_time(body2.almanac.time_ts)).observe(body2.target_body())
-            return p1.separation_from(p2).radians
-        coords1 = SkyfieldAlmanacType.separation_coordinates(body1)
-        coords2 = SkyfieldAlmanacType.separation_coordinates(body2)
+        try:
+            if isinstance(body1, SkyfieldAlmanacBinder) and isinstance(body2, SkyfieldAlmanacBinder):
+                p1 = self.sky.earth.at(self.skyfield_time(body1.almanac.time_ts)).observe(body1.target_body())
+                p2 = self.sky.earth.at(self.skyfield_time(body2.almanac.time_ts)).observe(body2.target_body())
+                return p1.separation_from(p2).radians
+            coords1 = SkyfieldAlmanacType.separation_coordinates(body1)
+            coords2 = SkyfieldAlmanacType.separation_coordinates(body2)
+        except skyfield.errors.EphemerisRangeError:
+            # A binder whose almanac time is outside the ephemeris' span.
+            raise weewx.UnknownType('separation')
         if coords1 is None or coords2 is None:
             raise weewx.UnknownType('separation')
         # Meeus 17.1, delegated to the WeeWX base class (only reachable on
@@ -1503,8 +1559,8 @@ class SkyfieldAlmanacType(_AlmanacTypeBase):
         tuple as given, or a binder's apparent geocentric coordinates of
         date (at the binder's own almanac time).  None if unrecognized."""
         if isinstance(body, SkyfieldAlmanacBinder):
-            return (math.radians(body.compute_angle('g_ra')),
-                    math.radians(body.compute_angle('g_dec')))
+            ra_degrees, dec_degrees = body.geocentric_radec_degrees()
+            return (math.radians(ra_degrees), math.radians(dec_degrees))
         if isinstance(body, (tuple, list)):
             return body
         return None
@@ -1660,6 +1716,15 @@ class SkyfieldAlmanacBinder:
                            formatter=self.almanac.formatter,
                            converter=self.almanac.converter)
 
+    def geocentric_radec_degrees(self) -> Tuple[float, float]:
+        """Apparent geocentric (right ascension, declination) of date, in
+        decimal degrees.  One observation serves both angles (separation
+        needs the pair; two compute_angle calls would observe twice)."""
+        sky = self.almanac_type.sky
+        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
+        ra, dec, _ = sky.earth.at(t).observe(self.target_body()).apparent().radec('date')
+        return ra._degrees, dec.degrees
+
     def compute_angle(self, attr: str) -> float:
         """Compute the requested angle.  Returned in decimal degrees."""
         sky = self.almanac_type.sky
@@ -1682,8 +1747,8 @@ class SkyfieldAlmanacBinder:
             return ra._degrees if attr == 'a_ra' else dec.degrees
         elif attr in ('g_ra', 'g_dec'):
             # Apparent geocentric right ascension/declination of date.
-            ra, dec, _ = sky.earth.at(t).observe(orb).apparent().radec('date')
-            return ra._degrees if attr == 'g_ra' else dec.degrees
+            g_ra, g_dec = self.geocentric_radec_degrees()
+            return g_ra if attr == 'g_ra' else g_dec
         elif attr in ('hlong', 'hlat'):
             # Heliocentric ecliptic longitude/latitude.  For the sun itself
             # these are undefined (it sits at the origin); report Earth's
@@ -1693,10 +1758,14 @@ class SkyfieldAlmanacBinder:
             target = sky.earth if self.heavenly_body == 'sun' else orb
             lat, lon, _ = sky.sun.at(t).observe(target).frame_latlon(skyfield.framelib.ecliptic_frame)
             return lon.degrees if attr == 'hlong' else lat.degrees
-        else:
-            # elong: elongation (angular separation from the sun).
+        elif attr == 'elong':
+            # Elongation (angular separation from the sun).
             e = sky.earth.at(t)
             return e.observe(orb).separation_from(e.observe(sky.sun)).degrees
+        # Every key in FLOAT_ANGLES/VALUE_HELPER_ANGLES must have a branch
+        # above; failing loudly here beats silently answering with the
+        # wrong angle.
+        raise ValueError('compute_angle: unknown angle %r' % attr)
 
     def magnitude(self) -> float:
         """Apparent visual magnitude of the body."""
@@ -1874,6 +1943,17 @@ class SkyfieldAlmanacBinder:
         if attr.startswith('__') or attr in ['mro', 'im_func', 'func_code']:
             raise AttributeError(attr)
 
+        try:
+            return self._evaluate(attr)
+        except skyfield.errors.EphemerisRangeError:
+            # A search window poking past the ephemeris' span (the almanac's
+            # time itself is inside it, or SkyfieldAlmanacType would never
+            # have handed out this binder).  PyEphem, if installed, can
+            # still answer; without it, a per-tag error -- never an aborted
+            # report.
+            return self.pyephem_fallback(attr)
+
+    def _evaluate(self, attr: str):
         # For a star, attributes involving sun-body geometry make no sense.
         # PyEphem's own star objects raise AttributeError for these, and the
         # fallback reproduces that behavior.

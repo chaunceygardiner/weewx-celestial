@@ -1,6 +1,33 @@
 weewx-celestial change history
 ------------------------------
 
+3.1 Release TBD
+----------------------
+Engine fixes shared with the weewx-skyfield extension (same almanac engine).
+
+- Require Skyfield 1.47 or later (the first release with
+  find_risings/find_settings, which rise/set computations use).  On an
+  older Skyfield (e.g., Debian 12 packages 1.45), Celestial now logs an
+  error and declines up front instead of failing on every rise/set
+  computation at run time.
+- Almanac times outside the span of the bundled DE421 ephemeris (mid-1899
+  through 2053) -- e.g., a machine whose clock is badly wrong -- now fall
+  through to the built-in PyEphem/weeutil almanac instead of aborting
+  report generation with EphemerisRangeError.  Event searches that poke
+  past the ephemeris' edge degrade the same way.
+- A corrupt or still-compressed user-installed hip_main.dat discovered
+  after startup now degrades $almanac.hip_<n> tags to per-tag misses
+  instead of aborting report generation (previously only a missing or
+  unreadable file was handled).
+- Named stars now load from the bundled celestial_stars.dat excerpt even
+  when a full hip_main.dat is installed (the records are identical),
+  eliminating a full scan of the 118,218-record catalog at every WeeWX
+  start.  hip_<n> lookups still prefer the full catalog.
+- Internal hardening: $almanac.separation() computes each binder's
+  coordinates with a single observation instead of two, and an
+  unrecognized angle key now fails loudly instead of silently returning
+  the elongation.
+
 3.0 Release 2026/07/05
 ----------------------
 - The loop fields have new names, following WeeWX's lowerCamelCase convention

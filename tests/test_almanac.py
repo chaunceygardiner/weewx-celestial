@@ -364,6 +364,47 @@ class TestFallback:
             almanac.sun.foo
 
 
+class TestEngineGuards:
+    """Version and ephemeris-span guards shared with weewx-skyfield."""
+
+    OUT_OF_RANGE_TS = 4102444800.0    # 2100-01-01 00:00:00 UTC
+
+    def test_old_skyfield_declines(self, monkeypatch):
+        """Skyfield earlier than 1.47 lacks find_risings/find_settings; the
+        engine must decline up front, not fail on every rise/set
+        computation."""
+        monkeypatch.setattr(celestial.skyfield, 'VERSION', (1, 45))
+        s = celestial.Sky(0, os.path.join(REPO_ROOT, 'bin', 'user'),
+                          weeutil.Moon.moon_phases, ALTITUDE_M, LATITUDE, LONGITUDE,
+                          load_stars=False)
+        assert not s.is_valid()
+
+    def test_covers(self, sky):
+        assert sky.covers(TIME_TS)
+        assert not sky.covers(self.OUT_OF_RANGE_TS)
+        assert not sky.covers(-3000000000.0)    # 1874
+
+    def test_out_of_range_falls_back_to_pyephem(self, almanac):
+        """Almanac times outside DE421's span must fall through to the next
+        almanac, never raise EphemerisRangeError into report generation."""
+        pytest.importorskip('ephem')
+        far = almanac(almanac_time=self.OUT_OF_RANGE_TS)
+        assert far.sunrise.raw is not None
+        assert str(far.sun.rise) != ''
+        assert str(far.next_solstice) != ''
+
+    def test_out_of_range_without_pyephem_is_per_tag(self, skyfield_only_almanac):
+        far = skyfield_only_almanac(almanac_time=self.OUT_OF_RANGE_TS)
+        with pytest.raises(AttributeError):
+            far.sunrise
+
+    def test_compute_angle_unknown_key_raises(self, almanac):
+        """A key not wired into compute_angle must fail loudly, not
+        silently answer with the elongation."""
+        with pytest.raises(ValueError):
+            almanac.sun.compute_angle('bogus')
+
+
 class TestPyEphemAgreement:
     """The Skyfield values should closely agree with PyEphem."""
 
@@ -757,6 +798,36 @@ class TestStars:
                                         formatter=weewx.units.get_default_formatter())
             with pytest.raises(AttributeError):
                 alm.hip_32349.mag
+
+    @needs_catalog
+    def test_named_stars_load_from_excerpt_not_full_catalog(self, tmp_path):
+        """Named stars load from the bundled excerpt even when a full
+        hip_main.dat is installed: the excerpt's records are identical, and
+        scanning 118,218 catalog records at every startup buys nothing."""
+        (tmp_path / celestial.STAR_FILE).symlink_to(
+            os.path.join(REPO_ROOT, 'bin', 'user', celestial.STAR_FILE))
+        # An empty stand-in full catalog: were it preferred, nothing would load.
+        (tmp_path / 'hip_main.dat').write_text('')
+        stars = celestial.Sky.load_named_stars(str(tmp_path))
+        assert len(stars) == len(set(celestial.NAMED_STARS))
+
+    @needs_catalog
+    def test_corrupt_full_catalog_degrades_per_tag(self, tmp_path):
+        """A corrupt (non-text) hip_main.dat appearing after startup must
+        degrade hip_<n> tags to per-tag misses, never leak
+        UnicodeDecodeError into report generation."""
+        (tmp_path / 'celestial_de421.bsp').symlink_to(
+            os.path.join(REPO_ROOT, 'bin', 'user', 'celestial_de421.bsp'))
+        (tmp_path / celestial.STAR_FILE).symlink_to(
+            os.path.join(REPO_ROOT, 'bin', 'user', celestial.STAR_FILE))
+        s = celestial.Sky(0, str(tmp_path), weeutil.Moon.moon_phases,
+                          ALTITUDE_M, LATITUDE, LONGITUDE, load_stars=True)
+        assert s.is_valid() and s.load_stars
+        # A still-gzipped download dropped in place of the text catalog.
+        (tmp_path / 'hip_main.dat').write_bytes(b'\x1f\x8b\x08\x00\xff\xfe garbage \xff')
+        assert 12345 not in celestial.NAMED_STARS.values()
+        assert not s.get_star_by_hip(12345)
+        assert 12345 in s.hip_misses    # the miss is cached
 
     def test_rigil_kentaurus_is_alpha_cen_a(self, almanac):
         """Rigil Kentaurus is the IAU name for Alpha Centauri A (HIP 71683,

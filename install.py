@@ -37,7 +37,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "3.0",
+            version = "3.1",
             name = 'celestial',
             description = 'Inserts celestial observations into loop packets and replaces the almanac used in reports.',
             author = "John A Kline",
