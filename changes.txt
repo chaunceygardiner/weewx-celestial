@@ -1,6 +1,144 @@
 weewx-celestial change history
 ------------------------------
 
+3.0 Release 2026/07/05
+----------------------
+- The loop fields have new names, following WeeWX's lowerCamelCase convention
+  for observation names (Sunrise -> sunrise, MoonPhase -> moonPhase,
+  EarthMoonDistance -> earthMoonDistance, etc.).  In addition, daySunshineDur
+  and yesterdaySunshineDur are now daylightDur and yesterdayDaylightDur,
+  because they measure daylight (sun above the horizon), not "sunshine
+  duration" in the meteorological sense of measured bright sunshine.
+  DEPRECATION: in 3.x, every value is written to the loop packet under BOTH
+  its new and its old name, so existing [LoopData] fields lists and skins
+  keep working unchanged.  The old names will be REMOVED in 4.0.  The full
+  mapping is in the README ("Deprecated loop field names").  The bundled
+  Celestial sample skin uses the new names as of 3.0.
+- The loop packet's right ascension/declination fields (sunRightAscension,
+  sunDeclination, moonRightAscension, moonDeclination) are now expressed in
+  coordinates of date rather than J2000, the accepted convention for
+  observed positions (and also that of PyEphem and of the report almanac's
+  topo_ra/topo_dec); in 2025, right ascensions shift by roughly 0.4 degrees
+  as a result.
+- Where PyEphem and standard astronomical conventions differ, the report
+  almanac follows the standard definitions (see "Differences from PyEphem"
+  in the README): custom horizons are geometric (no refraction), matching
+  the USNO twilight definitions; circumpolar/neverup use the same effective
+  horizon as rise/set, so they always agree; hlongitude/hlatitude are true
+  heliocentric coordinates for every body including the moon (PyEphem
+  reports the moon's geocentric ecliptic longitude under this name), and
+  for the sun they report Earth's heliocentric coordinates per the XEphem
+  convention; $almanac.separation() takes (longitude, latitude) tuples and
+  returns radians per the WeeWX 5.2 almanac API, and calls made with
+  PyEphem Body arguments are passed through to PyEphem when installed.
+- rigil_kentaurus now refers to Alpha Centauri A (HIP 71683, mag -0.01),
+  matching PyEphem and the IAU designation.  It previously served Alpha
+  Centauri B (HIP 71681, mag 1.35).
+- New star: proxima_centauri (HIP 70890), the nearest star.  Unlike
+  PyEphem, earth_distance and sun_distance work for stars, computed from
+  the Hipparcos parallax (in astronomical units, like the planets).  A new
+  loop field, earthProximaCentauriDistance, reports the distance in light
+  years in every unit system (4.22 light years; miles/km are unreadable at
+  that scale and the Hipparcos parallax is only good to ~0.3%).  The field
+  is emitted only when the star catalog is enabled, and the sample skin
+  displays it below the planet distances (add
+  current.earthProximaCentauriDistance.raw to the [LoopData] fields line
+  to keep it live-updating).
+- The star names are no longer limited to PyEphem's catalog: every
+  official proper name of the IAU Catalog of Star Names (the Working
+  Group on Star Names' IAU-CSN list) that has a Hipparcos number is
+  supported, e.g. $almanac.barnards_star.mag.  PyEphem's names remain
+  as aliases -- 420 names in all, covering 412 stars.  Any other Hipparcos star can be addressed by catalog
+  number ($almanac.hip_57939.rise); install a full hip_main.dat in the
+  user directory to serve all 118,218 Hipparcos stars.  The bundled
+  celestial_stars.dat excerpt grows from 48 KB to ~190 KB.
+- The last PyEphem fallbacks are now computed natively: the moon's
+  libration and selenographic colongitude (optical libration per Meeus
+  ch. 53; the physical libration, at most 0.04 degrees, is neglected),
+  Jupiter's central meridian longitudes (from the IAU rotation elements
+  and light-time corrected geometry; PyEphem's values differ from the IAU
+  definition by about 0.8 degrees), and Saturn's ring tilt (Meeus ch. 45).
+  All in radians, like PyEphem's.  PyEphem is now only consulted for named
+  stars when the star catalog is disabled, and for direct PyEphem body
+  attributes this extension does not compute (e.g., moon.subsolar_lat).
+- The bundled JPL ephemeris is renamed de421.bsp -> celestial_de421.bsp
+  so that no other extension can claim the file (and remove it on its
+  uninstall).  Skyfield does not care about the name.  NOTE: weectl does
+  NOT remove files dropped from an extension's file list when upgrading,
+  so after upgrading from 2.x, delete the orphaned 17 MB file yourself:
+  sudo rm <weewx-root>/bin/user/de421.bsp
+- Rise/set now honor the almanac's pressure/temperature: refraction is
+  scaled from the standard 34 arcminutes, and WeeWX's documented
+  pressure=0 idiom turns refraction off (these settings were previously
+  ignored for rise/set; custom horizons remain geometric per the USNO
+  twilight definitions).
+- $almanac.separation() additionally accepts this almanac's own body
+  binders ($almanac.separation($almanac.mars, $almanac.venus)), or a
+  binder mixed with a coordinate tuple, computed natively; each binder is
+  observed at its own almanac's time.
+- The astronomical-unit conversion constants are now the IAU values
+  (9.2955807e7 miles, 1.4959787e8 km per au); the old 9.296e7/1.496e8
+  made every earth-to-body distance ~0.03% large.
+- The sample skin degrades gracefully: its javascript reads loop fields by
+  their new names but falls back to the old names, so an un-migrated
+  [LoopData] fields list keeps the page updating; and when no extended
+  almanac is available at report time (e.g., WeeWX before 5.2 without
+  PyEphem, or replace_builtin_almanac = false without PyEphem), the page still
+  generates with empty cells that the javascript fills in, as in 2.x.
+- A malformed record in the star catalog now disables only that star,
+  not the entire catalog.
+- Replace WeeWX's built-in almanac (PyEphem or weeutil) for report generation.
+  With WeeWX 5.2 or later, report tags such as $almanac.sunrise,
+  $almanac.moon.transit, $almanac(horizon=-6).sun(use_center=1).rise and
+  $almanac.next_full_moon are now computed with Skyfield and JPL's ephemeris,
+  so generated reports show the same (more accurate) values as the loop
+  packet fields.
+- Physical attributes are also computed natively with Skyfield: $almanac.venus.mag
+  (planets via Skyfield's Mallama/Hilton photometric models; sun, moon and Pluto
+  via standard formulas), $almanac.venus.phase (percent illuminated),
+  $almanac.sun.size/radius/radius_size (apparent angular size),
+  $almanac.polaris.circumpolar, $almanac.venus.neverup,
+  $almanac.venus.parallactic_angle and $almanac.sun.name.
+- Add named star support (e.g., $almanac.rigel.rise, $almanac.polaris.circumpolar,
+  $almanac.sirius.mag), on by default (set stars = false in the Celestial section
+  of weewx.conf to turn it off).  Star data comes from celestial_stars.dat, a
+  small excerpt of the Hipparcos Catalogue (ESA SP-1200, 1997; CDS VizieR I/239)
+  installed with the extension.  All 115 star names of PyEphem's catalog are
+  supported (multi-word names use underscores, e.g. $almanac.kaus_australis.rise).
+- Anything Skyfield does not compute (e.g., the moon's libration, Jupiter's
+  central meridian longitudes, stars when the catalog is not enabled) falls
+  through to WeeWX's built-in almanac when PyEphem is installed.  Coverage was
+  audited against the built-in almanac: with PyEphem installed, everything the
+  built-in almanac can do continues to work; without PyEphem, all tags of the
+  standard skins (and much more) work with Skyfield alone.
+- Add replace_builtin_almanac field to the Celestial section of weewx.conf
+  (default: true).  Set to false to leave report generation on the
+  built-in almanac.
+- The Celestial sample report is no longer empty at report generation time:
+  every value on the page is now computed with the Skyfield almanac when the
+  report is generated (formatted exactly as the javascript renders it), and
+  the javascript then keeps the values updated from loop data on every loop
+  record, as before.  So the page is now meaningful even when fetched
+  without javascript (e.g., with curl).
+- Add a pytest test suite (tests/test_almanac.py), including permanent parity
+  audits against the built-in almanac.  Run with:
+  /path/to/weewx-venv/bin/python -m pytest tests
+- Bug fixes in the loop packet code:
+  * daySunshineDur was wrong (or missing, due to a crash that was caught and
+    logged) around the polar day/night transitions: on the first day of polar
+    day (sun rises and never sets), on days when the sun is up at local
+    midnight (it could go negative), and the sunset computation indexed the
+    wrong array when checking whether the sun set.
+  * Earth-to-body distances were reported in miles instead of kilometers for
+    stations using the METRICWX unit system.
+  * The skyfield timescale is now built once instead of on every update.
+  * Fixed a typo (blufftone) that would crash the error handler if setting
+    up the observer failed.
+  * The WeeWX version check now compares major version numbers instead of
+    strings (a string comparison would misjudge a hypothetical WeeWX 10).
+  * Cleaned up type annotations (mypy is now clean), renamed a variable that
+    shadowed a Python builtin, and fixed the --help usage text.
+
 2.4 Release 2025/01/28
 ----------------------
 Bugfix for index out of range when moon phase is new moon.

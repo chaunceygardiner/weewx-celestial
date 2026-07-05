@@ -97,6 +97,25 @@
     }
     return hours + ' hours, ' + minutes + ' minutes, ' + seconds + " seconds<br>" + deltaMinutes + " minutes, " + deltaSeconds + " seconds " + moreLess + " than yesterday";
   }
+  // Read a value under its 3.0 name, falling back to the pre-3.0 name so an
+  // un-migrated [LoopData] fields list in weewx.conf keeps this page updating.
+  function lookup(result, key) {
+    if (result[key] !== undefined) {
+      return result[key];
+    }
+    var old = {
+      "current.daylightDur.raw": "current.daySunshineDur.raw",
+      "current.yesterdayDaylightDur.raw": "current.yesterdaySunshineDur.raw"
+    }[key];
+    if (old === undefined) {
+      // The 3.0 rename lowercased the first letter of the field name
+      // (current.Sunrise.raw became current.sunrise.raw).
+      var parts = key.split(".");
+      parts[1] = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+      old = parts.join(".");
+    }
+    return result[old];
+  }
   function updateCurrent() {
     if (pageTimedOut) {
         setUpExpiredClickListener();
@@ -123,45 +142,51 @@
         var activityElement = document.getElementById("last-update");
         activityElement.innerHTML = lastUpdate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
 
-        document.getElementById("current.Sunrise.raw").innerHTML = pacificHMS(result["current.Sunrise.raw"]);
-        document.getElementById("current.SunTransit.raw").innerHTML = pacificHMS(result["current.SunTransit.raw"]);
-        document.getElementById("current.Sunset.raw").innerHTML = pacificHMS(result["current.Sunset.raw"]);
-        document.getElementById("current.tomorrowSunrise.raw").innerHTML = pacificHMS(result["current.tomorrowSunrise.raw"]);
-        document.getElementById("current.tomorrowSunset.raw").innerHTML = pacificHMS(result["current.tomorrowSunset.raw"]);
-        document.getElementById("daylight").innerHTML = daylightString(result["current.yesterdaySunshineDur.raw"], result["current.daySunshineDur.raw"]);
-        document.getElementById("current.AstronomicalTwilightStart.raw").innerHTML = pacificHMS(result["current.AstronomicalTwilightStart.raw"]);
-        document.getElementById("current.NauticalTwilightStart.raw").innerHTML = pacificHMS(result["current.NauticalTwilightStart.raw"]);
-        document.getElementById("current.CivilTwilightStart.raw").innerHTML = pacificHMS(result["current.CivilTwilightStart.raw"]);
-        document.getElementById("current.CivilTwilightEnd.raw").innerHTML = pacificHMS(result["current.CivilTwilightEnd.raw"]);
-        document.getElementById("current.NauticalTwilightEnd.raw").innerHTML = pacificHMS(result["current.NauticalTwilightEnd.raw"]);
-        document.getElementById("current.AstronomicalTwilightEnd.raw").innerHTML = pacificHMS(result["current.AstronomicalTwilightEnd.raw"]);
-        document.getElementById("current.SunAzimuth.raw").innerHTML = result["current.SunAzimuth.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.SunAltitude.raw").innerHTML = result["current.SunAltitude.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.SunRightAscension.raw").innerHTML = result["current.SunRightAscension.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.SunDeclination.raw").innerHTML = result["current.SunDeclination.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.NextEquinox").innerHTML = result["current.NextEquinox"];
-        document.getElementById("current.NextSolstice").innerHTML = result["current.NextSolstice"];
-        document.getElementById("current.Moonrise").innerHTML = result["current.Moonrise"];
-        document.getElementById("current.MoonTransit").innerHTML = result["current.MoonTransit"];
-        document.getElementById("current.Moonset").innerHTML = result["current.Moonset"];
-        document.getElementById("current.MoonAzimuth.raw").innerHTML = result["current.MoonAzimuth.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.MoonAltitude.raw").innerHTML = result["current.MoonAltitude.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.MoonRightAscension.raw").innerHTML = result["current.MoonRightAscension.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.MoonDeclination.raw").innerHTML = result["current.MoonDeclination.raw"].toFixed(1) + "&deg;";
-        document.getElementById("current.MoonPhase").innerHTML = result["current.MoonPhase"];
-        document.getElementById("current.MoonFullness").innerHTML = result["current.MoonFullness"] + " full";
-        document.getElementById("current.NextNewMoon").innerHTML = result["current.NextNewMoon"];
-        document.getElementById("current.NextFullMoon").innerHTML = result["current.NextFullMoon"];
-        document.getElementById("current.EarthMoonDistance").innerHTML = numberWithCommas(result["current.EarthMoonDistance"]);
-        document.getElementById("current.EarthSunDistance").innerHTML = numberWithCommas(result["current.EarthSunDistance"]);
-        document.getElementById("current.EarthMercuryDistance").innerHTML = numberWithCommas(result["current.EarthMercuryDistance"]);
-        document.getElementById("current.EarthVenusDistance").innerHTML = numberWithCommas(result["current.EarthVenusDistance"]);
-        document.getElementById("current.EarthMarsDistance").innerHTML = numberWithCommas(result["current.EarthMarsDistance"]);
-        document.getElementById("current.EarthJupiterDistance").innerHTML = numberWithCommas(result["current.EarthJupiterDistance"]);
-        document.getElementById("current.EarthSaturnDistance").innerHTML = numberWithCommas(result["current.EarthSaturnDistance"]);
-        document.getElementById("current.EarthUranusDistance").innerHTML = numberWithCommas(result["current.EarthUranusDistance"]);
-        document.getElementById("current.EarthNeptuneDistance").innerHTML = numberWithCommas(result["current.EarthNeptuneDistance"]);
-        document.getElementById("current.EarthPlutoDistance").innerHTML = numberWithCommas(result["current.EarthPlutoDistance"]);
+        document.getElementById("current.sunrise.raw").innerHTML = pacificHMS(lookup(result, "current.sunrise.raw"));
+        document.getElementById("current.sunTransit.raw").innerHTML = pacificHMS(lookup(result, "current.sunTransit.raw"));
+        document.getElementById("current.sunset.raw").innerHTML = pacificHMS(lookup(result, "current.sunset.raw"));
+        document.getElementById("current.tomorrowSunrise.raw").innerHTML = pacificHMS(lookup(result, "current.tomorrowSunrise.raw"));
+        document.getElementById("current.tomorrowSunset.raw").innerHTML = pacificHMS(lookup(result, "current.tomorrowSunset.raw"));
+        document.getElementById("daylight").innerHTML = daylightString(lookup(result, "current.yesterdayDaylightDur.raw"), lookup(result, "current.daylightDur.raw"));
+        document.getElementById("current.astronomicalTwilightStart.raw").innerHTML = pacificHMS(lookup(result, "current.astronomicalTwilightStart.raw"));
+        document.getElementById("current.nauticalTwilightStart.raw").innerHTML = pacificHMS(lookup(result, "current.nauticalTwilightStart.raw"));
+        document.getElementById("current.civilTwilightStart.raw").innerHTML = pacificHMS(lookup(result, "current.civilTwilightStart.raw"));
+        document.getElementById("current.civilTwilightEnd.raw").innerHTML = pacificHMS(lookup(result, "current.civilTwilightEnd.raw"));
+        document.getElementById("current.nauticalTwilightEnd.raw").innerHTML = pacificHMS(lookup(result, "current.nauticalTwilightEnd.raw"));
+        document.getElementById("current.astronomicalTwilightEnd.raw").innerHTML = pacificHMS(lookup(result, "current.astronomicalTwilightEnd.raw"));
+        document.getElementById("current.sunAzimuth.raw").innerHTML = lookup(result, "current.sunAzimuth.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.sunAltitude.raw").innerHTML = lookup(result, "current.sunAltitude.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.sunRightAscension.raw").innerHTML = lookup(result, "current.sunRightAscension.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.sunDeclination.raw").innerHTML = lookup(result, "current.sunDeclination.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.nextEquinox").innerHTML = lookup(result, "current.nextEquinox");
+        document.getElementById("current.nextSolstice").innerHTML = lookup(result, "current.nextSolstice");
+        document.getElementById("current.moonrise").innerHTML = lookup(result, "current.moonrise");
+        document.getElementById("current.moonTransit").innerHTML = lookup(result, "current.moonTransit");
+        document.getElementById("current.moonset").innerHTML = lookup(result, "current.moonset");
+        document.getElementById("current.moonAzimuth.raw").innerHTML = lookup(result, "current.moonAzimuth.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.moonAltitude.raw").innerHTML = lookup(result, "current.moonAltitude.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.moonRightAscension.raw").innerHTML = lookup(result, "current.moonRightAscension.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.moonDeclination.raw").innerHTML = lookup(result, "current.moonDeclination.raw").toFixed(1) + "&deg;";
+        document.getElementById("current.moonPhase").innerHTML = lookup(result, "current.moonPhase");
+        document.getElementById("current.moonFullness").innerHTML = lookup(result, "current.moonFullness") + " full";
+        document.getElementById("current.nextNewMoon").innerHTML = lookup(result, "current.nextNewMoon");
+        document.getElementById("current.nextFullMoon").innerHTML = lookup(result, "current.nextFullMoon");
+        document.getElementById("current.earthMoonDistance").innerHTML = numberWithCommas(lookup(result, "current.earthMoonDistance"));
+        document.getElementById("current.earthSunDistance").innerHTML = numberWithCommas(lookup(result, "current.earthSunDistance"));
+        document.getElementById("current.earthMercuryDistance").innerHTML = numberWithCommas(lookup(result, "current.earthMercuryDistance"));
+        document.getElementById("current.earthVenusDistance").innerHTML = numberWithCommas(lookup(result, "current.earthVenusDistance"));
+        document.getElementById("current.earthMarsDistance").innerHTML = numberWithCommas(lookup(result, "current.earthMarsDistance"));
+        document.getElementById("current.earthJupiterDistance").innerHTML = numberWithCommas(lookup(result, "current.earthJupiterDistance"));
+        document.getElementById("current.earthSaturnDistance").innerHTML = numberWithCommas(lookup(result, "current.earthSaturnDistance"));
+        document.getElementById("current.earthUranusDistance").innerHTML = numberWithCommas(lookup(result, "current.earthUranusDistance"));
+        document.getElementById("current.earthNeptuneDistance").innerHTML = numberWithCommas(lookup(result, "current.earthNeptuneDistance"));
+        document.getElementById("current.earthPlutoDistance").innerHTML = numberWithCommas(lookup(result, "current.earthPlutoDistance"));
+        // Light years; only present when the star catalog is enabled and the
+        // field is in the [LoopData] fields list.
+        var proximaLY = result["current.earthProximaCentauriDistance.raw"];
+        if (proximaLY !== undefined) {
+          document.getElementById("current.earthProximaCentauriDistance.raw").innerHTML = proximaLY.toFixed(2) + " light years";
+        }
       } catch (e) {
         console.log(e);
       }

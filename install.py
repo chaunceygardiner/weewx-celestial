@@ -23,7 +23,13 @@ def loader():
         sys.exit("weewx-celestial requires Python 3.7 or later, found %s.%s" % (
             sys.version_info[0], sys.version_info[1]))
 
-    if weewx.__version__ < "4":
+    # A version string whose first component is not a plain integer (e.g., a
+    # dev build) is given the benefit of the doubt.
+    try:
+        weewx_major = int(weewx.__version__.split('.')[0])
+    except ValueError:
+        weewx_major = None
+    if weewx_major is not None and weewx_major < 4:
         sys.exit("weewx-celestial requires WeeWX 4, found %s" % weewx.__version__)
 
     return CelestialInstaller()
@@ -31,16 +37,18 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "2.4",
+            version = "3.0",
             name = 'celestial',
-            description = 'Inserts celestial observations into loop packets.',
+            description = 'Inserts celestial observations into loop packets and replaces the almanac used in reports.',
             author = "John A Kline",
             author_email = "john@johnkline.com",
             data_services = 'user.celestial.Celestial',
             config = {
                 'Celestial': {
-                    'enable'           : 'true',
-                    'update_rate_secs' : 10,
+                    'enable'                 : 'true',
+                    'update_rate_secs'       : 10,
+                    'replace_builtin_almanac': 'true',
+                    'stars'                  : 'true',
                 },
                 'StdReport': {
                     'CelestialReport': {
@@ -58,7 +66,8 @@ class CelestialInstaller(ExtensionInstaller):
             files = [
                 ('bin/user', [
                     'bin/user/celestial.py',
-                    'bin/user/de421.bsp',
+                    'bin/user/celestial_stars.dat',
+                    'bin/user/celestial_de421.bsp',
                     ]),
                 ('skins/Celestial', [
                     'skins/Celestial/index.html.tmpl',
