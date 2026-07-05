@@ -365,7 +365,7 @@ class TestFallback:
 
 
 class TestEngineGuards:
-    """Version and ephemeris-span guards shared with weewx-skyfield."""
+    """Skyfield version and ephemeris-span guards."""
 
     OUT_OF_RANGE_TS = 4102444800.0    # 2100-01-01 00:00:00 UTC
 

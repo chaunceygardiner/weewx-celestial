@@ -1,10 +1,8 @@
 weewx-celestial change history
 ------------------------------
 
-3.1 Release TBD
+3.1 Release 2026/07/05
 ----------------------
-Engine fixes shared with the weewx-skyfield extension (same almanac engine).
-
 - Require Skyfield 1.47 or later (the first release with
   find_risings/find_settings, which rise/set computations use).  On an
   older Skyfield (e.g., Debian 12 packages 1.45), Celestial now logs an
