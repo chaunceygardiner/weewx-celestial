@@ -4,32 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A WeeWX extension with two jobs, both computed with Skyfield and the bundled JPL DE421
-ephemeris:
+A WeeWX extension with one job: a `StdService` that inserts celestial observations
+(sunrise, twilight times, moon phase, earth-to-body distances, ...) into every LOOP
+packet, for consumption by weewx-loopdata.  Everything is computed with Skyfield and
+the bundled JPL DE421 ephemeris.
 
-1. **Loop fields** — a `StdService` that inserts celestial observations (sunrise, twilight
-   times, moon phase, earth-to-body distances, ...) into every LOOP packet, for consumption
-   by weewx-loopdata.
-2. **Report almanac** — on WeeWX 5.2+, a `weewx.almanac.AlmanacType` registered at the head
-   of `weewx.almanac.almanacs`, so report tags (`$almanac.sunrise`,
-   `$almanac(horizon=-6).sun(use_center=1).rise`, `$almanac.rigel.mag`, ...) use Skyfield
-   instead of WeeWX's built-in PyEphem/weeutil almanac.
+Report tags (`$almanac.sunrise`, `$almanac.rigel.mag`, ...) are NOT this extension's
+job: versions 3.x embedded a Skyfield report almanac, and 4.0 removed it.  That engine
+lives on in the independent weewx-skyfield extension (same author, sibling checkout at
+`../weewx-skyfield`), which is now its sole home — engine fixes go there, and loop-field
+fixes go here.  The two are designed to coexist with no configuration.
 
 ## Commands
 
 Tests and development require the Python from a WeeWX virtual environment (WeeWX, Skyfield,
-NumPy, pytest installed; PyEphem enables the parity audits).  On this machine that venv is
-`/home/weewx/weewx-venv`.
+NumPy, pytest installed).  On this machine that venv is `/home/weewx/weewx-venv`.
 
 ```sh
 # Full test suite (from the repo root; tests add bin/user to sys.path themselves)
 /home/weewx/weewx-venv/bin/python -m pytest tests
 
 # One test
-/home/weewx/weewx-venv/bin/python -m pytest tests/test_almanac.py::TestStars::test_hip_number_tags
+/home/weewx/weewx-venv/bin/python -m pytest tests/test_celestial.py::TestStars::test_proxima_distance_in_packet
 
 # Lint — BOTH must stay completely clean
-pyflakes3 bin/user/celestial.py tests/test_almanac.py
+pyflakes3 bin/user/celestial.py tests/test_celestial.py
 mypy --ignore-missing-imports bin/user/celestial.py
 
 # After editing the sample skin template, run the end-to-end render tests.
@@ -38,7 +37,7 @@ mypy --ignore-missing-imports bin/user/celestial.py
 # compilation accepts (e.g. `$(x if $cond else '')` loses its else-value and
 # dies with SyntaxError only in production).  Guard cells with directive-level
 # `#if ...#...#end if#`, never with conditional expressions inside $(...).
-/home/weewx/weewx-venv/bin/python -m pytest tests/test_almanac.py::TestSampleSkinRenders
+/home/weewx/weewx-venv/bin/python -m pytest tests/test_celestial.py::TestSampleSkinRenders
 
 # Install into a WeeWX instance, then restart weewx.  Deploying requires
 # root (WeeWX runs as root on these machines).  Claude: you cannot run
@@ -49,57 +48,65 @@ sudo -- bash -c ". /home/weewx/weewx-venv/bin/activate; weectl extension install
 
 ## Architecture
 
-Everything lives in `bin/user/celestial.py`, in three layers:
+Everything lives in `bin/user/celestial.py`, in two layers:
 
-- **`Celestial(StdService)`** — reads `[Celestial]` config, binds `NEW_LOOP_PACKET`, and
-  calls `register_almanac()` (which declines gracefully before WeeWX 5.2, and dedups by
-  class name *and* module — the independent weewx-skyfield-almanac extension uses the same
-  class name and must not be removed).
-- **`Sky`** — the Skyfield engine shared by both paths: loads the timescale, the ephemeris
-  (`celestial_de421.bsp`), and the star catalog; owns the loop-field computation
+- **`Celestial(StdService)`** — reads `[Celestial]` config, binds `NEW_LOOP_PACKET`.
+- **`Sky`** — the Skyfield engine: loads the timescale, the ephemeris
+  (`celestial_de421.bsp`) and the star catalog, and owns the loop-field computation
   (`insert_fields`).  Its `__init__` NEVER raises: every failure logs and leaves
-  `valid=False`, and the service then simply does nothing.  `EPHEMERIS_KEYS` is the single
-  source of truth for the bodies served (earth stays out of `Sky.orbs`, whose keys drive
-  almanac body dispatch).
-- **`SkyfieldAlmanacType` / `SkyfieldAlmanacBinder`** — the report almanac.  Attributes the
-  binder does not compute fall through to the built-in PyEphem almanac when installed
-  (`pyephem_fallback`); by design the only remaining fallbacks are named stars when the
-  catalog is disabled and direct PyEphem attributes we do not compute (e.g.
-  `moon.subsolar_lat`).
+  `valid=False`, and the service then simply does nothing.  `EPHEMERIS_KEYS` is the
+  single source of truth for the bodies served.
 
-**The cardinal rule: one computation, two consumers.**  Most quantities are needed by both
-the loop path and the report path.  Shared helpers exist precisely so the two cannot drift:
-`daylight_seconds()` (the polar-safe four-branch daylight algorithm), `find_discrete_events()`
-(moon phases, equinoxes/solstices), `Sky.distance_au()`, `direction_value()`.  When adding a
-quantity to one path, put the computation where the other path can reach it.
+**Caching: each field class has its own lifetime** (`insert_fields` is three sections):
+continuous fields (`get_continuous_fields`, ~20 ms) run every packet, throttled only by
+`update_rate_secs` (default 0 = every loop record); day-scoped fields (`get_day_fields`,
+~150 ms) recompute when the packet's local day changes — compared for EQUALITY, so
+backfilled packets get their own day, never a newer cache; next-event fields
+(`get_event_fields`, ~110 ms of months-long scans) recompute when the local day advances
+past a cached event (events are deliberately kept for the rest of their day after they
+occur).  `TestFieldCaching` pins all of this, including that a cached packet equals a
+cold-computed one.  Don't collapse these lifetimes back into one blanket cache — the
+~270 ms full recompute per cycle is why 2.3 had to introduce a 10-second throttle.
 
-**Correctness policy: accepted definitions over PyEphem compatibility.**  PyEphem is
-deprecated and measurably wrong in places (its Jupiter CMLs are ~0.8° off the IAU
-definition; it applies refraction to custom horizons where USNO twilight is geometric).
-Prefer the USNO/IAU/Meeus answer, document every deviation in the README section
-"Differences from PyEphem", and give it a changes.txt bullet.  Return conventions:
-`FLOAT_ANGLES` attributes are decimal degrees; PyEphem-shaped attributes (`libration_*`,
-`colong`, `cmlI/II`, `earth_tilt`, `separation`, `parallactic_angle`) are radians floats,
-matching PyEphem's numeric scale.
+**Correctness policy: accepted definitions (USNO/IAU/Meeus), verified against
+weewx-skyfield.**  The loop fields and weewx-skyfield's report tags compute from the same
+definitions (rise/set with standard refraction plus the date's apparent radius, geometric
+custom horizons for twilight, coordinates of date for RA/Dec), and
+`TestLoopPacketConsistency` cross-checks the two whenever weewx-skyfield is importable.
+`TestLoopPacketPinned` pins regression values (captured from 3.1) that run even without it.
+When a definition changes on either side, both repos and both test classes must move together.
 
-**Loop fields** are registered in `OBS_GROUPS` (name → unit group).
-`DEPRECATED_FIELD_MAP` dual-emits the pre-3.0 PascalCase names; the old names are removed
-in 4.0.  Distances are unit-converted (miles/km) except `earthProximaCentauriDistance`,
-which is light years in every unit system (`group_data`, so nothing "converts" it).
+**Loop fields** are registered in `OBS_GROUPS` (name → unit group).  The pre-3.0
+PascalCase names were dual-emitted through 3.x and removed in 4.0
+(`TestDeprecatedFieldsRemoved` keeps them from coming back).  The old→new mapping
+survives only as `_MIGRATION_FIELD_MAP`, which exists solely for the
+`--migrate-loopdata-fields` CLI utility (rewrites users' `[LoopData]` fields lines;
+safe-by-default `--output`, plus `--in-place` and `--print-fields-value`) and must never
+grow another consumer.  Distances are unit-converted
+(miles/km) except `earthProximaCentauriDistance`, which is light years in every unit
+system (`group_data`, so nothing "converts" it).
 
-**Stars**: `NAMED_STARS` maps tag names to Hipparcos numbers — the IAU Catalog of Star
-Names (IAU-CSN, every entry with an HIP number) plus PyEphem's names as legacy aliases.
-`celestial_stars.dat` is an excerpt of unmodified `hip_main.dat` records covering exactly
-those HIPs; a user-installed full `hip_main.dat` (gitignored) is preferred when present and
-enables `$almanac.hip_<number>` tags for any Hipparcos star (loaded lazily, misses cached).
-A malformed catalog record must only disable that one star.
+**Stars**: the loop path needs exactly one star — Proxima Centauri (`LOOP_STARS`), for
+`earthProximaCentauriDistance`.  `celestial_stars.dat` is an excerpt of unmodified
+`hip_main.dat` records (it still covers the full IAU named-star set, so it doubles as a
+stand-in full catalog); a user-installed `hip_main.dat` (gitignored) stands in when the
+excerpt is missing.  A malformed catalog record must only disable that one star; an
+unreadable catalog must only disable star support, never the engine.
 
-**Sample skin** (`skins/Celestial/`): every report-time value is guarded by
-`$almanac.hasExtras` (and `#try` where a tag needs WeeWX 5.2) so the page still generates
-with empty, javascript-filled cells on configurations without a capable almanac.  The
-javascript reads loop-data keys through `lookup()`, which falls back to the pre-3.0 field
-names so an un-migrated `[LoopData]` fields list keeps the page updating.  Element ids must
-match loop-data keys exactly.
+**Sample skin** (`skins/Celestial/`): a live "night-palette" page.  Every report-time data
+cell is guarded by `$almanac.hasExtras` (and `#try` where a tag needs WeeWX 5.2 or the
+Skyfield almanac), so the page renders first-paint values from whatever capable almanac is
+installed (weewx-skyfield or built-in PyEphem) and still generates, with empty
+javascript-filled cells, without one.  The live components (moon disc, countdown chips, day
+strip, planet chips) are javascript-only, driven by loop data at `refresh_rate` plus a 1 s
+local tick; every loop-data read is guarded so a missing key skips its own cell, never the
+batch.  Data-cell element ids must match loop-data keys exactly; the live components use
+non-key ids (`moon-disc`, `count-*`, `planet-*`).  ALL colors live in `celestial.css`
+(shipped via CopyGenerator copy_once): Cheetah owns `#` and `$`, so hex color literals and
+JS template literals must never appear in the .tmpl/.inc files — a test enforces the hex
+rule, and the display timezone is auto-detected from the station machine
+(/etc/localtime → IANA name) with the `time_zone` Extras option as override ('browser' =
+viewer-local).
 
 **Installed file naming**: files this extension installs into `bin/user` are prefixed
 `celestial_` (`celestial_de421.bsp`, `celestial_stars.dat`) so no other extension can claim
@@ -109,14 +116,13 @@ installed.
 
 ## Tests
 
-`tests/test_almanac.py` pins TZ to America/Los_Angeles and uses fixed regression values for
-Palo Alto on 2025-06-21 (`TIME_TS`).  Key fixtures/helpers: `sky` (session-scoped engine),
-`almanac` (registers the Skyfield almanac, restores the global list), `skyfield_only_almanac`
-(simulates a system without PyEphem), `saved_almanacs()`, `pyephem_observer()`.  Two
-permanent audits matter when adding features: `TestPyEphemParityAudit` (with PyEphem,
-everything the built-in almanac could do must still evaluate) and `TestSkyfieldOnlyAudit`
-(without PyEphem, every supported tag must evaluate — add new native tags to
-`SKYFIELD_ONLY_EXPRESSIONS`).  PyEphem-dependent tests skip via `pytest.importorskip`.
+`tests/test_celestial.py` pins TZ to America/Los_Angeles and uses fixed regression values
+for Palo Alto on 2025-06-21 (`TIME_TS`).  Key fixtures/helpers: `sky` (session-scoped
+engine), `wxskyfield_sky`/`wxskyfield_almanac` (the weewx-skyfield oracle — found via
+`WXSKYFIELD_DIRS`: the installed copy or the sibling checkout; tests using it skip when
+neither exists), `saved_almanacs()`, `StubEngine`/`make_config()`.  The oracle dirs also
+contain a `celestial.py`, so `load_wxskyfield()` APPENDS to sys.path — never insert(0).
+`TestLoopPacketPinned` must keep passing with no wxskyfield anywhere.
 
 ## Releasing
 

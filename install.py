@@ -37,18 +37,17 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "3.1",
+            version = "4.0",
             name = 'celestial',
-            description = 'Inserts celestial observations into loop packets and replaces the almanac used in reports.',
+            description = 'Inserts celestial observations into loop packets.',
             author = "John A Kline",
             author_email = "john@johnkline.com",
             data_services = 'user.celestial.Celestial',
             config = {
                 'Celestial': {
-                    'enable'                 : 'true',
-                    'update_rate_secs'       : 10,
-                    'replace_builtin_almanac': 'true',
-                    'stars'                  : 'true',
+                    'enable'          : 'true',
+                    'update_rate_secs': 0,
+                    'stars'           : 'true',
                 },
                 'StdReport': {
                     'CelestialReport': {
@@ -57,6 +56,7 @@ class CelestialInstaller(ExtensionInstaller):
                         'skin':'Celestial',
                         'Extras': {
                             'loop_data_file'   : '../loop-data.txt',
+                            'refresh_rate'     : 2,
                             'expiration_time'  : 24,
                             'page_update_pwd'  : 'foobar',
                         },
@@ -70,6 +70,7 @@ class CelestialInstaller(ExtensionInstaller):
                     'bin/user/celestial_de421.bsp',
                     ]),
                 ('skins/Celestial', [
+                    'skins/Celestial/celestial.css',
                     'skins/Celestial/index.html.tmpl',
                     'skins/Celestial/realtime_updater.inc',
                     'skins/Celestial/skin.conf',

@@ -1,6 +1,69 @@
 weewx-celestial change history
 ------------------------------
 
+4.0 Release 2026/07/05
+----------------------
+- ACTION REQUIRED (report tags): the embedded Skyfield report almanac has
+  been removed.  Report tags such as $almanac.sunrise are now served by
+  whatever almanac WeeWX has installed.  Install the weewx-skyfield
+  extension (https://github.com/chaunceygardiner/weewx-skyfield) to keep
+  Skyfield-quality tags, including named-star and hip_<n> tags such as
+  $almanac.rigel.rise and $almanac.hip_57939.mag.  The
+  replace_builtin_almanac option is gone; a leftover setting in the
+  [Celestial] section of weewx.conf is ignored harmlessly.
+- ACTION REQUIRED (loop fields): the deprecated pre-3.0 field names
+  (Sunrise, MoonPhase, EarthMoonDistance, daySunshineDur, ...) are no
+  longer emitted, as announced in 3.0.  A bundled utility migrates the
+  [LoopData] [[Include]] [[[fields]]] line in one step -- renames the
+  deprecated celestial fields in place, drops resulting duplicates, and
+  appends the new 4.0 fields, never touching non-celestial fields:
+      python -m user.celestial --migrate-loopdata-fields
+          --config /path/to/weewx.conf --output /path/to/weewx.conf.migrated
+  Compare and move into place (or use --in-place, which makes a backup
+  first, or --print-fields-value for manual pasting).  Custom skins that
+  read the old names from loop-data.txt must still be updated by hand;
+  the full mapping is in the README.
+- Loop fields are now cached by how often each can change: positions,
+  distances and the moon's phase are recomputed every packet; rise/set,
+  twilight and daylight fields once per local day; next
+  equinox/solstice/full/new moon only when one passes.  A full recompute
+  took ~270 ms on a Raspberry Pi 5 and previously ran every
+  update_rate_secs; the steady-state cost is now ~20 ms per packet.
+  Accordingly, update_rate_secs now throttles only the continuously
+  varying fields, and the installed default is 0 (update on every loop
+  packet, e.g. every 2 seconds with the Vantage driver).  An existing
+  update_rate_secs setting in weewx.conf keeps working and may be set to
+  0 to go live.
+- New loop fields: moonPhaseIndex (0=new .. 4=full .. 7=waning crescent),
+  moonWaxing (1 while waxing, else 0 -- exact where the index is coarse)
+  and azimuth/altitude for all eight planets (mercuryAzimuth,
+  mercuryAltitude, ... plutoAzimuth, plutoAltitude).  Measured steady-state
+  cost on a Raspberry Pi 5: ~42 ms per packet (was ~20 ms).  Adding them to
+  the [LoopData] fields list is only needed for the redesigned sample
+  report's new visuals.
+- The sample report is redesigned as a live "night-palette" page: a
+  true-phase moon disc, countdown chips (next full/new moon, equinox,
+  solstice), a day strip with twilight bands, rise/set ticks and a pulsing
+  now-line that moves in real time, planets-now chips with per-body
+  identity colors, and a responsive card layout (styles in the new
+  celestial.css).  All previous data cells and their dual-source first
+  paint (report-time almanac values + live loop data) are preserved.  To
+  feed the new visuals, MERGE the fields listed in the README into the
+  [LoopData] fields line (do not replace the line: it also carries the
+  non-celestial fields other reports read).
+- Sample report fixes: displayed times were hardcoded to
+  America/Los_Angeles -- the station's timezone is now auto-detected at
+  report generation time (via /etc/localtime), so every viewer sees
+  station time with no configuration; a new time_zone Extras option can
+  override (an IANA name, or 'browser' for the viewer's browser-local
+  timezone).  The refresh_rate option is now honored (it was read but
+  ignored, polling always at 2 s); a missing loop-data key no longer
+  aborts the entire javascript update batch.
+- The bundled sample skin still behaves as before for the data cells:
+  report-time values render from the installed almanac when one with
+  extended capabilities is available (weewx-skyfield or PyEphem), and
+  javascript fills and updates every cell live from loop data either way.
+
 3.1 Release 2026/07/05
 ----------------------
 - Require Skyfield 1.47 or later (the first release with

@@ -7,16 +7,14 @@ Distributed under the terms of the GNU Public License (GPLv3)
 Celestial is a WeeWX service that generates Celestial observations
 that are inserted into the loop packet.
 
-With WeeWX 5.2 or later, Celestial also registers a Skyfield based
-almanac (SkyfieldAlmanacType), so that report tags such as
-$almanac.sunrise are computed with Skyfield rather than WeeWX's
-built-in PyEphem/weeutil almanac.
+Report tags (e.g. $almanac.sunrise) are not served by this extension;
+install the weewx-skyfield extension for a Skyfield-based report
+almanac computed from the same definitions as these loop fields.
 """
 
 import logging
 import math
 import os
-import re
 import sys
 import time
 
@@ -30,27 +28,22 @@ import numpy
 import skyfield
 import skyfield.almanac
 import skyfield.api
-import skyfield.errors
 import skyfield.framelib
-import skyfield.magnitudelib
 import skyfield.timelib
 import weeutil.Moon
 import weeutil.weeutil
 import weewx
-import weewx.almanac
 import weewx.units
 
 from weeutil.weeutil import to_bool
 from weeutil.weeutil import to_int
 from weewx.engine import StdEngine
 from weewx.engine import StdService
-from weewx.units import ValueHelper
-from weewx.units import ValueTuple
 
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '3.1'
+CELESTIAL_VERSION = '4.0'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -108,22 +101,146 @@ OBS_GROUPS: Dict[str, str] = {
     'moonDeclination'          : 'group_direction',
     'moonFullness'             : 'group_percent',
     'moonPhase'                : 'group_data',
+    # The index into the configured moon_phases list (0=new, 4=full,
+    # 7=waning crescent), emitted so clients can name and draw the moon.
+    'moonPhaseIndex'           : 'group_data',
+    # 1 while the moon is waxing (elongation < 180), else 0.  Exact where
+    # the index is not: index 0 spans the last ~1.5 days of waning crescent
+    # as well as the first of waxing, which would draw the lit side of the
+    # disc mirrored.
+    'moonWaxing'               : 'group_data',
     'nextNewMoon'              : 'group_time',
     'nextFullMoon'             : 'group_time',
     'moonrise'                 : 'group_time',
     'moonTransit'              : 'group_time',
     'moonset'                  : 'group_time',
+    'mercuryAzimuth'           : 'group_direction',
+    'mercuryAltitude'          : 'group_direction',
+    'venusAzimuth'             : 'group_direction',
+    'venusAltitude'            : 'group_direction',
+    'marsAzimuth'              : 'group_direction',
+    'marsAltitude'             : 'group_direction',
+    'jupiterAzimuth'           : 'group_direction',
+    'jupiterAltitude'          : 'group_direction',
+    'saturnAzimuth'            : 'group_direction',
+    'saturnAltitude'           : 'group_direction',
+    'uranusAzimuth'            : 'group_direction',
+    'uranusAltitude'           : 'group_direction',
+    'neptuneAzimuth'           : 'group_direction',
+    'neptuneAltitude'          : 'group_direction',
+    'plutoAzimuth'             : 'group_direction',
+    'plutoAltitude'            : 'group_direction',
 }
 
-# Loop field names used before 3.0, mapped to their replacements.
-# DEPRECATED: In 3.0, every loop packet carries each value under BOTH names,
-# so existing [LoopData] fields lists and skins keep working.  The old names
-# will be REMOVED in 4.0; switch skins and weewx.conf to the new names.
-# (Note that daySunshineDur/yesterdaySunshineDur were renamed to
-# daylightDur/yesterdayDaylightDur because they measure the time the sun is
-# above the horizon, not "sunshine duration" in the meteorological sense of
-# measured bright sunshine.)
-DEPRECATED_FIELD_MAP: Dict[str, str] = {
+# Set up celestial observation types.  (The pre-3.0 PascalCase aliases were
+# dual-emitted through 3.x and removed in 4.0, as announced in 3.0.)
+for _obs_name, _obs_group in OBS_GROUPS.items():
+    weewx.units.obs_group_dict[_obs_name] = _obs_group
+
+class Celestial(StdService):
+    def __init__(self, engine: StdEngine, config_dict: Dict[str, Any]):
+        super(Celestial, self).__init__(engine, config_dict)
+        log.info("Service version : %s" % CELESTIAL_VERSION)
+
+        if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 7):
+            raise Exception("Python 3.7 or later is required for the celestial plugin.")
+
+        # Only continue if the plugin is enabled.
+        celestial_config_dict = config_dict.get('Celestial', {})
+        enable = to_bool(celestial_config_dict.get('enable'))
+        if enable:
+            log.info("Celestial status: enabled...continuing.")
+        else:
+            log.info("Celestial status: disabled...enable it in the Celestial section of weewx.conf.")
+            return
+
+        update_rate_secs = to_int(celestial_config_dict.get('update_rate_secs', 0))
+        stars = to_bool(celestial_config_dict.get('stars', True))
+
+        user_root, moon_phases, altitude_m, latitude, longitude = Sky.get_weewx_config_info(config_dict)
+        if latitude is None or longitude is None:
+            log.error("Could not determine station's latitude and longitude.")
+            return
+        if altitude_m is None:
+            log.error("Could not determine station's altitude.")
+            return
+
+        log.info("update_rate_secs       : %d" % update_rate_secs)
+        log.info("stars                  : %r" % stars)
+        log.info("user_root              : %s" % user_root)
+        log.info("moon_phases            : %r" % moon_phases)
+        log.info("altitude_m             : %f" % altitude_m)
+        log.info("latitude               : %f" % latitude)
+        log.info("longitude              : %f" % longitude)
+
+        self.sky = Sky(update_rate_secs, user_root, moon_phases, altitude_m, latitude, longitude, load_stars=stars)
+        if self.sky.is_valid():
+            self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
+
+    def new_loop(self, event):
+        try:
+            pkt: Dict[str, Any] = event.packet
+            assert event.event_type == weewx.NEW_LOOP_PACKET
+            log.debug(pkt)
+            self.sky.insert_fields(pkt)
+        except Exception as e:
+            log.error('new_loop: %s.' % e)
+
+# The stars used by the loop-field path, mapped to their Hipparcos catalog
+# numbers.  Only Proxima Centauri is needed (for the
+# earthProximaCentauriDistance loop field); the stars are read from
+# celestial_stars.dat, an excerpt of the Hipparcos Catalogue (ESA SP-1200,
+# 1997) that ships with this extension.  Report tags for named stars
+# ($almanac.rigel.rise) are served by the weewx-skyfield extension.
+LOOP_STARS: Dict[str, int] = {
+    'proxima_centauri' : 70890,
+}
+
+# An excerpt of the Hipparcos Catalogue covering the IAU named stars
+# (a superset of LOOP_STARS).  It is installed alongside celestial.py (like
+# the de421.bsp ephemeris), and its data lines are unmodified hip_main.dat
+# records, so a full hip_main.dat works in its place.
+STAR_FILE = 'celestial_stars.dat'
+# The Hipparcos catalog's positions are for epoch J1991.25.  This is that
+# epoch as a TT Julian date, matching skyfield.data.hipparcos.load_dataframe.
+HIPPARCOS_EPOCH_JD = 1721045.0 + 1991.25 * 365.25
+
+# Astronomical units per light year (IAU 2015 definitions).
+AU_PER_LIGHT_YEAR = 63241.077
+
+# Miles and kilometers per astronomical unit (IAU 2012: 1 au = 149,597,870.7 km).
+# The sample skin's index.html.tmpl hardcodes the same values (a template
+# cannot import this module); a test ties the two together.
+AU_MILES = 9.2955807e+7
+AU_KM    = 1.4959787e+8
+
+# Body name -> key in the DE421 ephemeris, for every body served by the loop
+# fields (earth, the observer, is loaded separately).
+EPHEMERIS_KEYS: Dict[str, str] = {
+    'sun'    : 'sun',
+    'moon'   : 'moon',
+    'mercury': 'mercury',
+    'venus'  : 'venus',
+    'mars'   : 'mars',
+    'jupiter': 'jupiter barycenter',
+    'saturn' : 'saturn barycenter',
+    'uranus' : 'uranus barycenter',
+    'neptune': 'neptune barycenter',
+    'pluto'  : 'pluto barycenter',
+}
+
+# The planets whose azimuth/altitude are emitted as loop fields
+# (<name>Azimuth / <name>Altitude); sun and moon are handled individually.
+LOOP_PLANETS: List[str] = ['mercury', 'venus', 'mars', 'jupiter',
+                           'saturn', 'uranus', 'neptune', 'pluto']
+
+# Pre-3.0 loop field names mapped to their replacements.  This map exists
+# SOLELY for the --migrate-loopdata-fields command-line utility, which
+# rewrites [LoopData] [[Include]] fields lines for users upgrading from 2.x
+# or 3.x.  The old names were removed from the loop packet in 4.0 and this
+# map must never grow another consumer (TestDeprecatedFieldsRemoved keeps
+# the packet honest).
+_MIGRATION_FIELD_MAP: Dict[str, str] = {
     'AstronomicalTwilightEnd'  : 'astronomicalTwilightEnd',
     'AstronomicalTwilightStart': 'astronomicalTwilightStart',
     'CivilTwilightEnd'         : 'civilTwilightEnd',
@@ -164,540 +281,98 @@ DEPRECATED_FIELD_MAP: Dict[str, str] = {
     'yesterdaySunshineDur'     : 'yesterdayDaylightDur',
 }
 
-# Set up celestial observation types (both the new and, until 4.0, the
-# deprecated names).
-for _obs_name, _obs_group in OBS_GROUPS.items():
-    weewx.units.obs_group_dict[_obs_name] = _obs_group
-for _old_name, _new_name in DEPRECATED_FIELD_MAP.items():
-    weewx.units.obs_group_dict[_old_name] = OBS_GROUPS[_new_name]
+# The loop-data renditions the 4.0 sample report reads that pre-4.0 fields
+# lines will not have; the migrator appends the missing ones.
+_MIGRATION_NEW_FIELDS: List[str] = [
+    'current.dateTime.raw',
+    'current.earthProximaCentauriDistance.raw',
+    'current.jupiterAltitude.raw', 'current.jupiterAzimuth.raw',
+    'current.marsAltitude.raw', 'current.marsAzimuth.raw',
+    'current.mercuryAltitude.raw', 'current.mercuryAzimuth.raw',
+    'current.moonFullness.raw', 'current.moonPhaseIndex.raw',
+    'current.moonTransit.raw', 'current.moonWaxing.raw',
+    'current.neptuneAltitude.raw', 'current.neptuneAzimuth.raw',
+    'current.nextEquinox.raw', 'current.nextFullMoon.raw',
+    'current.nextNewMoon.raw', 'current.nextSolstice.raw',
+    'current.plutoAltitude.raw', 'current.plutoAzimuth.raw',
+    'current.saturnAltitude.raw', 'current.saturnAzimuth.raw',
+    'current.uranusAltitude.raw', 'current.uranusAzimuth.raw',
+    'current.venusAltitude.raw', 'current.venusAzimuth.raw',
+]
 
-class Celestial(StdService):
-    def __init__(self, engine: StdEngine, config_dict: Dict[str, Any]):
-        super(Celestial, self).__init__(engine, config_dict)
-        log.info("Service version : %s" % CELESTIAL_VERSION)
 
-        if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 7):
-            raise Exception("Python 3.7 or later is required for the celestial plugin.")
+def migrate_loopdata_fields(fields: List[str]) -> Tuple[List[str], Dict[str, Any]]:
+    """Rewrite a [LoopData] [[Include]] fields list for 4.0: rename
+    deprecated pre-3.0 celestial obstypes in place (preserving each entry's
+    rendition suffix and the list's order), drop the duplicates those
+    renames create (keeping the first occurrence), and append the 4.0
+    sample-report fields that are missing.  Entries that are not deprecated
+    celestial names are never touched.  Returns (new_fields, report) where
+    report maps 'renamed' to (old, new) pairs and 'dropped'/'added' to
+    field names."""
+    result: List[str] = []
+    seen: set = set()
+    renamed: List[Tuple[str, str]] = []
+    dropped: List[str] = []
+    added: List[str] = []
+    for field in fields:
+        parts = field.split('.')
+        if len(parts) >= 2 and parts[0] == 'current' and parts[1] in _MIGRATION_FIELD_MAP:
+            new_field = '.'.join([parts[0], _MIGRATION_FIELD_MAP[parts[1]]] + parts[2:])
+            renamed.append((field, new_field))
+            field = new_field
+        if field in seen:
+            dropped.append(field)
+            continue
+        seen.add(field)
+        result.append(field)
+    for field in _MIGRATION_NEW_FIELDS:
+        if field not in seen:
+            seen.add(field)
+            result.append(field)
+            added.append(field)
+    return result, {'renamed': renamed, 'dropped': dropped, 'added': added}
 
-        # Only continue if the plugin is enabled.
-        celestial_config_dict = config_dict.get('Celestial', {})
-        enable = to_bool(celestial_config_dict.get('enable'))
-        if enable:
-            log.info("Celestial status: enabled...continuing.")
-        else:
-            log.info("Celestial status: disabled...enable it in the Celestial section of weewx.conf.")
-            return
 
-        update_rate_secs = to_int(celestial_config_dict.get('update_rate_secs', 0))
-        replace_builtin_almanac = to_bool(celestial_config_dict.get('replace_builtin_almanac', True))
-        stars = to_bool(celestial_config_dict.get('stars', True))
-
-        user_root, moon_phases, altitude_m, latitude, longitude = Sky.get_weewx_config_info(config_dict)
-        if latitude is None or longitude is None:
-            log.error("Could not determine station's latitude and longitude.")
-            return
-        if altitude_m is None:
-            log.error("Could not determine station's altitude.")
-            return
-
-        log.info("update_rate_secs       : %d" % update_rate_secs)
-        log.info("replace_builtin_almanac: %r" % replace_builtin_almanac)
-        log.info("stars                  : %r" % stars)
-        log.info("user_root              : %s" % user_root)
-        log.info("moon_phases            : %r" % moon_phases)
-        log.info("altitude_m             : %f" % altitude_m)
-        log.info("latitude               : %f" % latitude)
-        log.info("longitude              : %f" % longitude)
-
-        self.sky = Sky(update_rate_secs, user_root, moon_phases, altitude_m, latitude, longitude, load_stars=stars)
-        if self.sky.is_valid():
-            self.bind(weewx.NEW_LOOP_PACKET, self.new_loop)
-            if replace_builtin_almanac:
-                if register_almanac(self.sky):
-                    log.info('Skyfield almanac registered; reports will use Skyfield for almanac computations.')
-
-    def new_loop(self, event):
+def migrate_loopdata_conf(config_path: str, output_path: str) -> Dict[str, Any]:
+    """Rewrite config_path's [LoopData] [[Include]] fields entry for 4.0
+    (see migrate_loopdata_fields) and write the complete configuration to
+    output_path atomically (temp file, fsync, rename -- a crash cannot
+    leave a truncated file).  config_path itself is only written when
+    output_path names the same file.  Returns the migration report."""
+    import configobj
+    import tempfile
+    config = configobj.ConfigObj(config_path, file_error=True, encoding='utf-8')
+    try:
+        fields = config['LoopData']['Include']['fields']
+    except KeyError:
+        raise KeyError('%s has no [LoopData] [[Include]] fields entry' % config_path)
+    if isinstance(fields, str):
+        fields = [f.strip() for f in fields.split(',') if f.strip()]
+    new_fields, report = migrate_loopdata_fields(list(fields))
+    config['LoopData']['Include']['fields'] = new_fields
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    fd, temp_path = tempfile.mkstemp(prefix='weewx.conf.migrate.', dir=out_dir)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            config.write(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temp_path, os.stat(config_path).st_mode & 0o777)
+        os.replace(temp_path, output_path)
+    except Exception:
         try:
-            pkt: Dict[str, Any] = event.packet
-            assert event.event_type == weewx.NEW_LOOP_PACKET
-            log.debug(pkt)
-            self.sky.insert_fields(pkt)
-        except Exception as e:
-            log.error('new_loop: %s.' % e)
-
-# Named stars available as report almanac tags (e.g., $almanac.rigel.rise)
-# unless disabled (stars = false in [Celestial]).  Maps the tag name to the
-# star's Hipparcos catalog number.  The names are the IAU Catalog of Star
-# Names (the Working Group on Star Names' IAU-CSN list, 2022 edition; every
-# entry with a Hipparcos number), plus PyEphem's star catalog names for
-# backward compatibility (a few of which are legacy spellings of the same
-# stars: albereo, alcaid, sirrah, etc.).  Multi-word names use underscores
-# and diacritics are dropped, since a report tag must be an identifier
-# ($almanac.barnards_star, $almanac.kaus_australis).  The stars themselves
-# are read from celestial_stars.dat, an excerpt of the Hipparcos Catalogue
-# (ESA SP-1200, 1997) that ships with this extension.  Any other Hipparcos
-# star can be addressed by number: $almanac.hip_57939.
-NAMED_STARS: Dict[str, int] = {
-    'acamar'           : 13847,
-    'achernar'         : 7588,
-    'achird'           : 3821,
-    'acrab'            : 78820,
-    'acrux'            : 60718,
-    'acubens'          : 44066,
-    'adara'            : 33579,
-    'adhafera'         : 50335,
-    'adhara'           : 33579,
-    'adhil'            : 6411,
-    'agena'            : 68702,
-    'ain'              : 20889,
-    'ainalrami'        : 92761,
-    'aladfar'          : 94481,
-    'alasia'           : 90004,
-    'albaldah'         : 94141,
-    'albali'           : 102618,
-    'albereo'          : 95947,
-    'albireo'          : 95947,
-    'alcaid'           : 67301,
-    'alchiba'          : 59199,
-    'alcor'            : 65477,
-    'alcyone'          : 17702,
-    'aldebaran'        : 21421,
-    'alderamin'        : 105199,
-    'aldhanab'         : 108085,
-    'aldhibah'         : 83895,
-    'aldulfin'         : 101421,
-    'alfirk'           : 106032,
-    'algedi'           : 100064,
-    'algenib'          : 1067,
-    'algieba'          : 50583,
-    'algol'            : 14576,
-    'algorab'          : 60965,
-    'alhena'           : 31681,
-    'alioth'           : 62956,
-    'aljanah'          : 102488,
-    'alkaid'           : 67301,
-    'alkalurops'       : 75411,
-    'alkaphrah'        : 44471,
-    'alkarab'          : 115623,
-    'alkes'            : 53740,
-    'almaaz'           : 23416,
-    'almach'           : 9640,
-    'alnair'           : 109268,
-    'alnasl'           : 88635,
-    'alnilam'          : 26311,
-    'alnitak'          : 26727,
-    'alniyat'          : 80112,
-    'alphard'          : 46390,
-    'alphecca'         : 76267,
-    'alpheratz'        : 677,
-    'alpherg'          : 7097,
-    'alrakis'          : 83608,
-    'alrescha'         : 9487,
-    'alruba'           : 86782,
-    'alsafi'           : 96100,
-    'alsciaukat'       : 41075,
-    'alsephina'        : 42913,
-    'alshain'          : 98036,
-    'alshat'           : 100310,
-    'altair'           : 97649,
-    'altais'           : 94376,
-    'alterf'           : 46750,
-    'aludra'           : 35904,
-    'alula_australis'  : 55203,
-    'alula_borealis'   : 55219,
-    'alya'             : 92946,
-    'alzirr'           : 32362,
-    'amadioha'         : 29550,
-    'ancha'            : 110003,
-    'angetenar'        : 13288,
-    'aniara'           : 57820,
-    'ankaa'            : 2081,
-    'anser'            : 95771,
-    'antares'          : 80763,
-    'arcalis'          : 72845,
-    'arcturus'         : 69673,
-    'arkab_posterior'  : 95294,
-    'arkab_prior'      : 95241,
-    'arneb'            : 25985,
-    'ascella'          : 93506,
-    'asellus_australis': 42911,
-    'asellus_borealis' : 42806,
-    'ashlesha'         : 43109,
-    'aspidiske'        : 45556,
-    'asterope'         : 17579,
-    'athebyne'         : 80331,
-    'atik'             : 17448,
-    'atlas'            : 17847,
-    'atria'            : 82273,
-    'avior'            : 41037,
-    'axolotl'          : 118319,
-    'ayeyarwady'       : 13993,
-    'azelfafage'       : 107136,
-    'azha'             : 13701,
-    'azmidi'           : 38170,
-    'baekdu'           : 73136,
-    'barnards_star'    : 87937,
-    'baten_kaitos'     : 8645,
-    'beemim'           : 20535,
-    'beid'             : 19587,
-    'belel'            : 95124,
-    'belenos'          : 6643,
-    'bellatrix'        : 25336,
-    'betelgeuse'       : 27989,
-    'bharani'          : 13209,
-    'bibha'            : 48711,
-    'biham'            : 109427,
-    'bosona'           : 107251,
-    'botein'           : 14838,
-    'brachium'         : 73714,
-    'bubup'            : 26380,
-    'buna'             : 12191,
-    'bunda'            : 106786,
-    'canopus'          : 30438,
-    'capella'          : 24608,
-    'caph'             : 746,
-    'castor'           : 36850,
-    'castula'          : 4422,
-    'cebalrai'         : 86742,
-    'ceibo'            : 37284,
-    'celaeno'          : 17489,
-    'cervantes'        : 86796,
-    'chalawan'         : 53721,
-    'chamukuy'         : 20894,
-    'chara'            : 61317,
-    'chechia'          : 99894,
-    'chertan'          : 54879,
-    'citadelle'        : 1547,
-    'citala'           : 33719,
-    'cocibolca'        : 3479,
-    'copernicus'       : 43587,
-    'cor_caroli'       : 63125,
-    'cujam'            : 80463,
-    'cursa'            : 23875,
-    'dabih'            : 100345,
-    'dalim'            : 14879,
-    'deneb'            : 102098,
-    'deneb_algedi'     : 107556,
-    'denebola'         : 57632,
-    'diadem'           : 64241,
-    'dingolay'         : 54158,
-    'diphda'           : 3419,
-    'dofida'           : 66047,
-    'dschubba'         : 78401,
-    'dubhe'            : 54061,
-    'dziban'           : 86614,
-    'ebla'             : 114322,
-    'edasich'          : 75458,
-    'electra'          : 17499,
-    'elgafar'          : 70755,
-    'elkurud'          : 29034,
-    'elnath'           : 25428,
-    'eltanin'          : 87833,
-    'emiw'             : 5529,
-    'enif'             : 107315,
-    'errai'            : 116727,
-    'etamin'           : 87833,
-    'fafnir'           : 90344,
-    'fang'             : 78265,
-    'fawaris'          : 97165,
-    'felis'            : 48615,
-    'felixvarela'      : 2247,
-    'flegetonte'       : 57370,
-    'fomalhaut'        : 113368,
-    'formalhaut'       : 113368,
-    'formosa'          : 56508,
-    'fulu'             : 2920,
-    'fumalsamakah'     : 113889,
-    'funi'             : 61177,
-    'furud'            : 30122,
-    'fuyue'            : 87261,
-    'gacrux'           : 61084,
-    'gakyid'           : 42446,
-    'giausar'          : 56211,
-    'gienah'           : 59803,
-    'gienah_corvi'     : 59803,
-    'ginan'            : 60260,
-    'gomeisa'          : 36188,
-    'grumium'          : 87585,
-    'gudja'            : 77450,
-    'gumala'           : 94645,
-    'guniibuu'         : 84405,
-    'hadar'            : 68702,
-    'haedus'           : 23767,
-    'hamal'            : 9884,
-    'hassaleh'         : 23015,
-    'hatysa'           : 26241,
-    'helvetios'        : 113357,
-    'heze'             : 66249,
-    'hoggar'           : 21109,
-    'homam'            : 112029,
-    'hunahpu'          : 55174,
-    'hunor'            : 80076,
-    'iklil'            : 78104,
-    'illyrian'         : 47087,
-    'imai'             : 59747,
-    'inquill'          : 84787,
-    'intan'            : 15578,
-    'intercrus'        : 46471,
-    'itonda'           : 108375,
-    'izar'             : 72105,
-    'jabbah'           : 79374,
-    'jishui'           : 37265,
-    'kaffaljidhma'     : 12706,
-    'kalausi'          : 47202,
-    'kamuy'            : 79219,
-    'kang'             : 69427,
-    'karaka'           : 76351,
-    'kaus_australis'   : 90185,
-    'kaus_borealis'    : 90496,
-    'kaus_media'       : 89931,
-    'kaveh'            : 92895,
-    'keid'             : 19849,
-    'khambalia'        : 69974,
-    'kitalpha'         : 104987,
-    'kochab'           : 72607,
-    'koeia'            : 12961,
-    'kornephoros'      : 80816,
-    'kraz'             : 61359,
-    'kurhah'           : 108917,
-    'la_superba'       : 62223,
-    'larawag'          : 82396,
-    'lesath'           : 85696,
-    'libertas'         : 97938,
-    'liesma'           : 66192,
-    'lilii_borea'      : 13061,
-    'lionrock'         : 110813,
-    'lucilinburhuc'    : 30860,
-    'lusitania'        : 30905,
-    'maasym'           : 85693,
-    'macondo'          : 52521,
-    'mago'             : 24003,
-    'mahasim'          : 28380,
-    'mahsati'          : 82651,
-    'maia'             : 17573,
-    'marfik'           : 80883,
-    'markab'           : 113963,
-    'markeb'           : 45941,
-    'marsic'           : 79043,
-    'matar'            : 112158,
-    'mebsuta'          : 32246,
-    'megrez'           : 59774,
-    'meissa'           : 26207,
-    'mekbuda'          : 34088,
-    'meleph'           : 42556,
-    'menkalinan'       : 28360,
-    'menkar'           : 14135,
-    'menkent'          : 68933,
-    'menkib'           : 18614,
-    'merak'            : 53910,
-    'merga'            : 72487,
-    'meridiana'        : 94114,
-    'merope'           : 17608,
-    'mesarthim'        : 8832,
-    'miaplacidus'      : 45238,
-    'mimosa'           : 62434,
-    'minchir'          : 42402,
-    'minelauva'        : 63090,
-    'minkar'           : 59316,
-    'mintaka'          : 25930,
-    'mira'             : 10826,
-    'mirach'           : 5447,
-    'miram'            : 13268,
-    'mirfak'           : 15863,
-    'mirzam'           : 30324,
-    'misam'            : 14668,
-    'mizar'            : 65378,
-    'monch'            : 72339,
-    'mothallah'        : 8796,
-    'mouhoun'          : 22491,
-    'muliphein'        : 34045,
-    'muphrid'          : 67927,
-    'muscida'          : 41704,
-    'musica'           : 103527,
-    'nahn'             : 44946,
-    'naos'             : 39429,
-    'nashira'          : 106985,
-    'nasti'            : 40687,
-    'natasha'          : 48235,
-    'nekkar'           : 73555,
-    'nembus'           : 7607,
-    'nenque'           : 5054,
-    'nervia'           : 32916,
-    'nganurganity'     : 33856,
-    'nihal'            : 25606,
-    'nikawiy'          : 74961,
-    'nosaxa'           : 31895,
-    'nunki'            : 92855,
-    'nusakan'          : 75695,
-    'nushagak'         : 13192,
-    'ogma'             : 80838,
-    'okab'             : 93747,
-    'paikauhale'       : 81266,
-    'peacock'          : 100751,
-    'phact'            : 26634,
-    'phecda'           : 58001,
-    'pherkad'          : 75097,
-    'phoenicia'        : 99711,
-    'piautos'          : 40881,
-    'pincoya'          : 88414,
-    'pipirima'         : 82545,
-    'pleione'          : 17851,
-    'poerava'          : 116084,
-    'polaris'          : 11767,
-    'polaris_australis': 104382,
-    'polis'            : 89341,
-    'pollux'           : 37826,
-    'porrima'          : 61941,
-    'praecipua'        : 53229,
-    'prima_hyadum'     : 20205,
-    'procyon'          : 37279,
-    'propus'           : 29655,
-    'proxima_centauri' : 70890,
-    'ran'              : 16537,
-    'rana'             : 17378,
-    'rapeto'           : 83547,
-    'rasalas'          : 48455,
-    'rasalgethi'       : 84345,
-    'rasalhague'       : 86032,
-    'rastaban'         : 85670,
-    'regulus'          : 49669,
-    'revati'           : 5737,
-    'rigel'            : 24436,
-    'rigil_kentaurus'  : 71683,
-    'rosaliadecastro'  : 81022,
-    'rotanev'          : 101769,
-    'ruchbah'          : 6686,
-    'rukbat'           : 95347,
-    'sabik'            : 84012,
-    'saclateni'        : 23453,
-    'sadachbia'        : 110395,
-    'sadalbari'        : 112748,
-    'sadalmelik'       : 109074,
-    'sadalsuud'        : 106278,
-    'sadr'             : 100453,
-    'sagarmatha'       : 56572,
-    'saiph'            : 27366,
-    'salm'             : 115250,
-    'samaya'           : 106824,
-    'sargas'           : 86228,
-    'sarin'            : 84379,
-    'sceptrum'         : 21594,
-    'scheat'           : 113881,
-    'schedar'          : 3179,
-    'secunda_hyadum'   : 20455,
-    'segin'            : 8886,
-    'seginus'          : 71075,
-    'sham'             : 96757,
-    'shama'            : 55664,
-    'sharjah'          : 79431,
-    'shaula'           : 85927,
-    'sheliak'          : 92420,
-    'sheratan'         : 8903,
-    'sika'             : 95262,
-    'sirius'           : 32349,
-    'sirrah'           : 677,
-    'situla'           : 111710,
-    'skat'             : 113136,
-    'solaris'          : 104780,
-    'spica'            : 65474,
-    'stribor'          : 43674,
-    'sualocin'         : 101958,
-    'subra'            : 47508,
-    'suhail'           : 44816,
-    'sulafat'          : 93194,
-    'syrma'            : 69701,
-    'tabit'            : 22449,
-    'taiyangshou'      : 57399,
-    'taiyi'            : 63076,
-    'talitha'          : 44127,
-    'tania_australis'  : 50801,
-    'tania_borealis'   : 50372,
-    'tapecue'          : 38041,
-    'tarazed'          : 97278,
-    'tarf'             : 40526,
-    'taygeta'          : 17531,
-    'tegmine'          : 40167,
-    'tejat'            : 30343,
-    'terebellum'       : 98066,
-    'theemin'          : 21393,
-    'thuban'           : 68756,
-    'tiaki'            : 112122,
-    'tianguan'         : 26451,
-    'tianyi'           : 62423,
-    'timir'            : 80687,
-    'titawin'          : 7513,
-    'toliman'          : 71681,
-    'tonatiuh'         : 58952,
-    'torcular'         : 8198,
-    'tupa'             : 60644,
-    'tupi'             : 17096,
-    'tureis'           : 39757,
-    'ukdah'            : 47431,
-    'uklun'            : 57291,
-    'unukalhai'        : 77070,
-    'uruk'             : 96078,
-    'vega'             : 91262,
-    'veritate'         : 116076,
-    'vindemiatrix'     : 63608,
-    'wasat'            : 35550,
-    'wazn'             : 27628,
-    'wezen'            : 34444,
-    'wurren'           : 5348,
-    'xamidimura'       : 82514,
-    'xihe'             : 91852,
-    'xuange'           : 69732,
-    'yed_posterior'    : 79882,
-    'yed_prior'        : 79593,
-    'yildun'           : 85822,
-    'zaniah'           : 60129,
-    'zaurak'           : 18543,
-    'zavijava'         : 57757,
-    'zhang'            : 48356,
-    'zibal'            : 15197,
-    'zosma'            : 54872,
-    'zubenelgenubi'    : 72622,
-    'zubenelhakrabi'   : 76333,
-    'zubeneschamali'   : 74785,
-}
-
-# An excerpt of the Hipparcos Catalogue containing the stars in NAMED_STARS.
-# It is installed alongside celestial.py (like the de421.bsp ephemeris), and
-# its data lines are unmodified hip_main.dat records, so a full hip_main.dat
-# works in its place.
-STAR_FILE = 'celestial_stars.dat'
-# The Hipparcos catalog's positions are for epoch J1991.25.  This is that
-# epoch as a TT Julian date, matching skyfield.data.hipparcos.load_dataframe.
-HIPPARCOS_EPOCH_JD = 1721045.0 + 1991.25 * 365.25
-
-# Astronomical units per light year (IAU 2015 definitions).
-AU_PER_LIGHT_YEAR = 63241.077
-
-# Miles and kilometers per astronomical unit (IAU 2012: 1 au = 149,597,870.7 km).
-# The sample skin's index.html.tmpl hardcodes the same values (a template
-# cannot import this module); a test ties the two together.
-AU_MILES = 9.2955807e+7
-AU_KM    = 1.4959787e+8
-
-# Body name -> key in the DE421 ephemeris, for every body served by the loop
-# fields and the report almanac (earth, the observer, is loaded separately).
-EPHEMERIS_KEYS: Dict[str, str] = {
-    'sun'    : 'sun',
-    'moon'   : 'moon',
-    'mercury': 'mercury',
-    'venus'  : 'venus',
-    'mars'   : 'mars',
-    'jupiter': 'jupiter barycenter',
-    'saturn' : 'saturn barycenter',
-    'uranus' : 'uranus barycenter',
-    'neptune': 'neptune barycenter',
-    'pluto'  : 'pluto barycenter',
-}
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+    return report
 
 def find_discrete_events(f, t0, t1, code_sets: Tuple[Tuple[int, ...], ...],
                          previous: bool = False) -> List[Optional[float]]:
     """One skyfield find_discrete scan over [t0, t1]; for each set of event
     codes, the timestamp of the first (or last, if previous) matching event,
-    or None.  Used by both the loop packet fields and the report almanac."""
+    or None."""
     times, events = skyfield.almanac.find_discrete(t0, t1, f)
     results: List[Optional[float]] = []
     for codes in code_sets:
@@ -710,8 +385,7 @@ def daylight_seconds(rise: Optional[float], set_: Optional[float],
                      sod_ts: float, eod_ts: float,
                      up_all_day: Callable[[], bool]) -> float:
     """How long a body is above the horizon on the day [sod_ts, eod_ts),
-    given its first rise/set of that day.  Handles the polar cases; used by
-    both the loop packet fields and the report almanac's 'visible'.
+    given its first rise/set of that day.  Handles the polar cases.
     up_all_day is only consulted when the body never crossed the horizon."""
     if rise is not None and set_ is not None:
         if set_ >= rise:
@@ -730,6 +404,31 @@ def daylight_seconds(rise: Optional[float], set_: Optional[float],
     return 86400 if up_all_day() else 0
 
 
+# Mean apparent semidiameters for rise/set purposes -- sun and moon only (a
+# planet's sub-arcsecond radius does not meaningfully move its rise time).
+# Membership decides which bodies get a radius; the actual value is computed
+# for the date from BODY_RADIUS_KM (see Sky.rise_set_radius_degrees).
+BODY_RADIUS_DEGREES: Dict[str, float] = {'sun': 16.0 / 60.0, 'moon': 15.5 / 60.0}
+
+# Skyfield's standard refraction angle at the horizon.
+STANDARD_REFRACTION_DEGREES = -34.0 / 60.0
+
+# Equatorial radii in kilometers, used to compute the date's apparent angular
+# radius when searching for rise and set.
+BODY_RADIUS_KM: Dict[str, float] = {
+    'sun'    : 695700.0,
+    'moon'   : 1738.1,
+    'mercury': 2440.5,
+    'venus'  : 6051.8,
+    'mars'   : 3396.2,
+    'jupiter': 71492.0,
+    'saturn' : 60268.0,
+    'uranus' : 25559.0,
+    'neptune': 24764.0,
+    'pluto'  : 1188.3,
+}
+
+
 class Sky():
     def __init__(self, update_rate_secs, user_root: str, moon_phases: List[str], altitude_m: float, latitude: float, longitude: float, load_stars: bool = False):
         log.info("Skyfield version: %d.%d." % (skyfield.VERSION[0], skyfield.VERSION[1]))
@@ -741,7 +440,15 @@ class Sky():
         self.altitude_m      : float          = altitude_m
         self.latitude        : float          = latitude
         self.longitude       : float          = longitude
+        # Caches, one per field class (see insert_fields): continuous
+        # fields (throttled by update_rate_secs), day-scoped fields (valid
+        # for one local day) and next-event fields (valid until an event
+        # passes).
         self.prev_reading    : Dict[str, Any] = { 'dateTime': 0 } # Set to epoch so it will be too old to use
+        self.day_cache       : Dict[str, Any] = {}
+        self.day_cache_day   : Optional[float] = None
+        self.event_cache     : Dict[str, float] = {}
+        self.event_cache_day : Optional[float] = None
 
         # find_risings/find_settings arrived in Skyfield 1.47; on anything
         # older every rise/set computation would fail, so decline up front
@@ -773,8 +480,7 @@ class Sky():
 
         # Look up the bodies in the ephemeris.  EPHEMERIS_KEYS is the single
         # source of truth for which bodies are served and their DE421 keys;
-        # earth (the observer) is not a target body and stays out of
-        # self.orbs, whose keys drive the report almanac's body dispatch.
+        # earth (the observer) is not a target body and stays out of self.orbs.
         try:
             orb: str = 'earth'
             self.earth: skyfield.vectorlib.VectorSum = self.planets['earth']
@@ -783,18 +489,6 @@ class Sky():
                 self.orbs[orb] = self.planets[key]
         except Exception as e:
             log.error('init: Could not find %s in ephermis file %s: %s.  Celestial will not run.' % (orb, planets_file, e))
-            return
-
-        # The span the ephemeris covers (DE421: 1899-07-29 through
-        # 2053-10-09), as unix timestamps.  Almanac requests outside it are
-        # declined (see covers) so the built-in almanac can serve them.
-        try:
-            self.start_ts: float = self.ts.tdb_jd(
-                max(seg.start_jd for seg in self.planets.spk.segments)).utc_datetime().timestamp()
-            self.end_ts: float = self.ts.tdb_jd(
-                min(seg.end_jd for seg in self.planets.spk.segments)).utc_datetime().timestamp()
-        except Exception as e:
-            log.error('init: Could not determine the span of %s: %s.  Celestial will not run.' % (planets_file, e))
             return
 
         # The same bodies as attributes, used by the loop packet code.
@@ -810,12 +504,9 @@ class Sky():
         self.pluto  : skyfield.vectorlib.VectorSum = self.orbs['pluto']
 
         # A map of star name to (skyfield.api.Star, magnitude), populated from
-        # the Hipparcos catalog when stars are enabled.  hip_<number> entries
-        # are added lazily by get_star_by_hip; misses are remembered so a bad
-        # tag doesn't rescan the catalog on every report.
+        # the Hipparcos catalog when stars are enabled.
         self.stars: Dict[str, Tuple[Any, Optional[float]]] = {}
         self.load_stars: bool = load_stars
-        self.hip_misses: set = set()
         self.proxima_light_years: Optional[float] = None
         if load_stars:
             try:
@@ -838,64 +529,22 @@ class Sky():
 
         self.valid = True
 
-    def get_star_by_hip(self, hip: int) -> bool:
-        """Load the star with the given Hipparcos number into self.stars
-        under the name 'hip_<number>', serving $almanac.hip_57939 style tags
-        for any star in the available catalog (the bundled excerpt, or all
-        118,218 stars when a full hip_main.dat is installed).  Results,
-        including misses, are cached.  Returns whether the star is available."""
-        if not self.load_stars:
-            return False
-        name = 'hip_%d' % hip
-        if name in self.stars:
-            return True
-        if hip in self.hip_misses:
-            return False
-        # Already loaded under one of its names?  Alias it; no catalog scan.
-        for star_name, star_hip in NAMED_STARS.items():
-            if star_hip == hip and star_name in self.stars:
-                self.stars[name] = self.stars[star_name]
-                return True
-        try:
-            by_hip = Sky.load_stars_by_hip(self.user_root, {hip})
-        except Exception as e:
-            # An unreadable catalog -- missing, permission-denied, or not
-            # text at all (a corrupt or still-compressed hip_main.dat raises
-            # UnicodeDecodeError) -- must degrade to a per-tag miss, never
-            # propagate into report generation.
-            log.error('get_star_by_hip: could not read the star catalog: %s' % e)
-            self.hip_misses.add(hip)
-            return False
-        if hip not in by_hip:
-            self.hip_misses.add(hip)
-            return False
-        self.stars[name] = by_hip[hip]
-        return True
-
     @staticmethod
     def load_named_stars(user_root: str) -> Dict[str, Tuple[Any, Optional[float]]]:
-        """Load the stars in NAMED_STARS from the Hipparcos catalog.  The
-        bundled excerpt covers exactly these stars (with records identical
-        to the full catalog's), so it is read even when a full hip_main.dat
-        is installed: scanning 118,218 records at every startup would buy
-        nothing."""
-        by_hip = Sky.load_stars_by_hip(user_root, set(NAMED_STARS.values()),
-                                       prefer_full_catalog=False)
-        return {name: by_hip[hip] for name, hip in NAMED_STARS.items() if hip in by_hip}
+        """Load the stars in LOOP_STARS from the Hipparcos catalog."""
+        by_hip = Sky.load_stars_by_hip(user_root, set(LOOP_STARS.values()))
+        return {name: by_hip[hip] for name, hip in LOOP_STARS.items() if hip in by_hip}
 
     @staticmethod
-    def load_stars_by_hip(user_root: str, wanted_hips: set,
-                          prefer_full_catalog: bool = True) -> Dict[int, Tuple[Any, Optional[float]]]:
-        """Load the requested Hipparcos numbers from the star catalog.  By
-        default a full hip_main.dat, if present, is preferred, since it
-        serves every Hipparcos star, not just the named ones; either file
-        stands in for the other when only one is present."""
-        first, second = 'hip_main.dat', STAR_FILE
-        if not prefer_full_catalog:
-            first, second = second, first
-        path = '%s/%s' % (user_root, first)
+    def load_stars_by_hip(user_root: str, wanted_hips: set) -> Dict[int, Tuple[Any, Optional[float]]]:
+        """Load the requested Hipparcos numbers from the star catalog.  The
+        bundled excerpt covers the stars in LOOP_STARS (with records
+        identical to the full catalog's), so it is read even when a full
+        hip_main.dat is installed; a user-installed hip_main.dat stands in
+        when the excerpt is missing."""
+        path = '%s/%s' % (user_root, STAR_FILE)
         if not os.path.exists(path):
-            path = '%s/%s' % (user_root, second)
+            path = '%s/%s' % (user_root, 'hip_main.dat')
 
         def parse_float(field: str) -> float:
             field = field.strip()
@@ -982,11 +631,6 @@ class Sky():
     def is_valid(self) -> bool:
         return self.valid
 
-    def covers(self, time_ts: float) -> bool:
-        """Whether the ephemeris covers time_ts, with enough margin for
-        the two-day search windows used by rise/set and visible."""
-        return self.start_ts + 2 * 86400 <= time_ts <= self.end_ts - 2 * 86400
-
     def distance_au(self, t: skyfield.timelib.Time, orb: skyfield.vectorlib.VectorSum,
                     origin: Optional[skyfield.vectorlib.VectorSum] = None) -> float:
         """Distance from origin (default: earth) to orb, in astronomical units."""
@@ -1049,7 +693,7 @@ class Sky():
         else:
             alt, az, _ = apparent.altaz()
         # Right ascension/declination in coordinates of date (the same
-        # convention as the report almanac's topo_ra/topo_dec and PyEphem).
+        # convention as weewx-skyfield's ra/dec report tags and PyEphem).
         ra, dec, _ = apparent.radec('date')
 
         return az.degrees, alt.degrees, ra._degrees, dec.degrees
@@ -1059,8 +703,8 @@ class Sky():
         """The body's apparent angular radius for rise/set purposes,
         computed for the date -- sun and moon only (a planet's
         sub-arcsecond radius does not meaningfully move its rise time).
-        Shared by the loop fields and the report almanac, so their
-        rise/set horizons agree."""
+        The same definition weewx-skyfield uses, so the loop fields and
+        its report tags agree."""
         if body_name not in BODY_RADIUS_DEGREES:
             return 0.0
         if observer is None:
@@ -1128,20 +772,13 @@ class Sky():
 
         return sunrise, sunset, transit, daylight
 
-    def insert_fields(self, pkt: Dict[str, Any]) -> None:
-        pkt_time: int = to_int(pkt['dateTime'])
-        pkt_datetime  = datetime.fromtimestamp(pkt_time, timezone.utc)
-
-        # If prev_reading is more than update_rate_secs ago, just use the previous readings.
-        if pkt_time - self.prev_reading['dateTime'] < self.update_rate_secs:
-            for key in self.prev_reading:
-                if key != 'dateTime':
-                    pkt[key] = self.prev_reading[key]
-            return
-
-        # Create a skyfield time with pkt_datetime.
+    def get_continuous_fields(self, pkt: Dict[str, Any], ts_pkt_time: skyfield.timelib.Time,
+                              pkt_datetime: datetime) -> Dict[str, Any]:
+        """The fields that vary continuously: positions, distances and the
+        moon's phase.  Cheap (roughly 20 ms on a Raspberry Pi 5); recomputed
+        every packet unless throttled by update_rate_secs."""
+        fields: Dict[str, Any] = {}
         ts = self.ts
-        ts_pkt_time = ts.from_datetime(pkt_datetime)
 
         if not 'outTemp' in pkt:
             log.debug("Missing 'outTemp' in loop packet won't be used in calculations.")
@@ -1159,29 +796,39 @@ class Sky():
 
         try:
             sun_az, sun_alt, sun_ra, sun_dec= self.get_az_alt_ra_dec(ts, self.sun, pkt_datetime, tempC, pressureMbar)
-            pkt['sunAzimuth'] = sun_az
-            pkt['sunAltitude'] = sun_alt
-            pkt['sunRightAscension'] = sun_ra
-            pkt['sunDeclination'] = sun_dec
+            fields['sunAzimuth'] = sun_az
+            fields['sunAltitude'] = sun_alt
+            fields['sunRightAscension'] = sun_ra
+            fields['sunDeclination'] = sun_dec
         except Exception as e:
-            log.error('insert_fields: get_az_alt_ra_dec(%r, %r, %r, %r, %r): %s.' % (ts, self.sun, pkt_datetime, tempC, pressureMbar, e))
+            log.error('get_continuous_fields: get_az_alt_ra_dec(%r, %r, %r, %r, %r): %s.' % (ts, self.sun, pkt_datetime, tempC, pressureMbar, e))
 
         try:
             moon_az, moon_alt, moon_ra, moon_dec= self.get_az_alt_ra_dec(ts, self.moon, pkt_datetime, tempC, pressureMbar)
-            pkt['moonAzimuth'] = moon_az
-            pkt['moonAltitude'] = moon_alt
-            pkt['moonRightAscension'] = moon_ra
-            pkt['moonDeclination'] = moon_dec
+            fields['moonAzimuth'] = moon_az
+            fields['moonAltitude'] = moon_alt
+            fields['moonRightAscension'] = moon_ra
+            fields['moonDeclination'] = moon_dec
         except Exception as e:
-            log.error('insert_fields: get_az_alt_ra_dec(moon): %s.' % e)
+            log.error('get_continuous_fields: get_az_alt_ra_dec(moon): %s.' % e)
 
         try:
             moon_phase_degrees, percent_illumination = self.get_moon_phase(ts, pkt_datetime)
-            pkt['moonFullness'] = percent_illumination
+            fields['moonFullness'] = percent_illumination
             index = self.get_moon_phase_index(moon_phase_degrees)
-            pkt['moonPhase'] = self.moon_phases[index]
+            fields['moonPhase'] = self.moon_phases[index]
+            fields['moonPhaseIndex'] = index
+            fields['moonWaxing'] = 1 if moon_phase_degrees < 180.0 else 0
         except Exception as e:
-            log.error('insert_fields: get_moon_phase: %s.' % e)
+            log.error('get_continuous_fields: get_moon_phase: %s.' % e)
+
+        for planet in LOOP_PLANETS:
+            try:
+                az, alt, _, _ = self.get_az_alt_ra_dec(ts, self.orbs[planet], pkt_datetime, tempC, pressureMbar)
+                fields[planet + 'Azimuth'] = az
+                fields[planet + 'Altitude'] = alt
+            except Exception as e:
+                log.error('get_continuous_fields: get_az_alt_ra_dec(%s): %s.' % (planet, e))
 
         # Convert astronomical units to miles (US) or kilometers (METRIC and METRICWX).
         if pkt['usUnits'] == weewx.US:
@@ -1191,28 +838,28 @@ class Sky():
 
         try:
             orb: str = 'sun'
-            pkt['earthSunDistance'] = self.distance_au(ts_pkt_time, self.sun) * multiplier
+            fields['earthSunDistance'] = self.distance_au(ts_pkt_time, self.sun) * multiplier
             orb = 'moon'
-            pkt['earthMoonDistance'] = self.distance_au(ts_pkt_time, self.moon) * multiplier
+            fields['earthMoonDistance'] = self.distance_au(ts_pkt_time, self.moon) * multiplier
 
-            orb = 'earth'
-            pkt['earthMercuryDistance'] = self.distance_au(ts_pkt_time, self.mercury) * multiplier
+            orb = 'mercury'
+            fields['earthMercuryDistance'] = self.distance_au(ts_pkt_time, self.mercury) * multiplier
             orb = 'venus'
-            pkt['earthVenusDistance'] = self.distance_au(ts_pkt_time, self.venus) * multiplier
+            fields['earthVenusDistance'] = self.distance_au(ts_pkt_time, self.venus) * multiplier
             orb = 'mars'
-            pkt['earthMarsDistance'] = self.distance_au(ts_pkt_time, self.mars) * multiplier
+            fields['earthMarsDistance'] = self.distance_au(ts_pkt_time, self.mars) * multiplier
             orb = 'jupiter'
-            pkt['earthJupiterDistance'] = self.distance_au(ts_pkt_time, self.jupiter) * multiplier
+            fields['earthJupiterDistance'] = self.distance_au(ts_pkt_time, self.jupiter) * multiplier
             orb = 'saturn'
-            pkt['earthSaturnDistance'] = self.distance_au(ts_pkt_time, self.saturn) * multiplier
+            fields['earthSaturnDistance'] = self.distance_au(ts_pkt_time, self.saturn) * multiplier
             orb = 'uranus'
-            pkt['earthUranusDistance'] = self.distance_au(ts_pkt_time, self.uranus) * multiplier
+            fields['earthUranusDistance'] = self.distance_au(ts_pkt_time, self.uranus) * multiplier
             orb = 'neptune'
-            pkt['earthNeptuneDistance'] = self.distance_au(ts_pkt_time, self.neptune) * multiplier
+            fields['earthNeptuneDistance'] = self.distance_au(ts_pkt_time, self.neptune) * multiplier
             orb = 'pluto'
-            pkt['earthPlutoDistance'] = self.distance_au(ts_pkt_time, self.pluto) * multiplier
+            fields['earthPlutoDistance'] = self.distance_au(ts_pkt_time, self.pluto) * multiplier
         except Exception as e:
-            log.error('insert_fields: distance_au(%r, %s): %s.' % (ts_pkt_time, orb, e))
+            log.error('get_continuous_fields: distance_au(%r, %s): %s.' % (ts_pkt_time, orb, e))
 
         # Distance to Proxima Centauri, the nearest star (needs the star
         # catalog).  Reported in light years in every unit system: miles/km
@@ -1225,54 +872,48 @@ class Sky():
                     self.proxima_light_years = (
                         self.distance_au(ts_pkt_time, self.stars['proxima_centauri'][0]) / AU_PER_LIGHT_YEAR)
                 except Exception as e:
-                    log.error('insert_fields: distance_au(%r, proxima_centauri): %s.' % (ts_pkt_time, e))
+                    log.error('get_continuous_fields: distance_au(%r, proxima_centauri): %s.' % (ts_pkt_time, e))
             if self.proxima_light_years is not None:
-                pkt['earthProximaCentauriDistance'] = self.proxima_light_years
+                fields['earthProximaCentauriDistance'] = self.proxima_light_years
 
+        return fields
 
-        # Sun/Moon rise/set/transit, etc. are always reported for the curent day (i.e., the event may have already passed.
-        # We also don't want Equinox/Solstice/NewMoon/FullMoon to disappear as soon as it is hit (keep it around for the day)
-        # As such, use the beginning of day for the observer, and recompute.
-        day_start = datetime.fromtimestamp(weeutil.weeutil.startOfDay(pkt_time), timezone.utc)
+    def get_day_fields(self, day_start: datetime) -> Tuple[Dict[str, Any], bool]:
+        """The fields that are constant for a local day: rise/set/transit
+        times, twilights and daylight durations.  The expensive searches
+        (roughly 150 ms on a Raspberry Pi 5) run only when the packet's
+        local day changes.  Returns (fields, ok): ok is False when any
+        section raised, so the caller can retry on the next packet instead
+        of serving a poisoned cache for the rest of the day (a field that
+        is legitimately absent -- e.g., no moonrise today -- is not a
+        failure)."""
+        fields: Dict[str, Any] = {}
+        ok = True
+        ts = self.ts
 
         try:
             sunrise, sunset, transit, daylight = self.get_sunrise_sunset_transit_daylight(ts, day_start)
             if sunrise is not None:
-                pkt['sunrise'] = sunrise
+                fields['sunrise'] = sunrise
             if  sunset is not None:
-                pkt['sunset'] = sunset
-            pkt['daylightDur'] = daylight
-            pkt['sunTransit'] = transit
+                fields['sunset'] = sunset
+            fields['daylightDur'] = daylight
+            fields['sunTransit'] = transit
         except Exception as e:
-            log.error('insert_fields: get_sunrise_sunset_transit_daylight(%r): %s.' % (day_start, e))
+            log.error('get_day_fields: get_sunrise_sunset_transit_daylight(%r): %s.' % (day_start, e))
+            ok = False
 
         # Moonrise/Moonset/MoonTransit
         try:
             moonrise, moonset, moontransit = self.get_rise_set_transit(ts, 'moon', self.moon, day_start)
             if moonrise is not None:
-                pkt['moonrise'] = moonrise
+                fields['moonrise'] = moonrise
             if moonset is not None:
-                pkt['moonset'] = moonset
-            pkt['moonTransit'] = moontransit
+                fields['moonset'] = moonset
+            fields['moonTransit'] = moontransit
         except Exception as e:
-            log.error('insert_fields: get_rise_set_transit(moon, %r): %s.' % (day_start, e))
-
-        try:
-            next_equinox, next_solstice = self.get_next_equinox_and_solstice(ts, day_start)
-            pkt['nextEquinox']  = next_equinox
-            pkt['nextSolstice'] = next_solstice
-        except Exception as e:
-            log.error('insert_fields: get_next_equinox_and_solstice(%r): %s.' % (day_start, e))
-
-
-        try:
-            fullmoon, newmoon = self.get_next_fullmoon_and_newmoon(ts, day_start)
-            if fullmoon is not None:
-                pkt['nextFullMoon']  = fullmoon
-            if newmoon is not None:
-                pkt['nextNewMoon'] = newmoon
-        except Exception as e:
-            log.error('insert_fields: get_next_fullmoon_and_newmoon(%r): %s.' % (day_start, e))
+            log.error('get_day_fields: get_rise_set_transit(moon, %r): %s.' % (day_start, e))
+            ok = False
 
         try:
             f = skyfield.almanac.dark_twilight_day(self.planets, self.bluffton)
@@ -1283,800 +924,145 @@ class Sky():
             for event, t in zip(events, times):
                 match event:
                     case 0:
-                        pkt['astronomicalTwilightEnd'] = t.utc_datetime().timestamp()
+                        fields['astronomicalTwilightEnd'] = t.utc_datetime().timestamp()
                     case 1:
                         if not astronomical_encountered:
-                            pkt['astronomicalTwilightStart'] = t.utc_datetime().timestamp()
+                            fields['astronomicalTwilightStart'] = t.utc_datetime().timestamp()
                             astronomical_encountered = True
                         else:
-                            pkt['nauticalTwilightEnd'] = t.utc_datetime().timestamp()
+                            fields['nauticalTwilightEnd'] = t.utc_datetime().timestamp()
                     case 2:
                         if not nautical_encountered:
-                            pkt['nauticalTwilightStart'] = t.utc_datetime().timestamp()
+                            fields['nauticalTwilightStart'] = t.utc_datetime().timestamp()
                             nautical_encountered = True
                         else:
-                            pkt['civilTwilightEnd'] = t.utc_datetime().timestamp()
+                            fields['civilTwilightEnd'] = t.utc_datetime().timestamp()
                     case 3:
                         if not civil_encountered:
-                            pkt['civilTwilightStart'] = t.utc_datetime().timestamp()
+                            fields['civilTwilightStart'] = t.utc_datetime().timestamp()
                             civil_encountered = True
         except Exception as e:
-            log.error('insert_fields: skyfield.almanac.find_discrete twilight(%r, %r): %s.' % (day_start, f, e))
+            log.error('get_day_fields: skyfield.almanac.find_discrete twilight(%r, %r): %s.' % (day_start, f, e))
+            ok = False
 
         try:
-            # We need yesterday's sunshine duration
+            # We need yesterday's daylight duration
             yesterday_start = day_start - timedelta(days=1)
             _, _, _, yesterday_daylight = self.get_sunrise_sunset_transit_daylight(ts, yesterday_start)
-            pkt['yesterdayDaylightDur'] = yesterday_daylight
+            fields['yesterdayDaylightDur'] = yesterday_daylight
         except Exception as e:
-            log.error('insert_fields: get_sunrise_sunset_transit_daylight(yesterday_start: %r): %s.' % (yesterday_start, e))
+            log.error('get_day_fields: get_sunrise_sunset_transit_daylight(yesterday_start: %r): %s.' % (yesterday_start, e))
+            ok = False
 
         try:
-            # Tomorrow sunrise, sunset, daytime
+            # Tomorrow sunrise, sunset
             tomorrow_start = day_start + timedelta(days=1)
             tomorrow_sunrise, tomorrow_sunset, _, _ = self.get_sunrise_sunset_transit_daylight(ts, tomorrow_start)
             if tomorrow_sunrise is not None:
-                pkt['tomorrowSunrise'] = tomorrow_sunrise
+                fields['tomorrowSunrise'] = tomorrow_sunrise
             if  tomorrow_sunset is not None:
-                pkt['tomorrowSunset'] = tomorrow_sunset
+                fields['tomorrowSunset'] = tomorrow_sunset
         except Exception as e:
-            log.error('insert_fields: get_sunrise_sunset_transit_daylight(tomorrow_start: %r): %s.' % (tomorrow_start, e))
+            log.error('get_day_fields: get_sunrise_sunset_transit_daylight(tomorrow_start: %r): %s.' % (tomorrow_start, e))
+            ok = False
 
-        # DEPRECATED: also emit each value under its pre-3.0 field name, so
-        # that existing [LoopData] fields lists and skins keep working.  The
-        # old names will be removed in 4.0.
-        for old_name, new_name in DEPRECATED_FIELD_MAP.items():
-            if new_name in pkt:
-                pkt[old_name] = pkt[new_name]
+        return fields, ok
 
-        # Update prev_reading to current reading.
-        if self.update_rate_secs != 0:
-            self.prev_reading['dateTime'] = pkt['dateTime']
-            for key in list(OBS_GROUPS) + list(DEPRECATED_FIELD_MAP):
-                if key in pkt:
-                    self.prev_reading[key] = pkt[key]
-
-#
-# Skyfield report almanac.
-#
-# WeeWX 5.2 introduced extensible almanacs: weewx.almanac.almanacs is a
-# prioritized list of AlmanacType objects and Almanac.__getattr__ tries
-# each in turn until one does not raise weewx.UnknownType.  By registering
-# SkyfieldAlmanacType at the head of that list, report tags such as
-# $almanac.sunrise, $almanac.moon.transit and $almanac.next_full_moon are
-# computed with Skyfield rather than the built-in PyEphem/weeutil almanac.
-# Attributes Skyfield does not handle (e.g., stars) fall through to the
-# built-in almanac.
-#
-
-# The eight seasonal events reported by skyfield.almanac.seasons are
-# 0=vernal equinox, 1=summer solstice, 2=autumnal equinox, 3=winter solstice.
-SEASON_EVENTS: Dict[str, Tuple[bool, Tuple[int, ...]]] = {
-    'previous_equinox'         : (True,  (0, 2)),
-    'next_equinox'             : (False, (0, 2)),
-    'previous_solstice'        : (True,  (1, 3)),
-    'next_solstice'            : (False, (1, 3)),
-    'previous_vernal_equinox'  : (True,  (0,)),
-    'next_vernal_equinox'      : (False, (0,)),
-    'previous_summer_solstice' : (True,  (1,)),
-    'next_summer_solstice'     : (False, (1,)),
-    'previous_autumnal_equinox': (True,  (2,)),
-    'next_autumnal_equinox'    : (False, (2,)),
-    'previous_winter_solstice' : (True,  (3,)),
-    'next_winter_solstice'     : (False, (3,)),
-}
-
-# skyfield.almanac.moon_phases events are
-# 0=new moon, 1=first quarter, 2=full moon, 3=last quarter.
-MOON_EVENTS: Dict[str, Tuple[bool, Tuple[int, ...]]] = {
-    'previous_new_moon'          : (True,  (0,)),
-    'next_new_moon'              : (False, (0,)),
-    'previous_first_quarter_moon': (True,  (1,)),
-    'next_first_quarter_moon'    : (False, (1,)),
-    'previous_full_moon'         : (True,  (2,)),
-    'next_full_moon'             : (False, (2,)),
-    'previous_last_quarter_moon' : (True,  (3,)),
-    'next_last_quarter_moon'     : (False, (3,)),
-}
-
-# Mean apparent semidiameters, used when a custom horizon is combined with
-# use_center=False (i.e., the upper limb, not the center, crosses the horizon).
-BODY_RADIUS_DEGREES: Dict[str, float] = {'sun': 16.0 / 60.0, 'moon': 15.5 / 60.0}
-
-# Skyfield's standard refraction angle at the horizon.
-STANDARD_REFRACTION_DEGREES = -34.0 / 60.0
-
-# Equatorial radii in kilometers, used for angular size ($almanac.sun.size,
-# $almanac.moon.radius_size, etc.).
-BODY_RADIUS_KM: Dict[str, float] = {
-    'sun'    : 695700.0,
-    'moon'   : 1738.1,
-    'mercury': 2440.5,
-    'venus'  : 6051.8,
-    'mars'   : 3396.2,
-    'jupiter': 71492.0,
-    'saturn' : 60268.0,
-    'uranus' : 25559.0,
-    'neptune': 24764.0,
-    'pluto'  : 1188.3,
-}
-
-# Tag form for addressing any Hipparcos star by number, e.g. $almanac.hip_57939.
-HIP_TAG_RE = re.compile(r'hip_(\d+)$')
-
-# Attributes that make no sense for a star (they involve the sun-body
-# geometry of a solar system body).  For these, a star goes straight to the
-# PyEphem fallback, which raises AttributeError just as PyEphem's own star
-# objects do.  earth_distance/sun_distance are not in this set: unlike
-# PyEphem, they ARE supported for stars with a measured parallax (e.g.,
-# $almanac.proxima_centauri.earth_distance).
-STAR_UNSUPPORTED = {'phase', 'moon_fullness',
-                    'hlong', 'hlat', 'hlongitude', 'hlatitude'}
-
-# Base class for almanac extensions.  WeeWX versions earlier than 5.2 do not
-# have weewx.almanac.AlmanacType, in which case register_almanac declines to
-# register (and this base is never exercised).
-_AlmanacTypeBase: Any = getattr(weewx.almanac, 'AlmanacType', object)
-
-class SkyfieldAlmanacType(_AlmanacTypeBase):
-    """Almanac extension that computes report almanac tags with Skyfield."""
-
-    def __init__(self, sky: Sky):
-        self.sky = sky
-        self.ts = sky.ts
-        # Cache of observers, keyed by (lat, lon, altitude).
-        self._observers: Dict[Tuple[float, float, float], Tuple[Any, Any]] = {}
-
-    @property
-    def hasExtras(self) -> bool:
-        return True
-
-    def location(self, almanac_obj) -> Tuple[Any, Any]:
-        """Return (geographic_position, observer) for the almanac's location."""
-        key = (almanac_obj.lat, almanac_obj.lon, almanac_obj.altitude)
-        if key not in self._observers:
-            geographic = skyfield.api.wgs84.latlon(almanac_obj.lat, almanac_obj.lon, elevation_m=almanac_obj.altitude)
-            self._observers[key] = (geographic, self.sky.earth + geographic)
-        return self._observers[key]
-
-    def skyfield_time(self, time_ts: float) -> skyfield.timelib.Time:
-        return self.ts.from_datetime(datetime.fromtimestamp(time_ts, timezone.utc))
-
-    def time_value(self, almanac_obj, time_ts: Optional[float], context: str) -> ValueHelper:
-        return ValueHelper(ValueTuple(time_ts, 'unix_epoch', 'group_time'),
-                           context=context,
-                           formatter=almanac_obj.formatter,
-                           converter=almanac_obj.converter)
-
-    def direction_value(self, almanac_obj, degrees: float) -> ValueHelper:
-        return ValueHelper(ValueTuple(degrees, 'degree_compass', 'group_direction'),
-                           context='ephem_day',
-                           formatter=almanac_obj.formatter,
-                           converter=almanac_obj.converter)
-
-    def find_event(self, almanac_obj, f, codes: Tuple[int, ...], previous: bool, window_days: int) -> ValueHelper:
-        """Search for the next (or previous) discrete event of the given type(s)."""
-        if previous:
-            t0 = self.skyfield_time(almanac_obj.time_ts - window_days * 86400)
-            t1 = self.skyfield_time(almanac_obj.time_ts)
-        else:
-            t0 = self.skyfield_time(almanac_obj.time_ts)
-            t1 = self.skyfield_time(almanac_obj.time_ts + window_days * 86400)
-        try:
-            event_ts = find_discrete_events(f, t0, t1, (codes,), previous)[0]
-        except skyfield.errors.EphemerisRangeError:
-            # The search window pokes past the ephemeris' span (the almanac's
-            # time itself is inside it, or get_almanac_data would already
-            # have declined).  Let the next almanac serve the tag.
-            raise weewx.UnknownType('event search outside the ephemeris span')
-        return self.time_value(almanac_obj, event_ts, 'ephem_year')
-
-    def get_almanac_data(self, almanac_obj, attr: str):
-        if attr.startswith('__'):
-            raise weewx.UnknownType(attr)
-
-        # A time the ephemeris does not cover (DE421: 1899-2053) cannot be
-        # computed; decline it so the next almanac (PyEphem or weeutil)
-        # serves the tag, rather than EphemerisRangeError aborting report
-        # generation.
-        if not self.sky.covers(almanac_obj.time_ts):
-            raise weewx.UnknownType(attr)
-
-        if attr == 'sunrise':
-            return almanac_obj.sun.rise
-        elif attr == 'sunset':
-            return almanac_obj.sun.set
-        elif attr in ('moon_phase', 'moon_index', 'moon_fullness'):
-            pkt_datetime = datetime.fromtimestamp(almanac_obj.time_ts, timezone.utc)
-            moon_phase_degrees, percent_illumination = self.sky.get_moon_phase(self.ts, pkt_datetime)
-            if attr == 'moon_fullness':
-                return int(percent_illumination + 0.5)
-            index = self.sky.get_moon_phase_index(moon_phase_degrees)
-            if attr == 'moon_index':
-                return index
-            return almanac_obj.moon_phases[index]
-        elif attr in SEASON_EVENTS:
-            previous, codes = SEASON_EVENTS[attr]
-            return self.find_event(almanac_obj, skyfield.almanac.seasons(self.sky.planets), codes, previous, 370)
-        elif attr in MOON_EVENTS:
-            previous, codes = MOON_EVENTS[attr]
-            return self.find_event(almanac_obj, skyfield.almanac.moon_phases(self.sky.planets), codes, previous, 32)
-        elif attr in ('sidereal_time', 'sidereal_angle'):
-            geographic, _ = self.location(almanac_obj)
-            degrees = geographic.lst_hours_at(self.skyfield_time(almanac_obj.time_ts)) * 15.0
-            if attr == 'sidereal_time':
-                return degrees
-            return self.direction_value(almanac_obj, degrees)
-        elif attr in self.sky.orbs or attr in self.sky.stars:
-            return SkyfieldAlmanacBinder(self, almanac_obj, attr)
-
-        # Any Hipparcos star by number: $almanac.hip_57939 (works for every
-        # star in the available catalog; install a full hip_main.dat in the
-        # user directory to go beyond the bundled named-star excerpt).
-        hip_match = HIP_TAG_RE.match(attr)
-        if hip_match:
-            hip = int(hip_match.group(1))
-            if self.sky.get_star_by_hip(hip):
-                canonical = 'hip_%d' % hip
-                if attr != canonical:
-                    # Catalogs zero-pad HIP numbers (e.g. hip_032349); alias
-                    # the tag as written to the canonical entry.
-                    self.sky.stars[attr] = self.sky.stars[canonical]
-                return SkyfieldAlmanacBinder(self, almanac_obj, attr)
-
-        # Not something Skyfield handles (e.g., a star when the Hipparcos
-        # catalog is not enabled).  Let the next almanac in
-        # weewx.almanac.almanacs (PyEphem or weeutil) take a crack at it.
-        raise weewx.UnknownType(attr)
-
-    def separation(self, body1, body2):
-        """Angular separation, in radians.  Accepts (longitude, latitude)
-        tuples in radians (same contract as weewx.almanac.AlmanacType.separation),
-        this almanac's own body binders (e.g.,
-        $almanac.separation($almanac.mars, $almanac.venus)), or a mix of the
-        two.  Each binder is observed at its own almanac's time.  Anything
-        else (e.g., PyEphem Body objects) is deferred to the next almanac
-        rather than crashed on."""
-        try:
-            if isinstance(body1, SkyfieldAlmanacBinder) and isinstance(body2, SkyfieldAlmanacBinder):
-                p1 = self.sky.earth.at(self.skyfield_time(body1.almanac.time_ts)).observe(body1.target_body())
-                p2 = self.sky.earth.at(self.skyfield_time(body2.almanac.time_ts)).observe(body2.target_body())
-                return p1.separation_from(p2).radians
-            coords1 = SkyfieldAlmanacType.separation_coordinates(body1)
-            coords2 = SkyfieldAlmanacType.separation_coordinates(body2)
-        except skyfield.errors.EphemerisRangeError:
-            # A binder whose almanac time is outside the ephemeris' span.
-            raise weewx.UnknownType('separation')
-        if coords1 is None or coords2 is None:
-            raise weewx.UnknownType('separation')
-        # Meeus 17.1, delegated to the WeeWX base class (only reachable on
-        # WeeWX 5.2+, where the base class exists).
-        return super().separation(coords1, coords2)
-
-    @staticmethod
-    def separation_coordinates(body):
-        """A separation argument as (longitude, latitude) in radians: a
-        tuple as given, or a binder's apparent geocentric coordinates of
-        date (at the binder's own almanac time).  None if unrecognized."""
-        if isinstance(body, SkyfieldAlmanacBinder):
-            ra_degrees, dec_degrees = body.geocentric_radec_degrees()
-            return (math.radians(ra_degrees), math.radians(dec_degrees))
-        if isinstance(body, (tuple, list)):
-            return body
-        return None
-
-
-class SkyfieldAlmanacBinder:
-    """Binds the observer properties held in Almanac with a heavenly body."""
-
-    # Attributes that are returned as ValueHelpers.  Maps attribute name to
-    # (computation, ValueTuple flavor), where flavor 'direction' means degrees in
-    # degree_compass, and 'angle' means radians in group_angle.
-    VALUE_HELPER_ANGLES: Dict[str, Tuple[str, str]] = {
-        'azimuth'   : ('az',    'direction'),
-        'altitude'  : ('alt',   'angle'),
-        'topo_ra'   : ('ra',    'direction'),
-        'topo_dec'  : ('dec',   'angle'),
-        'astro_ra'  : ('a_ra',  'direction'),
-        'astro_dec' : ('a_dec', 'angle'),
-        'geo_ra'    : ('g_ra',  'direction'),
-        'geo_dec'   : ('g_dec', 'angle'),
-        'hlongitude': ('hlong', 'direction'),
-        'hlatitude' : ('hlat',  'angle'),
-        'elongation': ('elong', 'angle'),
-    }
-
-    # Attributes that are returned as plain floats in decimal degrees.
-    FLOAT_ANGLES = ('az', 'alt', 'ra', 'dec', 'a_ra', 'a_dec', 'g_ra', 'g_dec', 'hlong', 'hlat', 'elong')
-
-    def __init__(self, almanac_type: SkyfieldAlmanacType, almanac, heavenly_body: str):
-        self.almanac_type = almanac_type
-        self.almanac = almanac
-        self.heavenly_body = heavenly_body
-        self.is_star = heavenly_body not in almanac_type.sky.orbs
-        self.use_center = False
-
-    def __call__(self, use_center: bool = False):
-        self.use_center = use_center
-        return self
-
-    def __str__(self):
-        # A binder cannot be printed itself.  It always needs an attribute.
-        raise AttributeError(self.heavenly_body)
-
-    def target_body(self) -> Any:
-        """The skyfield object observed: a planet vector or a Star."""
-        sky = self.almanac_type.sky
-        if self.is_star:
-            return sky.stars[self.heavenly_body][0]
-        return sky.orbs[self.heavenly_body]
-
-    def start_of_day_ts(self) -> float:
-        """Local midnight of the day containing the almanac's time."""
-        return weeutil.weeutil.startOfDay(self.almanac.time_ts)
-
-    def refraction_degrees(self) -> float:
-        """Atmospheric refraction at the horizon (negative degrees) for the
-        almanac's pressure/temperature, scaled from the standard 34' so that
-        WeeWX's defaults (1010 mbar, 15C) give exactly the standard value.
-        pressure=0, WeeWX's documented no-refraction idiom, gives 0."""
-        return (STANDARD_REFRACTION_DEGREES * (self.almanac.pressure / 1010.0)
-                * (288.0 / (273.0 + self.almanac.temperature)))
-
-    def apparent_radius_degrees(self) -> float:
-        """The body's apparent angular radius for rise/set purposes: the
-        same Sky computation the loop fields use, evaluated at the start of
-        the almanac's day (as the loop does), so the two paths' rise/set
-        horizons are identical."""
-        _, observer = self.almanac_type.location(self.almanac)
-        t = self.almanac_type.skyfield_time(self.start_of_day_ts())
-        return self.almanac_type.sky.rise_set_radius_degrees(
-            t, self.heavenly_body, self.target_body(), observer=observer)
-
-    def horizon_degrees(self) -> float:
-        """The effective horizon for rise/set (and for the all-day up/down
-        judgments of visible and circumpolar/neverup, which must use the
-        same value).  The default horizon includes refraction, scaled by
-        the almanac's pressure/temperature (standard 34 arcminutes at
-        standard conditions; pressure=0 turns it off), and the date's
-        apparent body radius unless use_center is set.  One formula for
-        all conditions: rise/set times vary continuously with pressure.
-        A custom horizon is geometric (no refraction), per the USNO
-        twilight definitions."""
-        if self.almanac.horizon == 0.0:
-            refraction = self.refraction_degrees()
-            if self.use_center:
-                return refraction
-            return refraction - self.apparent_radius_degrees()
-        h: float = self.almanac.horizon
-        if not self.use_center:
-            h -= self.apparent_radius_degrees()
-        return h
-
-    def find_rise_set(self, rise: bool, start_ts: float, end_ts: float, previous: bool = False) -> Optional[float]:
-        _, observer = self.almanac_type.location(self.almanac)
-        orb = self.target_body()
-        t0 = self.almanac_type.skyfield_time(start_ts)
-        t1 = self.almanac_type.skyfield_time(end_ts)
-        finder = skyfield.almanac.find_risings if rise else skyfield.almanac.find_settings
-        times, crosses = finder(observer, orb, t0, t1, horizon_degrees=self.horizon_degrees())
-        stamps = [t.utc_datetime().timestamp() for t, crossed in zip(times, crosses) if crossed]
-        if not stamps:
-            return None
-        return stamps[-1] if previous else stamps[0]
-
-    def find_transit(self, antitransit: bool, start_ts: float, end_ts: float, previous: bool = False) -> Optional[float]:
-        geographic, _ = self.almanac_type.location(self.almanac)
-        orb = self.target_body()
-        t0 = self.almanac_type.skyfield_time(start_ts)
-        t1 = self.almanac_type.skyfield_time(end_ts)
-        f = skyfield.almanac.meridian_transits(self.almanac_type.sky.planets, orb, geographic)
-        times, events = skyfield.almanac.find_discrete(t0, t1, f)
-        # meridian_transits reports 1 for an upper (meridian) transit and 0 for
-        # a lower (antimeridian) transit.
-        wanted = 0 if antitransit else 1
-        stamps = [t.utc_datetime().timestamp() for t, event in zip(times, events) if event == wanted]
-        if not stamps:
-            return None
-        return stamps[-1] if previous else stamps[0]
-
-    @property
-    def visible(self) -> ValueHelper:
-        """How long the body is above the horizon on the almanac's day."""
-        sod_ts = self.start_of_day_ts()
-        eod_ts = sod_ts + 86400
-        rise = self.find_rise_set(True, sod_ts, eod_ts)
-        set_ = self.find_rise_set(False, sod_ts, eod_ts)
-
-        def up_all_day() -> bool:
-            _, observer = self.almanac_type.location(self.almanac)
-            orb = self.target_body()
-            alt, _, _ = observer.at(self.almanac_type.skyfield_time(sod_ts)).observe(orb).apparent().altaz()
-            return alt.degrees > self.horizon_degrees()
-
-        visible = daylight_seconds(rise, set_, sod_ts, eod_ts, up_all_day)
-        return ValueHelper(ValueTuple(visible, 'second', 'group_deltatime'),
-                           context='day',
-                           formatter=self.almanac.formatter,
-                           converter=self.almanac.converter)
-
-    def visible_change(self, days_ago: int = 1) -> ValueHelper:
-        """Change in visibility of the heavenly body compared to 'days_ago'."""
-        today_visible = self.visible
-        # Anchor at local noon minus whole days: subtracting a flat 86400
-        # from the almanac's time can land on the wrong calendar day across
-        # a DST transition (e.g., 00:30 PDT on the spring-forward day minus
-        # 86400 is 23:30 PST two calendar days back).
-        then_almanac = self.almanac(
-            almanac_time=self.start_of_day_ts() + 43200 - days_ago * 86400)
-        then_visible = getattr(then_almanac, self.heavenly_body).visible
-        diff_vt = today_visible.value_t - then_visible.value_t
-        return ValueHelper(diff_vt,
-                           context='hour',
-                           formatter=self.almanac.formatter,
-                           converter=self.almanac.converter)
-
-    def geocentric_radec_degrees(self) -> Tuple[float, float]:
-        """Apparent geocentric (right ascension, declination) of date, in
-        decimal degrees.  One observation serves both angles (separation
-        needs the pair; two compute_angle calls would observe twice)."""
-        sky = self.almanac_type.sky
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        ra, dec, _ = sky.earth.at(t).observe(self.target_body()).apparent().radec('date')
-        return ra._degrees, dec.degrees
-
-    def compute_angle(self, attr: str) -> float:
-        """Compute the requested angle.  Returned in decimal degrees."""
-        sky = self.almanac_type.sky
-        orb = self.target_body()
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        if attr in ('az', 'alt'):
-            _, observer = self.almanac_type.location(self.almanac)
-            apparent = observer.at(t).observe(orb).apparent()
-            alt, az, _ = apparent.altaz(temperature_C=self.almanac.temperature,
-                                        pressure_mbar=self.almanac.pressure)
-            return az.degrees if attr == 'az' else alt.degrees
-        elif attr in ('ra', 'dec'):
-            # Apparent topocentric right ascension/declination of date.
-            _, observer = self.almanac_type.location(self.almanac)
-            ra, dec, _ = observer.at(t).observe(orb).apparent().radec('date')
-            return ra._degrees if attr == 'ra' else dec.degrees
-        elif attr in ('a_ra', 'a_dec'):
-            # Astrometric geocentric right ascension/declination (J2000).
-            ra, dec, _ = sky.earth.at(t).observe(orb).radec()
-            return ra._degrees if attr == 'a_ra' else dec.degrees
-        elif attr in ('g_ra', 'g_dec'):
-            # Apparent geocentric right ascension/declination of date.
-            g_ra, g_dec = self.geocentric_radec_degrees()
-            return g_ra if attr == 'g_ra' else g_dec
-        elif attr in ('hlong', 'hlat'):
-            # Heliocentric ecliptic longitude/latitude.  For the sun itself
-            # these are undefined (it sits at the origin); report Earth's
-            # heliocentric coordinates instead, per the XEphem convention.
-            # For the moon this is its true heliocentric longitude, where
-            # PyEphem reports the moon's GEOcentric ecliptic longitude.
-            target = sky.earth if self.heavenly_body == 'sun' else orb
-            lat, lon, _ = sky.sun.at(t).observe(target).frame_latlon(skyfield.framelib.ecliptic_frame)
-            return lon.degrees if attr == 'hlong' else lat.degrees
-        elif attr == 'elong':
-            # Elongation (angular separation from the sun).
-            e = sky.earth.at(t)
-            return e.observe(orb).separation_from(e.observe(sky.sun)).degrees
-        # Every key in FLOAT_ANGLES/VALUE_HELPER_ANGLES must have a branch
-        # above; failing loudly here beats silently answering with the
-        # wrong angle.
-        raise ValueError('compute_angle: unknown angle %r' % attr)
-
-    def magnitude(self) -> float:
-        """Apparent visual magnitude of the body."""
-        sky = self.almanac_type.sky
-        name = self.heavenly_body
-        if self.is_star:
-            mag = sky.stars[name][1]
-            if mag is None:
-                raise AttributeError('mag')
-            return mag
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        if name == 'sun':
-            # The sun's apparent magnitude is -26.74 at one astronomical unit.
-            return -26.74 + 5.0 * math.log10(sky.distance_au(t, sky.sun))
-        elif name == 'moon':
-            # Allen's approximation, plus a correction for the moon's
-            # topocentric distance (385000 km is the mean).
-            _, observer = self.almanac_type.location(self.almanac)
-            apparent = observer.at(t).observe(sky.moon).apparent()
-            phase_angle = abs(apparent.phase_angle(sky.sun).degrees)
-            return (-12.73 + 0.026 * phase_angle + 4e-9 * phase_angle ** 4
-                    + 5.0 * math.log10(apparent.distance().km / 385000.0))
-        elif name == 'pluto':
-            # Meeus, Astronomical Algorithms: m = -1.00 + 5 log10(r * delta).
-            return -1.0 + 5.0 * math.log10(sky.distance_au(t, sky.pluto, origin=sky.sun)
-                                           * sky.distance_au(t, sky.pluto))
-        else:
-            return float(skyfield.magnitudelib.planetary_magnitude(
-                sky.earth.at(t).observe(sky.orbs[name])))
-
-    def angular_radius_radians(self) -> float:
-        """Apparent (topocentric) angular radius of the body, in radians."""
-        if self.is_star:
-            return 0.0
-        _, observer = self.almanac_type.location(self.almanac)
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        distance_km = observer.at(t).observe(self.target_body()).apparent().distance().km
-        return math.asin(BODY_RADIUS_KM[self.heavenly_body] / distance_km)
-
-    def circumpolar_neverup(self) -> Tuple[bool, bool]:
-        """Whether the body stays above (circumpolar), or below (neverup),
-        the horizon, judged from its current declination.  Uses the same
-        effective horizon as find_rise_set (refraction and body radius
-        included), so these can never contradict rise/set."""
-        dec_degrees = self.compute_angle('dec')
-        latitude = self.almanac.lat
-        upper_culmination_alt = 90.0 - abs(latitude - dec_degrees)
-        lower_culmination_alt = abs(latitude + dec_degrees) - 90.0
-        threshold = self.horizon_degrees()
-        return (lower_culmination_alt > threshold,
-                upper_culmination_alt < threshold)
-
-    def parallactic_angle(self) -> float:
-        """Parallactic angle of the body in radians (a method, like PyEphem's,
-        so that both $almanac.venus.parallactic_angle and an explicit call
-        work in a template)."""
-        _, observer = self.almanac_type.location(self.almanac)
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        ha, dec, _ = observer.at(t).observe(self.target_body()).apparent().hadec()
-        latitude = math.radians(self.almanac.lat)
-        return math.atan2(math.sin(ha.radians),
-                          math.tan(latitude) * math.cos(dec.radians)
-                          - math.sin(dec.radians) * math.cos(ha.radians))
-
-    def moon_libration(self, attr: str) -> float:
-        """Geocentric optical libration of the moon (libration_lat,
-        libration_long) and selenographic colongitude of the sun (colong),
-        in radians like PyEphem's, per Meeus, Astronomical Algorithms,
-        chapter 53.  The physical libration (at most 0.04 degrees) is
-        neglected."""
-        sky = self.almanac_type.sky
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        T = (t.tt - 2451545.0) / 36525.0
-        # Mean elements of the lunar orbit (Meeus ch. 47), in degrees:
-        # F, the moon's argument of latitude, and omega, the longitude of
-        # the ascending node.  I is the inclination of the mean lunar
-        # equator to the ecliptic.
-        F = 93.2720950 + 483202.0175233 * T - 0.0036539 * T ** 2 - T ** 3 / 3526000.0 + T ** 4 / 863310000.0
-        omega = 125.0445479 - 1934.1362891 * T + 0.0020754 * T ** 2 + T ** 3 / 467441.0 - T ** 4 / 60616000.0
-        inc = math.radians(1.54242)
-
-        moon_lat, moon_lon, moon_dist = sky.earth.at(t).observe(sky.moon).apparent().frame_latlon(
-            skyfield.framelib.ecliptic_frame)
-        if attr == 'colong':
-            # The colongitude derives from the selenographic position of
-            # the sun: the same formulas, fed the sun's coordinates as seen
-            # from the moon (Meeus 53.5).
-            sun_lat, sun_lon, sun_dist = sky.earth.at(t).observe(sky.sun).apparent().frame_latlon(
-                skyfield.framelib.ecliptic_frame)
-            ratio = moon_dist.au / sun_dist.au
-            lam = (sun_lon.degrees + 180.0
-                   + math.degrees(ratio) * math.cos(moon_lat.radians)
-                   * math.sin(math.radians(sun_lon.degrees - moon_lon.degrees)))
-            beta = math.radians(ratio * moon_lat.degrees)
-        else:
-            lam = moon_lon.degrees
-            beta = moon_lat.radians
-        W = math.radians(lam - omega)
-        if attr == 'libration_lat':
-            return math.asin(-math.sin(W) * math.cos(beta) * math.sin(inc)
-                             - math.sin(beta) * math.cos(inc))
-        A = math.atan2(math.sin(W) * math.cos(beta) * math.cos(inc)
-                       - math.sin(beta) * math.sin(inc),
-                       math.cos(W) * math.cos(beta))
-        l = math.degrees(A) - F
-        if attr == 'libration_long':
-            # Librations stay within +/-8 degrees; normalize to [-180, 180).
-            return math.radians((l + 180.0) % 360.0 - 180.0)
-        # Selenographic colongitude of the sun (the morning terminator).
-        return math.radians((90.0 - l) % 360.0)
-
-    def jupiter_cml(self, attr: str) -> float:
-        """Central meridian longitude of Jupiter in System I (equatorial
-        belts) or System II (temperate belts), in radians like PyEphem's.
-        Computed rigorously: the sub-Earth longitude from the light-time
-        corrected geometry and the IAU rotation elements (pole per the IAU
-        Working Group on Cartographic Coordinates; System I/II rotation
-        rates per the Explanatory Supplement).  Note: PyEphem's values
-        differ from the IAU definition by about 0.8 degrees."""
-        sky = self.almanac_type.sky
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        astrometric = sky.earth.at(t).observe(sky.jupiter)
-        p = astrometric.position.au                # earth -> jupiter, ICRF
-        d = (t.tdb - 2451545.0) - astrometric.light_time    # time at Jupiter
-        T = d / 36525.0
-        a0 = math.radians(268.056595 - 0.006499 * T)        # pole RA
-        d0 = math.radians(64.495303 + 0.002413 * T)         # pole dec
-        if attr == 'cmlI':
-            W = 67.1 + 877.900 * d
-        else:
-            W = 43.3 + 870.270 * d
-        z = numpy.array([math.cos(d0) * math.cos(a0),
-                         math.cos(d0) * math.sin(a0),
-                         math.sin(d0)])
-        node = numpy.cross([0.0, 0.0, 1.0], z)     # ascending node of the equator
-        node /= numpy.linalg.norm(node)
-        y = numpy.cross(z, node)
-        s = -p / numpy.linalg.norm(p)              # jupiter -> earth direction
-        theta = math.degrees(math.atan2(numpy.dot(s, y), numpy.dot(s, node)))
-        return math.radians((W - theta) % 360.0)
-
-    def saturn_ring_tilt(self, attr: str) -> float:
-        """Saturnicentric latitude of the Earth (earth_tilt) or of the Sun
-        (sun_tilt) referred to the ring plane, in radians like PyEphem's
-        (southern tilts negative), per Meeus, Astronomical Algorithms,
-        chapter 45."""
-        sky = self.almanac_type.sky
-        t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-        T = (t.tt - 2451545.0) / 36525.0
-        # Inclination and node of the ring plane, ecliptic of date.
-        i = math.radians(28.075216 - 0.012998 * T + 0.000004 * T ** 2)
-        node = 169.508470 + 1.394681 * T + 0.000412 * T ** 2
-        if attr == 'earth_tilt':
-            lat, lon, _ = sky.earth.at(t).observe(sky.saturn).apparent().frame_latlon(
-                skyfield.framelib.ecliptic_frame)
-        else:
-            lat, lon, _ = sky.sun.at(t).observe(sky.saturn).frame_latlon(
-                skyfield.framelib.ecliptic_frame)
-        return math.asin(math.sin(i) * math.cos(lat.radians) * math.sin(math.radians(lon.degrees - node))
-                         - math.cos(i) * math.sin(lat.radians))
-
-    def pyephem_fallback(self, attr: str):
-        """Delegate an attribute Skyfield does not compute to the built-in
-        PyEphem almanac, if PyEphem is installed."""
-        if getattr(weewx.almanac, 'ephem', None) is not None:
-            binder = weewx.almanac.AlmanacBinder(self.almanac, self.heavenly_body)
-            binder.use_center = self.use_center
-            return getattr(binder, attr)
-        raise AttributeError("'%s' object has no attribute '%s'" % (self.heavenly_body.capitalize(), attr))
-
-    def __getattr__(self, attr: str):
-        """Get the requested observation, such as when the body will rise."""
-        # Don't try any attributes that start with a double underscore, or any
-        # of these special names: they are used by the Python language:
-        if attr.startswith('__') or attr in ['mro', 'im_func', 'func_code']:
-            raise AttributeError(attr)
+    def get_event_fields(self, day_start: datetime) -> Tuple[Dict[str, float], bool]:
+        """The next-event fields: equinox/solstice and full/new moon.  The
+        searches sweep months of ephemeris (roughly 110 ms on a Raspberry
+        Pi 5) for values that change a handful of times a year, so they run
+        only when the local day advances past a cached event.  Each event is
+        computed from the start of the day, so it is deliberately kept for
+        the rest of its day after it occurs.  Returns (fields, ok); ok is
+        False when a search raised, so the caller retries next packet."""
+        fields: Dict[str, float] = {}
+        ok = True
+        ts = self.ts
 
         try:
-            return self._evaluate(attr)
-        except skyfield.errors.EphemerisRangeError:
-            # A search window poking past the ephemeris' span (the almanac's
-            # time itself is inside it, or SkyfieldAlmanacType would never
-            # have handed out this binder).  PyEphem, if installed, can
-            # still answer; without it, a per-tag error -- never an aborted
-            # report.
-            return self.pyephem_fallback(attr)
+            next_equinox, next_solstice = self.get_next_equinox_and_solstice(ts, day_start)
+            if next_equinox is not None:
+                fields['nextEquinox']  = next_equinox
+            if next_solstice is not None:
+                fields['nextSolstice'] = next_solstice
+        except Exception as e:
+            log.error('get_event_fields: get_next_equinox_and_solstice(%r): %s.' % (day_start, e))
+            ok = False
 
-    def _evaluate(self, attr: str):
-        # For a star, attributes involving sun-body geometry make no sense.
-        # PyEphem's own star objects raise AttributeError for these, and the
-        # fallback reproduces that behavior.
-        if self.is_star and attr in STAR_UNSUPPORTED:
-            return self.pyephem_fallback(attr)
+        try:
+            fullmoon, newmoon = self.get_next_fullmoon_and_newmoon(ts, day_start)
+            if fullmoon is not None:
+                fields['nextFullMoon']  = fullmoon
+            if newmoon is not None:
+                fields['nextNewMoon'] = newmoon
+        except Exception as e:
+            log.error('get_event_fields: get_next_fullmoon_and_newmoon(%r): %s.' % (day_start, e))
+            ok = False
 
-        if attr in ('rise', 'set', 'transit'):
-            # These verbs refer to the time the event occurs anytime in the
-            # day, which is not necessarily the *next* one.  Look forward from
-            # local midnight (two days, in case the event does not occur today).
-            sod_ts = self.start_of_day_ts()
-            if attr == 'transit':
-                event_ts = self.find_transit(False, sod_ts, sod_ts + 2 * 86400)
-            else:
-                event_ts = self.find_rise_set(attr == 'rise', sod_ts, sod_ts + 2 * 86400)
-            return self.almanac_type.time_value(self.almanac, event_ts, 'ephem_day')
-        elif attr in ('next_rising', 'next_setting', 'previous_rising', 'previous_setting',
-                      'next_transit', 'previous_transit', 'next_antitransit', 'previous_antitransit'):
-            # These are relative to the time of the almanac.
-            time_ts = self.almanac.time_ts
-            previous = attr.startswith('previous_')
-            if previous:
-                start_ts, end_ts = time_ts - 2 * 86400, time_ts
-            else:
-                start_ts, end_ts = time_ts, time_ts + 2 * 86400
-            if attr.endswith('transit'):
-                event_ts = self.find_transit(attr.endswith('antitransit'), start_ts, end_ts, previous)
-            else:
-                event_ts = self.find_rise_set(attr.endswith('rising'), start_ts, end_ts, previous)
-            return self.almanac_type.time_value(self.almanac, event_ts, 'ephem_day')
-        elif attr in SkyfieldAlmanacBinder.VALUE_HELPER_ANGLES:
-            key, flavor = SkyfieldAlmanacBinder.VALUE_HELPER_ANGLES[attr]
-            degrees = self.compute_angle(key)
-            if flavor == 'direction':
-                return self.almanac_type.direction_value(self.almanac, degrees)
-            return ValueHelper(ValueTuple(math.radians(degrees), 'radian', 'group_angle'),
-                               context='ephem_day',
-                               formatter=self.almanac.formatter,
-                               converter=self.almanac.converter)
-        elif attr in SkyfieldAlmanacBinder.FLOAT_ANGLES:
-            return self.compute_angle(attr)
-        elif attr == 'moon_fullness' and self.heavenly_body == 'moon':
-            # Same computation as 'phase' (percent illuminated).
-            return self.phase
-        elif attr in ('earth_distance', 'sun_distance'):
-            # Supported for planets, and for stars with a measured parallax
-            # (a zero parallax puts the star on skyfield's gigaparsec sphere,
-            # i.e., its distance is unknown).
-            sky = self.almanac_type.sky
-            if self.is_star and not sky.stars[self.heavenly_body][0].parallax_mas:
-                return self.pyephem_fallback(attr)
-            t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-            origin = sky.sun if attr == 'sun_distance' else None
-            return sky.distance_au(t, self.target_body(), origin=origin)
-        elif attr == 'mag':
-            return self.magnitude()
-        elif attr == 'phase':
-            # Percent of the body's surface illuminated by the sun.  The sun
-            # illuminates itself: 100, as PyEphem also reports (asking
-            # skyfield for the sun's fraction_illuminated by the sun would
-            # yield a meaningless ~50).
-            if self.heavenly_body == 'sun':
-                return 100.0
-            sky = self.almanac_type.sky
-            t = self.almanac_type.skyfield_time(self.almanac.time_ts)
-            return 100.0 * sky.earth.at(t).observe(sky.orbs[self.heavenly_body]).apparent().fraction_illuminated(sky.sun)
-        elif attr == 'size':
-            # Apparent angular diameter in arcseconds.
-            return math.degrees(2.0 * self.angular_radius_radians()) * 3600.0
-        elif attr == 'radius':
-            # Apparent angular radius in decimal degrees (the old-style name).
-            return math.degrees(self.angular_radius_radians())
-        elif attr == 'radius_size':
-            # Apparent angular radius as a ValueHelper.
-            return ValueHelper(ValueTuple(self.angular_radius_radians(), 'radian', 'group_angle'),
-                               context='ephem_day',
-                               formatter=self.almanac.formatter,
-                               converter=self.almanac.converter)
-        elif attr in ('circumpolar', 'neverup'):
-            circumpolar, neverup = self.circumpolar_neverup()
-            return circumpolar if attr == 'circumpolar' else neverup
-        elif attr in ('libration_lat', 'libration_long', 'colong') and self.heavenly_body == 'moon':
-            return self.moon_libration(attr)
-        elif attr in ('cmlI', 'cmlII') and self.heavenly_body == 'jupiter':
-            return self.jupiter_cml(attr)
-        elif attr in ('earth_tilt', 'sun_tilt') and self.heavenly_body == 'saturn':
-            return self.saturn_ring_tilt(attr)
-        elif attr == 'name':
-            return self.heavenly_body.replace('_', ' ').title()
+        return fields, ok
 
-        # Something Skyfield does not compute (e.g., the moon's libration or
-        # Jupiter's central meridian longitudes).  Fall back to the built-in
-        # PyEphem almanac if PyEphem is installed.
-        return self.pyephem_fallback(attr)
+    def insert_fields(self, pkt: Dict[str, Any]) -> None:
+        """Insert the celestial fields, each computed no more often than it
+        can change: continuous fields every packet (or update_rate_secs),
+        day-scoped fields once per local day, next-event fields when an
+        event passes.  Every packet still carries every field."""
+        pkt_time: int = to_int(pkt['dateTime'])
+        pkt_datetime  = datetime.fromtimestamp(pkt_time, timezone.utc)
+        ts_pkt_time = self.ts.from_datetime(pkt_datetime)
 
+        # Continuously varying fields, throttled by update_rate_secs.  The
+        # cache serves only packets moving forward within the window and
+        # carrying the same unit system (distances are stored converted):
+        # an out-of-order packet or a units change recomputes.
+        delta = pkt_time - self.prev_reading['dateTime']
+        if (self.update_rate_secs != 0 and 0 <= delta < self.update_rate_secs
+                and pkt['usUnits'] == self.prev_reading.get('usUnits')):
+            continuous = {key: value for key, value in self.prev_reading.items()
+                          if key not in ('dateTime', 'usUnits')}
+        else:
+            continuous = self.get_continuous_fields(pkt, ts_pkt_time, pkt_datetime)
+            if self.update_rate_secs != 0:
+                # Merge, don't replace: a field whose computation failed
+                # this round keeps its last good value for the throttled
+                # packets that follow (the 3.x behavior).
+                self.prev_reading.update(continuous)
+                self.prev_reading['dateTime'] = pkt_time
+                self.prev_reading['usUnits'] = pkt['usUnits']
+        pkt.update(continuous)
 
-def register_almanac(sky: Sky) -> bool:
-    """Register the Skyfield almanac at the head of WeeWX's almanac list, so
-    that reports use Skyfield.  Requires WeeWX 5.2 or later."""
-    if not hasattr(weewx.almanac, 'almanacs') or not hasattr(weewx.almanac, 'AlmanacType'):
-        log.info('This version of WeeWX (%s) does not support almanac extensions'
-                 ' (WeeWX 5.2 or later is required).  Reports will not use Skyfield.' % weewx.__version__)
-        return False
-    # Remove any previously registered instance (e.g., after an engine restart),
-    # then insert at the head of the list so Skyfield takes priority.  Match on
-    # module as well as class name: the independent weewx-skyfield-almanac
-    # extension also names its class SkyfieldAlmanacType and must not be removed.
-    weewx.almanac.almanacs[:] = [a for a in weewx.almanac.almanacs
-                                 if not (type(a).__name__ == 'SkyfieldAlmanacType'
-                                         and type(a).__module__ == __name__)]
-    weewx.almanac.almanacs.insert(0, SkyfieldAlmanacType(sky))
-    return True
+        # Sun/moon rise/set/transit etc. are always reported for the current
+        # day (i.e., the event may have already passed), so they are computed
+        # from the beginning of the packet's local day.
+        day_start = datetime.fromtimestamp(weeutil.weeutil.startOfDay(pkt_time), timezone.utc)
+        day_start_ts = day_start.timestamp()
 
+        # Day-scoped fields: recomputed only when the packet's local day
+        # changes.  Compared for equality, not staleness, so a backfilled or
+        # out-of-order packet is answered for its own day rather than from a
+        # newer cache.
+        if self.day_cache_day != day_start_ts:
+            self.day_cache, day_ok = self.get_day_fields(day_start)
+            # A failed section must not poison the cache for the rest of
+            # the day: leave the cache unstamped so the next packet retries
+            # (before 4.0, every packet recomputed and transient errors
+            # self-healed in one loop cycle).
+            self.day_cache_day = day_start_ts if day_ok else None
+        pkt.update(self.day_cache)
 
-# Define a main entry point for basic testing.
-# Invoke this as follows:
-#
-# Activate venv
-# From root directory of this plugin project:
-# PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --version
-# PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --test --out-temp=65.1 --barometer=30.128
-# PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --test --out-temp=18.4 --barometer=1020.25 --metric
-
+        # Event fields: the cache stays valid until the local day advances
+        # past a cached event.  A backward day (backfilled packet) also
+        # recomputes, as does a failed search (the cache is left unstamped
+        # so the next packet retries); the incomplete-cache check on day
+        # advance covers a search that legitimately found nothing.
+        if (self.event_cache_day is None
+                or day_start_ts < self.event_cache_day
+                or (day_start_ts > self.event_cache_day
+                    and (len(self.event_cache) < 4
+                         or min(self.event_cache.values()) < day_start_ts))):
+            self.event_cache, event_ok = self.get_event_fields(day_start)
+            self.event_cache_day = day_start_ts if event_ok else None
+        pkt.update(self.event_cache)
 
 if __name__ == '__main__':
 
@@ -2179,17 +1165,22 @@ if __name__ == '__main__':
                 log.info('%25s: %29s %s' % (field, fmt_dist, label))
         return success
 
-    def check_deprecated_aliases(pkt: Dict[str, Any]) -> bool:
-        """Every deprecated (pre-3.0) field name must be present and hold the
-        same value as its replacement."""
-        success: bool = True
-        for old_name, new_name in DEPRECATED_FIELD_MAP.items():
-            if new_name in pkt and (old_name not in pkt or pkt[old_name] != pkt[new_name]):
-                log.info('Deprecated alias %s does not match %s.' % (old_name, new_name))
-                success = False
-        if success:
-            log.info('All %d deprecated field aliases match their replacements.' % len(DEPRECATED_FIELD_MAP))
-        return success
+    def check_phase_index_field(pkt: Dict[str, Any]) -> bool:
+        """moonPhaseIndex must be an int in 0..7 (the moon_phases index);
+        moonWaxing must be 0 or 1."""
+        if 'moonPhaseIndex' not in pkt:
+            log.info('Packet missing moonPhaseIndex')
+            return False
+        value = pkt['moonPhaseIndex']
+        if type(value) is not int or not 0 <= value <= 7:
+            log.info('Packet[moonPhaseIndex] is not an int in 0..7: %r' % value)
+            return False
+        log.info('%25s: %35d' % ('moonPhaseIndex', value))
+        if pkt.get('moonWaxing') not in (0, 1):
+            log.info('Packet[moonWaxing] is not 0 or 1: %r' % pkt.get('moonWaxing'))
+            return False
+        log.info('%25s: %35d' % ('moonWaxing', pkt['moonWaxing']))
+        return True
 
     def check_str_fields(pkt: Dict[str, Any], fields: List[str]) -> bool:
         success: bool = True
@@ -2226,11 +1217,71 @@ if __name__ == '__main__':
                       help='weewx.conf file from which to retrieve moon_phases, altitude, latitude and longitude.  Default is /home/weewx/weewx.conf')
     parser.add_option('--timestamp', dest='timestamp', type=float,
                       help='timestamp for which to request celestial information.  Default is the current time.')
+    parser.add_option('--migrate-loopdata-fields', dest='migrate', action='store_true',
+                      help='Rewrite the [LoopData] [[Include]] fields line for 4.0: rename '
+                           'deprecated pre-3.0 celestial fields (keeping their rendition '
+                           'suffixes and the line\'s order), drop the duplicates the renames '
+                           'create, and append the fields the 4.0 sample report needs.  '
+                           'Non-celestial fields are never touched.  Use with --config and '
+                           'exactly one of --output, --in-place or --print-fields-value.')
+    parser.add_option('--output', dest='output_file', type=str, metavar='FILE',
+                      help='With --migrate-loopdata-fields: write the rewritten configuration '
+                           'to FILE, leaving the --config file untouched (diff them, then move '
+                           'FILE into place).')
+    parser.add_option('--in-place', dest='in_place', action='store_true',
+                      help='With --migrate-loopdata-fields: rewrite the --config file itself '
+                           '(a .bak-celestial-4.0 backup is made first).')
+    parser.add_option('--print-fields-value', dest='print_fields', action='store_true',
+                      help='With --migrate-loopdata-fields: print the migrated fields value as '
+                           'a bare comma-separated list, ready to paste into weewx.conf (do '
+                           'NOT add brackets or quotes).')
     (options, args) = parser.parse_args()
 
     if options.version:
         log.info("Celestial version is %s." % CELESTIAL_VERSION)
         log.info("Skyfield version is %d.%d." % (skyfield.VERSION[0], skyfield.VERSION[1]))
+        exit(0)
+
+    if options.migrate:
+        import shutil
+        migrate_config = options.config_file if options.config_file else '/home/weewx/weewx.conf'
+        if sum([bool(options.output_file), bool(options.in_place), bool(options.print_fields)]) != 1:
+            log.error('Specify exactly one of --output FILE, --in-place or --print-fields-value.')
+            exit(1)
+        if options.print_fields:
+            migrate_dict = get_configuration(migrate_config)
+            fields = migrate_dict['LoopData']['Include']['fields']
+            if isinstance(fields, str):
+                fields = [f.strip() for f in fields.split(',') if f.strip()]
+            new_fields, report = migrate_loopdata_fields(list(fields))
+            print(', '.join(new_fields))
+        else:
+            if options.in_place:
+                backup = migrate_config + '.bak-celestial-4.0'
+                if os.path.exists(backup):
+                    log.error('Backup %s already exists; move it aside first.' % backup)
+                    exit(1)
+                shutil.copy2(migrate_config, backup)
+                log.info('Backed up %s to %s' % (migrate_config, backup))
+                migrate_output = migrate_config
+            else:
+                migrate_output = options.output_file
+            report = migrate_loopdata_conf(migrate_config, migrate_output)
+            log.info('Wrote %s' % migrate_output)
+        for old_name, new_name in report['renamed']:
+            log.info('renamed  %s -> %s' % (old_name, new_name))
+        for name in report['dropped']:
+            log.info('dropped duplicate  %s' % name)
+        for name in report['added']:
+            log.info('added  %s' % name)
+        log.info('%d renamed, %d duplicates dropped, %d added.'
+                 % (len(report['renamed']), len(report['dropped']), len(report['added'])))
+        if any(old.split('.')[1] in ('daySunshineDur', 'yesterdaySunshineDur')
+               for old, _ in report['renamed']):
+            log.info('NOTE: daySunshineDur/yesterdaySunshineDur were renamed to')
+            log.info('      daylightDur/yesterdayDaylightDur.  If another extension')
+            log.info('      (e.g., weewx-sunduration) provides a real daySunshineDur on')
+            log.info('      this system, restore those entries by hand.')
         exit(0)
 
     if options.test:
@@ -2300,7 +1351,11 @@ if __name__ == '__main__':
             'sunAltitude',
             'sunAzimuth',
             'sunDeclination',
-            'sunRightAscension']):
+            'sunRightAscension']
+            + [planet + suffix for planet in LOOP_PLANETS
+               for suffix in ('Azimuth', 'Altitude')]):
+            log.info('Test failed.  See above.')
+        elif not check_phase_index_field(pkt):
             log.info('Test failed.  See above.')
         elif not check_timestamp_fields(pkt, [
             'astronomicalTwilightEnd',
@@ -2321,8 +1376,6 @@ if __name__ == '__main__':
             'sunTransit',
             'tomorrowSunrise',
             'tomorrowSunset']):
-            log.info('Test failed.  See above.')
-        elif not check_deprecated_aliases(pkt):
             log.info('Test failed.  See above.')
         else:
             log.info('All fields present and of the correct type.  The test passed.')

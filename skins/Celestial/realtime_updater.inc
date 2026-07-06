@@ -1,7 +1,33 @@
 ## Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
 ## See LICENSE.txt for your rights
+## NOTE: Cheetah owns '#' and '$' in this file: no hex color literals (all
+## colors come from classes in celestial.css) and no javascript template
+## literals.  Guard every loop-data key: a missing field must skip its own
+## cell, never abort the whole update.
 #errorCatcher Echo
 #encoding UTF-8
+#import os
+## Auto-detect the station's IANA timezone at report-generation time (the
+## report is generated on the station machine): /etc/localtime is a symlink
+## into the zoneinfo tree on Debian-family systems; /etc/timezone is the
+## fallback.  Empty when neither yields a valid zone (the javascript then
+## falls back to the viewer's browser timezone).
+#set $auto_tz = ''
+#try
+#set $auto_tz = os.readlink('/etc/localtime').split('zoneinfo/')[-1]
+#except
+#pass
+#end try
+#if not $auto_tz
+#try
+#set $auto_tz = open('/etc/timezone').read().strip()
+#except
+#pass
+#end try
+#end if
+#if $auto_tz and not os.path.exists('/usr/share/zoneinfo/' + $auto_tz)
+#set $auto_tz = ''
+#end if
 <script>
   #if $Extras.has_key('page_update_pwd')
     page_update_pwd = '$Extras.page_update_pwd';
@@ -18,6 +44,27 @@
   #else
     expiration_time = 24;
   #end if
+  ## Timezone for displayed times: the station's zone, auto-detected above.
+  ## The time_zone Extras option overrides ('browser' forces the viewer's
+  ## browser-local zone); empty falls back to browser-local too.
+  #if $Extras.has_key('time_zone')
+    time_zone = '$Extras.time_zone';
+  #else
+    time_zone = '$auto_tz';
+  #end if
+  if (time_zone === 'browser') {
+    time_zone = '';
+  }
+  // An unknown zone name must not break every render: probe once and fall
+  // back to the browser's local zone.
+  try {
+    new Date().toLocaleString("en-US", time_zone === '' ? {} : {timeZone: time_zone});
+  } catch (e) {
+    console.log('bad time_zone "' + time_zone + '", using browser-local');
+    time_zone = '';
+  }
+  ## Station latitude decides the moon disc's lit side (hemisphere flip).
+  STATION_LAT = $station.stn_info.latitude_f;
   function addLoadEvent(func) {
     var oldonload = window.onload;
     if (typeof window.onload != 'function') {
@@ -49,7 +96,7 @@
   }
   function setUpExpiredClickListener() {
     var liveLabel = document.getElementById("live-label");
-    if (liveLabel != "CLICK-ME") {
+    if (liveLabel.innerHTML != "CLICK-ME") {
       liveLabel.innerHTML = "CLICK-ME";
       // set an onclick event on live-label to restart everything
       liveLabel.addEventListener("click", clickListener);
@@ -72,13 +119,46 @@
     }
   }
   setPageExpirationTimer();
-  setInterval(updateCurrent, 2000);
+  setInterval(updateCurrent, refresh_rate * 1000);
+  setInterval(localTick, 1000);
   addLoadEvent(updateCurrent);
-  function pacificHMS(ts) {
-    return new Date(ts * 1000).toLocaleString("en-US", {timeZone: "America/Los_Angeles", hour: '2-digit', minute:'2-digit', second:'2-digit'});
+
+  // ---- formatting helpers -------------------------------------------------
+  function tzOptions(opts) {
+    if (time_zone !== '') {
+      opts.timeZone = time_zone;
+    }
+    return opts;
+  }
+  function fmtHMS(ts) {
+    return new Date(ts * 1000).toLocaleString("en-US",
+      tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit'}));
+  }
+  function fmtHM(ts) {
+    return new Date(ts * 1000).toLocaleString("en-US",
+      tzOptions({hour: '2-digit', minute: '2-digit'}));
+  }
+  function fmtHour(ts) {
+    return new Date(ts * 1000).toLocaleString("en-US",
+      tzOptions({hour: 'numeric'}));
+  }
+  function fmtDateShort(ts) {
+    return new Date(ts * 1000).toLocaleDateString("en-US",
+      tzOptions({month: 'short', day: 'numeric'}));
+  }
+  function fmtDateTime(ts) {
+    // Matches the template's server-side %m/%d/%Y %I:%M:%S %p format.
+    return new Date(ts * 1000).toLocaleString("en-US",
+      tzOptions({month: '2-digit', day: '2-digit', year: 'numeric',
+                 hour: '2-digit', minute: '2-digit', second: '2-digit'})).replace(',', '');
   }
   function numberWithCommas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+  function compass16(az) {
+    var PTS = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
+               'S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return PTS[Math.round(az / 22.5) % 16];
   }
   function daylightString(yesterday_daylight_secs, today_daylight_secs) {
     // 	9 hours, 35 minutes, 56 seconds
@@ -97,24 +177,301 @@
     }
     return hours + ' hours, ' + minutes + ' minutes, ' + seconds + " seconds<br>" + deltaMinutes + " minutes, " + deltaSeconds + " seconds " + moreLess + " than yesterday";
   }
-  // Read a value under its 3.0 name, falling back to the pre-3.0 name so an
-  // un-migrated [LoopData] fields list in weewx.conf keeps this page updating.
-  function lookup(result, key) {
-    if (result[key] !== undefined) {
-      return result[key];
+
+  // ---- per-field setters: a missing key skips its cell, never throws -----
+  function setHtml(id, html) {
+    var el = document.getElementById(id);
+    if (el && html !== undefined && html !== null) {
+      el.innerHTML = html;
     }
-    var old = {
-      "current.daylightDur.raw": "current.daySunshineDur.raw",
-      "current.yesterdayDaylightDur.raw": "current.yesterdaySunshineDur.raw"
-    }[key];
-    if (old === undefined) {
-      // The 3.0 rename lowercased the first letter of the field name
-      // (current.Sunrise.raw became current.sunrise.raw).
-      var parts = key.split(".");
-      parts[1] = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
-      old = parts.join(".");
+  }
+  function setTime(r, key) {
+    if (typeof r[key] === 'number') {
+      setHtml(key, fmtHMS(r[key]));
     }
-    return result[old];
+  }
+  function setDeg(r, key) {
+    if (typeof r[key] === 'number') {
+      setHtml(key, r[key].toFixed(1) + "&deg;");
+    }
+  }
+  function setStr(r, key) {
+    if (r[key] !== undefined) {
+      setHtml(key, r[key]);
+    }
+  }
+  function setDist(r, key) {
+    if (r[key] !== undefined) {
+      setHtml(key, numberWithCommas(r[key]));
+    }
+  }
+  function setFullTime(r, key) {
+    // Format date+time cells from the raw epoch so they honor time_zone;
+    // fall back to loop-data's pre-formatted (station-timezone) string
+    // when the .raw rendition is not in the user's fields list.
+    if (typeof r[key + '.raw'] === 'number') {
+      setHtml(key, fmtDateTime(r[key + '.raw']));
+    } else if (r[key] !== undefined) {
+      setHtml(key, r[key]);
+    }
+  }
+
+  // ---- timezone day math (DST-correct) ------------------------------------
+  // Offset of the display timezone from UTC at ts, in milliseconds.
+  function tzOffsetMs(ts) {
+    var d = new Date(ts * 1000);
+    if (time_zone === '') {
+      return -d.getTimezoneOffset() * 60000;
+    }
+    var parts = new Intl.DateTimeFormat('en-US', {timeZone: time_zone, hour12: false,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'}).formatToParts(d);
+    var v = {};
+    parts.forEach(function(p) { v[p.type] = p.value; });
+    return Date.UTC(v.year, v.month - 1, v.day, v.hour % 24, v.minute, v.second) - d.getTime();
+  }
+  // Start of the display-timezone day containing ts (seconds).
+  function midnightTs(ts) {
+    var guess = Math.floor((ts * 1000 + tzOffsetMs(ts)) / 86400000) * 86400000;
+    // Refine with the offset in effect just before that midnight, so DST
+    // days (23/25 hours) land on the true wall-clock midnight.
+    return (guess - tzOffsetMs((guess - 43200000) / 1000)) / 1000;
+  }
+
+  // ---- live components -----------------------------------------------------
+  var latest = null;      // last parsed loop-data object
+
+  // True-phase moon disc (geometry ported from the weewx-skyfield Sky page).
+  function renderMoonDisc(r) {
+    var el = document.getElementById('moon-disc');
+    var fullness = r["current.moonFullness.raw"];
+    var index = r["current.moonPhaseIndex.raw"];
+    if (!el || typeof fullness !== 'number' || typeof index !== 'number') {
+      return;   // fields not in the loop-data list: leave the container empty
+    }
+    var frac = fullness / 100.0;
+    // moonWaxing is exact; the phase index is a coarse fallback (index 0
+    // also covers the last ~1.5 days of waning crescent, which would draw
+    // the lit side mirrored).
+    var waxingRaw = r["current.moonWaxing.raw"];
+    var waxing = (typeof waxingRaw === 'number') ? (waxingRaw !== 0) : (index <= 3);
+    var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
+    var c = 38, R = 34;
+    var rx = Math.abs(2 * frac - 1) * R;
+    var limbSweep = litLeft ? 0 : 1;
+    var termSweep = (frac >= 0.5) ? (litLeft ? 0 : 1) : (litLeft ? 1 : 0);
+    var path = 'M ' + c + ',' + (c - R) +
+               ' A ' + R + ',' + R + ' 0 0 ' + limbSweep + ' ' + c + ',' + (c + R) +
+               ' A ' + rx + ',' + R + ' 0 0 ' + termSweep + ' ' + c + ',' + (c - R) + ' Z';
+    document.getElementById('moon-disc').innerHTML =
+      '<svg viewBox="0 0 76 76" role="img" aria-label="Moon phase">' +
+      '<circle class="moon-dark" cx="' + c + '" cy="' + c + '" r="' + R + '"/>' +
+      '<path class="moon-lit" d="' + path + '"/>' +
+      '<circle class="moon-ring" cx="' + c + '" cy="' + c + '" r="' + R + '"/>' +
+      '</svg>';
+  }
+
+  // Countdown chips: next full/new moon, equinox, solstice.
+  function renderCountdowns(r, nowTs) {
+    var chips = [['count-fullmoon', 'current.nextFullMoon.raw'],
+                 ['count-newmoon', 'current.nextNewMoon.raw'],
+                 ['count-equinox', 'current.nextEquinox.raw'],
+                 ['count-solstice', 'current.nextSolstice.raw']];
+    chips.forEach(function(chip) {
+      var el = document.getElementById(chip[0]);
+      var ts = r[chip[1]];
+      if (!el || typeof ts !== 'number') {
+        return;
+      }
+      // Count calendar days in the display timezone, not 86400-second
+      // buckets: an event later tonight is 'today', not 'in 1 day'.
+      var n = Math.max(0, Math.round((midnightTs(ts) - midnightTs(nowTs)) / 86400));
+      var when = (n === 0) ? 'today' : (n === 1 ? 'in 1 day' : 'in ' + n + ' days');
+      el.querySelector('.v').innerHTML = fmtDateShort(ts);
+      el.querySelector('.d').innerHTML = when;
+    });
+  }
+
+  // The day strip: twilight bands, rise/set ticks and the moving now-line.
+  var STRIP_X0 = 8, STRIP_X1 = 992, STRIP_W = 1000, STRIP_H = 96;
+  var stripSod = 0, stripEod = 1;
+  function stripX(ts) {
+    var t = Math.min(Math.max(ts, stripSod), stripEod);
+    return STRIP_X0 + (STRIP_X1 - STRIP_X0) * (t - stripSod) / (stripEod - stripSod);
+  }
+  function renderDayStrip(r, nowTs) {
+    var el = document.getElementById('day-strip');
+    if (!el) {
+      return;
+    }
+    stripSod = midnightTs(nowTs);
+    stripEod = midnightTs(stripSod + 26 * 3600 + 1);
+    var bandTop = 18, bandBot = 66;
+    // Sky-state transitions across the day; each edge carries the band it
+    // transitions TO and the band it transitions FROM.  Missing edges
+    // (polar day/night, sun up at midnight) drop out, and the band before
+    // the first surviving edge is that edge's FROM state -- so a day that
+    // starts with the sun up starts with the day band, not night.
+    var edges = [[r["current.astronomicalTwilightStart.raw"], 'band-astro', 'band-night'],
+                 [r["current.nauticalTwilightStart.raw"], 'band-naut', 'band-astro'],
+                 [r["current.civilTwilightStart.raw"], 'band-civil', 'band-naut'],
+                 [r["current.sunrise.raw"], 'band-day', 'band-civil'],
+                 [r["current.sunset.raw"], 'band-civil', 'band-day'],
+                 [r["current.civilTwilightEnd.raw"], 'band-naut', 'band-civil'],
+                 [r["current.nauticalTwilightEnd.raw"], 'band-astro', 'band-naut'],
+                 [r["current.astronomicalTwilightEnd.raw"], 'band-night', 'band-astro']]
+      .filter(function(e) { return typeof e[0] === 'number'; })
+      .sort(function(a, b) { return a[0] - b[0]; });
+    var firstBand;
+    if (edges.length > 0) {
+      firstBand = edges[0][2];
+    } else {
+      // No transitions at all today: polar day or polar night.
+      var daylight = r["current.daylightDur.raw"];
+      firstBand = (typeof daylight === 'number' && daylight >= 43200) ? 'band-day' : 'band-night';
+    }
+    edges.unshift([stripSod, firstBand, firstBand]);
+    var svg = '<svg viewBox="0 0 ' + STRIP_W + ' ' + STRIP_H + '" preserveAspectRatio="none" role="img" aria-label="Light and dark today">';
+    var i;
+    for (i = 0; i < edges.length; i++) {
+      var x0 = stripX(edges[i][0]);
+      var x1 = (i + 1 < edges.length) ? stripX(edges[i + 1][0]) : STRIP_X1;
+      svg += '<rect class="' + edges[i][1] + '" x="' + x0 + '" y="' + bandTop +
+             '" width="' + Math.max(0, x1 - x0) + '" height="' + (bandBot - bandTop) + '"/>';
+    }
+    // Hour gridlines and labels every three hours.
+    var t;
+    for (t = stripSod; t <= stripEod + 1; t += 3 * 3600) {
+      var gx = stripX(t);
+      // Anchor the edge labels inward so midnight's text is not clipped.
+      var anchor = (t === stripSod) ? 'start' : (t + 3 * 3600 > stripEod + 1 ? 'end' : 'middle');
+      svg += '<line class="gridline" x1="' + gx + '" y1="' + bandBot + '" x2="' + gx + '" y2="' + (bandBot + 5) + '"/>';
+      svg += '<text class="mono gridlab" x="' + gx + '" y="' + (bandBot + 18) + '" text-anchor="' + anchor + '">' + fmtHour(t) + '</text>';
+    }
+    // Sun and moon ticks (each may be absent today).
+    var ticks = [['current.sunrise.raw', 'tick-sun'],
+                 ['current.sunTransit.raw', 'tick-sun'],
+                 ['current.sunset.raw', 'tick-sun'],
+                 ['current.moonrise.raw', 'tick-moon'],
+                 ['current.moonset.raw', 'tick-moon']];
+    ticks.forEach(function(tick) {
+      var ts2 = r[tick[0]];
+      if (typeof ts2 === 'number' && ts2 >= stripSod && ts2 <= stripEod) {
+        var tx = stripX(ts2);
+        svg += '<line class="' + tick[1] + '" x1="' + tx + '" y1="' + (bandTop - 4) + '" x2="' + tx + '" y2="' + (bandBot + 4) + '"/>';
+      }
+    });
+    // The now-line; localTick() repositions it between polls.
+    var nx = stripX(nowTs);
+    svg += '<line class="nowline nowpulse" id="strip-now" x1="' + nx + '" y1="10" x2="' + nx + '" y2="' + (bandBot + 6) + '"/>';
+    svg += '<text class="mono nowlab" id="strip-now-label" x="' + nx + '" y="8" text-anchor="middle">now ' + fmtHM(nowTs) + '</text>';
+    svg += '</svg>';
+    el.innerHTML = svg;
+  }
+  function moveNowLine(nowTs) {
+    var line = document.getElementById('strip-now');
+    var label = document.getElementById('strip-now-label');
+    if (!line || !label) {
+      return;
+    }
+    var nx = stripX(nowTs);
+    line.setAttribute('x1', nx);
+    line.setAttribute('x2', nx);
+    label.setAttribute('x', nx);
+    label.textContent = 'now ' + fmtHM(nowTs);
+  }
+
+  // Planets-now chips: up/down, altitude, compass direction, distance.
+  var PLANETS = ['mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
+  function renderPlanets(r) {
+    PLANETS.forEach(function(planet) {
+      var chip = document.getElementById('planet-' + planet);
+      if (!chip) {
+        return;
+      }
+      var cap = planet.charAt(0).toUpperCase() + planet.slice(1);
+      var alt = r['current.' + planet + 'Altitude.raw'];
+      var az = r['current.' + planet + 'Azimuth.raw'];
+      var dist = r['current.earth' + cap + 'Distance'];
+      if (typeof alt === 'number' && typeof az === 'number') {
+        var line;
+        if (alt >= 0) {
+          line = 'up &middot; ' + alt.toFixed(0) + "&deg; &middot; " + compass16(az);
+        } else {
+          line = 'down &middot; ' + compass16(az);
+        }
+        chip.querySelector('.chipline').innerHTML = line;
+      }
+      if (dist !== undefined) {
+        chip.querySelector('.chipsub').innerHTML = numberWithCommas(dist);
+      }
+    });
+  }
+
+  // The 41 data cells (dual-source: first-painted by the report almanac,
+  // kept live from loop data here).
+  function renderDataCells(r) {
+    setTime(r, "current.sunrise.raw");
+    setTime(r, "current.sunTransit.raw");
+    setTime(r, "current.sunset.raw");
+    setTime(r, "current.tomorrowSunrise.raw");
+    setTime(r, "current.tomorrowSunset.raw");
+    setTime(r, "current.astronomicalTwilightStart.raw");
+    setTime(r, "current.nauticalTwilightStart.raw");
+    setTime(r, "current.civilTwilightStart.raw");
+    setTime(r, "current.civilTwilightEnd.raw");
+    setTime(r, "current.nauticalTwilightEnd.raw");
+    setTime(r, "current.astronomicalTwilightEnd.raw");
+    if (typeof r["current.yesterdayDaylightDur.raw"] === 'number' &&
+        typeof r["current.daylightDur.raw"] === 'number') {
+      setHtml("daylight", daylightString(r["current.yesterdayDaylightDur.raw"],
+                                         r["current.daylightDur.raw"]));
+    }
+    setDeg(r, "current.sunAzimuth.raw");
+    setDeg(r, "current.sunAltitude.raw");
+    setDeg(r, "current.sunRightAscension.raw");
+    setDeg(r, "current.sunDeclination.raw");
+    setFullTime(r, "current.nextEquinox");
+    setFullTime(r, "current.nextSolstice");
+    setFullTime(r, "current.moonrise");
+    setFullTime(r, "current.moonTransit");
+    setFullTime(r, "current.moonset");
+    setDeg(r, "current.moonAzimuth.raw");
+    setDeg(r, "current.moonAltitude.raw");
+    setDeg(r, "current.moonRightAscension.raw");
+    setDeg(r, "current.moonDeclination.raw");
+    setStr(r, "current.moonPhase");
+    if (r["current.moonFullness"] !== undefined) {
+      setHtml("current.moonFullness", r["current.moonFullness"] + " full");
+    }
+    setFullTime(r, "current.nextNewMoon");
+    setFullTime(r, "current.nextFullMoon");
+    setDist(r, "current.earthMoonDistance");
+    setDist(r, "current.earthSunDistance");
+    setDist(r, "current.earthMercuryDistance");
+    setDist(r, "current.earthVenusDistance");
+    setDist(r, "current.earthMarsDistance");
+    setDist(r, "current.earthJupiterDistance");
+    setDist(r, "current.earthSaturnDistance");
+    setDist(r, "current.earthUranusDistance");
+    setDist(r, "current.earthNeptuneDistance");
+    setDist(r, "current.earthPlutoDistance");
+    // Light years; only present when the star catalog is enabled and the
+    // field is in the [LoopData] fields list.
+    var proximaLY = r["current.earthProximaCentauriDistance.raw"];
+    if (proximaLY !== undefined) {
+      setHtml("current.earthProximaCentauriDistance.raw", proximaLY.toFixed(2) + " light years");
+    }
+  }
+
+  // ---- poll + local tick ---------------------------------------------------
+  function localTick() {
+    var nowTs = Date.now() / 1000;
+    setHtml('live-clock', fmtHMS(nowTs));
+    if (latest !== null) {
+      moveNowLine(nowTs);
+      renderCountdowns(latest, nowTs);
+    }
   }
   function updateCurrent() {
     if (pageTimedOut) {
@@ -125,68 +482,24 @@
     xhttp.onload = function() {
       try {
         var result = JSON.parse(this.responseText);
+        var nowTs = Date.now() / 1000;
 
         // Check the date
         // "dateTime": 1578965850,
-        var lastUpdate = new Date(result["current.dateTime.raw"] * 1000);
-        var age = Math.round(Math.abs(new Date() - lastUpdate) / 1000);
-        var element = document.getElementById("live-label");
-        element.style.fontWeight = "bolder";
-        if (age <= 6) {
-          element.innerHTML = "LIVE&nbsp;&nbsp;";
-        } else {
-          element.innerHTML = age + "s ago&nbsp;&nbsp;";
+        var lastTs = result["current.dateTime.raw"];
+        if (typeof lastTs === 'number') {
+          var age = Math.round(Math.abs(Date.now() - lastTs * 1000) / 1000);
+          setHtml("live-label", age <= 6 ? "LIVE" : age + "s ago");
+          // Display the time of the last update, in the page's timezone.
+          setHtml("last-update", fmtHMS(lastTs));
         }
 
-        // Display the time of the last update.
-        var activityElement = document.getElementById("last-update");
-        activityElement.innerHTML = lastUpdate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-
-        document.getElementById("current.sunrise.raw").innerHTML = pacificHMS(lookup(result, "current.sunrise.raw"));
-        document.getElementById("current.sunTransit.raw").innerHTML = pacificHMS(lookup(result, "current.sunTransit.raw"));
-        document.getElementById("current.sunset.raw").innerHTML = pacificHMS(lookup(result, "current.sunset.raw"));
-        document.getElementById("current.tomorrowSunrise.raw").innerHTML = pacificHMS(lookup(result, "current.tomorrowSunrise.raw"));
-        document.getElementById("current.tomorrowSunset.raw").innerHTML = pacificHMS(lookup(result, "current.tomorrowSunset.raw"));
-        document.getElementById("daylight").innerHTML = daylightString(lookup(result, "current.yesterdayDaylightDur.raw"), lookup(result, "current.daylightDur.raw"));
-        document.getElementById("current.astronomicalTwilightStart.raw").innerHTML = pacificHMS(lookup(result, "current.astronomicalTwilightStart.raw"));
-        document.getElementById("current.nauticalTwilightStart.raw").innerHTML = pacificHMS(lookup(result, "current.nauticalTwilightStart.raw"));
-        document.getElementById("current.civilTwilightStart.raw").innerHTML = pacificHMS(lookup(result, "current.civilTwilightStart.raw"));
-        document.getElementById("current.civilTwilightEnd.raw").innerHTML = pacificHMS(lookup(result, "current.civilTwilightEnd.raw"));
-        document.getElementById("current.nauticalTwilightEnd.raw").innerHTML = pacificHMS(lookup(result, "current.nauticalTwilightEnd.raw"));
-        document.getElementById("current.astronomicalTwilightEnd.raw").innerHTML = pacificHMS(lookup(result, "current.astronomicalTwilightEnd.raw"));
-        document.getElementById("current.sunAzimuth.raw").innerHTML = lookup(result, "current.sunAzimuth.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.sunAltitude.raw").innerHTML = lookup(result, "current.sunAltitude.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.sunRightAscension.raw").innerHTML = lookup(result, "current.sunRightAscension.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.sunDeclination.raw").innerHTML = lookup(result, "current.sunDeclination.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.nextEquinox").innerHTML = lookup(result, "current.nextEquinox");
-        document.getElementById("current.nextSolstice").innerHTML = lookup(result, "current.nextSolstice");
-        document.getElementById("current.moonrise").innerHTML = lookup(result, "current.moonrise");
-        document.getElementById("current.moonTransit").innerHTML = lookup(result, "current.moonTransit");
-        document.getElementById("current.moonset").innerHTML = lookup(result, "current.moonset");
-        document.getElementById("current.moonAzimuth.raw").innerHTML = lookup(result, "current.moonAzimuth.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.moonAltitude.raw").innerHTML = lookup(result, "current.moonAltitude.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.moonRightAscension.raw").innerHTML = lookup(result, "current.moonRightAscension.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.moonDeclination.raw").innerHTML = lookup(result, "current.moonDeclination.raw").toFixed(1) + "&deg;";
-        document.getElementById("current.moonPhase").innerHTML = lookup(result, "current.moonPhase");
-        document.getElementById("current.moonFullness").innerHTML = lookup(result, "current.moonFullness") + " full";
-        document.getElementById("current.nextNewMoon").innerHTML = lookup(result, "current.nextNewMoon");
-        document.getElementById("current.nextFullMoon").innerHTML = lookup(result, "current.nextFullMoon");
-        document.getElementById("current.earthMoonDistance").innerHTML = numberWithCommas(lookup(result, "current.earthMoonDistance"));
-        document.getElementById("current.earthSunDistance").innerHTML = numberWithCommas(lookup(result, "current.earthSunDistance"));
-        document.getElementById("current.earthMercuryDistance").innerHTML = numberWithCommas(lookup(result, "current.earthMercuryDistance"));
-        document.getElementById("current.earthVenusDistance").innerHTML = numberWithCommas(lookup(result, "current.earthVenusDistance"));
-        document.getElementById("current.earthMarsDistance").innerHTML = numberWithCommas(lookup(result, "current.earthMarsDistance"));
-        document.getElementById("current.earthJupiterDistance").innerHTML = numberWithCommas(lookup(result, "current.earthJupiterDistance"));
-        document.getElementById("current.earthSaturnDistance").innerHTML = numberWithCommas(lookup(result, "current.earthSaturnDistance"));
-        document.getElementById("current.earthUranusDistance").innerHTML = numberWithCommas(lookup(result, "current.earthUranusDistance"));
-        document.getElementById("current.earthNeptuneDistance").innerHTML = numberWithCommas(lookup(result, "current.earthNeptuneDistance"));
-        document.getElementById("current.earthPlutoDistance").innerHTML = numberWithCommas(lookup(result, "current.earthPlutoDistance"));
-        // Light years; only present when the star catalog is enabled and the
-        // field is in the [LoopData] fields list.
-        var proximaLY = result["current.earthProximaCentauriDistance.raw"];
-        if (proximaLY !== undefined) {
-          document.getElementById("current.earthProximaCentauriDistance.raw").innerHTML = proximaLY.toFixed(2) + " light years";
-        }
+        latest = result;
+        renderDataCells(result);
+        renderMoonDisc(result);
+        renderCountdowns(result, nowTs);
+        renderDayStrip(result, nowTs);
+        renderPlanets(result);
       } catch (e) {
         console.log(e);
       }

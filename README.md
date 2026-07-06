@@ -3,8 +3,7 @@
 
 Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
 
-**This extension requires Python 3.9 or later, WeeWX 4 or 5 and the Skyfield and NumPy libraries.
-Replacing the almanac used in report generation requires WeeWX 5.2 or later.**
+**This extension requires Python 3.9 or later, WeeWX 4 or 5 and the Skyfield and NumPy libraries.**
 
 
 ## Description
@@ -16,98 +15,52 @@ The information is then available via
 As of version 2.0, weewx-celestial uses [Skyfield](https://rhodesmill.org/skyfield/) for *much* more accurate
 information than [PyEphem](https://rhodesmill.org/pyephem/index.html), which is currently used by WeeWX.
 
-As of version 2.3, celestial observations are only recomputed every ten seconds (by default) rather than
-on every loop record.  That is, the observations will be inserted into every loop record, but the observations
-will only be updated every ten seconds.
+As of version 4.0, each observation is recomputed only as often as it can change: positions,
+distances and the moon's phase on every loop record (about 20 ms on a Raspberry Pi 5); rise/set,
+twilight and daylight times once per local day; and the next equinox/solstice/full/new moon only
+when one passes.  Every loop record still carries every field.  (Versions 2.3 through 3.x instead
+recomputed everything on a ten-second cycle, because a full recompute was too expensive to run
+per record.)
 
-As of version 3.0, weewx-celestial also replaces WeeWX's built-in almanac (PyEphem or weeutil) for
-report generation (this requires WeeWX 5.2 or later).  Report tags such as `$almanac.sunrise`,
-`$almanac.moon.transit`, `$almanac(horizon=-6).sun(use_center=1).rise` and `$almanac.next_full_moon`
-(as used, for example, in the Seasons skin's Celestial page) are computed with Skyfield and JPL's
-ephemeris; so generated reports show the same (more accurate) values as the loop packet fields.
-To turn this off (i.e., to leave report generation on the built-in almanac), set
-`replace_builtin_almanac = false` in the `Celestial` section of `weewx.conf`.
+Versions 3.x of weewx-celestial also replaced WeeWX's built-in almanac for report generation.
+As of version 4.0 it no longer does: that job now belongs to the independent
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension (same author),
+whose almanac engine grew out of this extension's.
 
-The Skyfield report almanac natively computes, for the sun, the moon and all planets (plus Pluto):
-rise/set/transit (including `next_`/`previous_` rising, setting, transit and antitransit), custom
-horizons and `use_center` (for twilight tags), azimuth/altitude, right ascension/declination
-(topocentric, astrometric and geocentric), heliocentric longitude/latitude, elongation, earth and
-sun distance, visible time and its day-over-day change, magnitude (`$almanac.venus.mag`), percent
-illuminated (`$almanac.venus.phase`), apparent angular size (`$almanac.sun.size`,
-`$almanac.moon.radius_size`), `circumpolar`/`neverup`, parallactic angle and sidereal time; as well
-as equinoxes, solstices, moon phases and the moon index.  PyEphem is *not* required for any of
-these, nor for any tag used by WeeWX's standard skins.
+### Report tags: install weewx-skyfield
 
-Named stars (e.g., `$almanac.rigel.rise`, `$almanac.polaris.circumpolar`, `$almanac.sirius.mag`)
-are also computed natively.  The names are the official proper names of the IAU Catalog of
-Star Names (every entry of the Working Group on Star Names' IAU-CSN list with a Hipparcos
-number), plus PyEphem's 115 star names for backward compatibility (a few of those are legacy
-spellings of the same stars, e.g. `albereo` for `albireo`) — 420 names in all, covering 412
-stars.  Multi-word names use
-underscores and diacritics are dropped (`$almanac.kaus_australis.rise`,
-`$almanac.barnards_star.mag`).  Any other Hipparcos star can be addressed by catalog number:
-`$almanac.hip_57939.rise`.  The star positions, proper motions, parallaxes and magnitudes come
-from `celestial_stars.dat`, an excerpt of the Hipparcos Catalogue (The Hipparcos and Tycho
-Catalogues, ESA SP-1200, 1997; distributed by CDS as VizieR catalog I/239) which is installed
-along with the extension; install a full `hip_main.dat` alongside it to serve all 118,218
-Hipparcos stars.  Unlike PyEphem, `earth_distance` and `sun_distance` work for stars (in
-astronomical units, like the planets — e.g., `$almanac.proxima_centauri.earth_distance`),
-computed from the star's Hipparcos parallax.  Star support can be turned off by setting
-`stars = false` in the `Celestial` section of `weewx.conf`.
+weewx-celestial does not touch report generation; report tags such as `$almanac.sunrise` are
+served by whatever almanac WeeWX has.  For report tags computed with Skyfield — from the same
+definitions as these loop fields, plus much more (planet magnitudes and angular sizes, named-star
+tags such as `$almanac.rigel.rise`, any Hipparcos star via `$almanac.hip_57939`, heliocentric
+coordinates, librations, and so on) — install
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield).  The two extensions are
+designed to run side by side and need no configuration to coexist.
 
-As of 3.0, everything WeeWX's built-in almanac computes is computed natively, including the
-moon's libration and selenographic colongitude, Jupiter's central meridian longitudes and
-Saturn's ring tilt (formerly PyEphem fallbacks).  The only things that still fall through to
-PyEphem, when it is installed, are named stars when the star catalog is disabled and direct
-PyEphem body attributes this extension does not compute (e.g., `$almanac.moon.subsolar_lat`).
-
-### Differences from PyEphem
-
-Where PyEphem and standard astronomical conventions differ, weewx-celestial follows the standard
-definitions rather than PyEphem:
-
-- A custom horizon (e.g., `$almanac(horizon=-6)`) is treated as a geometric altitude: no
-  atmospheric refraction is applied.  This matches the USNO definitions of civil, nautical and
-  astronomical twilight.  (PyEphem applies refraction to a custom horizon unless the `pressure=0`
-  idiom is used, which shifts twilight times by roughly 2-3 minutes.)  With the default horizon,
-  rise and set include standard refraction (34 arcminutes) and the body's apparent radius, and
-  `circumpolar`/`neverup` are judged against that same effective horizon, so they always agree
-  with rise/set.
-- `hlongitude`/`hlatitude` are true heliocentric (sun-centered) ecliptic coordinates for every
-  body, including the moon.  (PyEphem reports the moon's *geocentric* ecliptic longitude under
-  this name.)  For the sun itself, heliocentric coordinates are undefined, so Earth's heliocentric
-  coordinates are reported, per the XEphem convention.
-- The default horizon honors the almanac's `pressure` and `temperature` for rise/set: refraction
-  is scaled from the standard 34 arcminutes, and WeeWX's documented `pressure=0` idiom turns it
-  off entirely (PyEphem behavior preserved; previously these settings were ignored for rise/set).
-- `$almanac.separation()` takes two `(longitude, latitude)` tuples in radians and returns radians,
-  per the WeeWX 5.2 almanac API.  It also accepts two of this almanac's own body binders —
-  `$almanac.separation($almanac.mars, $almanac.venus)` — computed natively.  Calls made with
-  PyEphem `Body` arguments are passed through to PyEphem when it is installed.
-- Jupiter's central meridian longitudes (`$almanac.jupiter.cmlI`/`cmlII`) are computed from the
-  IAU rotation elements (pole and System I/II rotation rates) and the light-time corrected
-  geometry.  PyEphem's values differ from the IAU definition by about 0.8 degrees.
-- The moon's libration (`libration_lat`/`libration_long`) and selenographic colongitude
-  (`colong`) are the optical libration per Meeus, Astronomical Algorithms ch. 53; the physical
-  libration (at most 0.04 degrees) is neglected.  Saturn's ring tilt (`earth_tilt`/`sun_tilt`)
-  follows Meeus ch. 45.  All are in radians, like PyEphem's.
+Without weewx-skyfield, reports fall back to WeeWX's built-in PyEphem/weeutil almanac.  The
+bundled sample report works either way: cells a capable almanac can fill are rendered at report
+generation time, and javascript fills and updates every cell live from loop data regardless.
 
 The information available in loop records, as well as the sample report provided is based on WeeWX's
 Seasons Report (Copyright Tom Keffer and Matthew Wall).  More fields are provided than in the Seasons
 report, including start/end times for astronomical and nautical twilight.  Also, distances from earth to
 the other planets (and Pluto); as well as the current distance to the moon and sun.
 
-As of 3.0, every value in the sample report is computed at report generation time (when a capable
-almanac is available); javascript then keeps the values updated from the loop-data.txt file on
-every loop record (for the Vantage driver, that happens every 2 seconds).  Without an extended
-almanac, the page still generates with empty cells and the javascript fills them in, as in 2.x.
+As of version 4.0, the sample report is a live "night-palette" page: a true-phase moon disc, a
+day strip showing the twilight bands with rise/set ticks and a pulsing "now" line that moves in
+real time, countdown chips for the next full/new moon and equinox/solstice, planets-now chips
+(up/down, altitude, compass direction, distance, one identity color per body), and the full data
+cards — all updated by javascript from the loop-data.txt file on every loop record (for the
+Vantage driver, that happens every 2 seconds).  The data cells are additionally computed at
+report generation time when a capable almanac is available (weewx-skyfield, or WeeWX's built-in
+PyEphem almanac) so the page first-paints populated; without an extended almanac the page still
+generates and the javascript fills everything in.  The new visual components require the 4.0
+loop fields in the `[LoopData]` fields list; without them the page works and those components
+simply stay empty.  **You do not need to edit the fields list by hand** — a bundled utility
+updates it in one command (see the Upgrade Instructions below).
 
-See weewx-celestial in action with at
-[www.paloaltoweather.com/celestial.html](https://www.paloaltoweather.com/celestial.html)
-A screen shot is below:
-![Celestial Page at PaloAltoWeather.com](PAWCelestialReport.png)
-
-This extension also comes with a sample report.
+The bundled sample report (Palo Alto, a July evening at 9:12 PM — first-quarter moon in the
+west, the brass now-line in the dusk gradient):
 ![Celestial Sample Report](CelestialSampleReport.png)
 
 The following observations are available in the LOOP packet (names as of version 3.0):
@@ -128,21 +81,35 @@ The following observations are available in the LOOP packet (names as of version
 - `earthSunDistance`
 - `earthUranusDistance`
 - `earthVenusDistance`
+- `jupiterAltitude`
+- `jupiterAzimuth`
+- `marsAltitude`
+- `marsAzimuth`
+- `mercuryAltitude`
+- `mercuryAzimuth`
 - `moonAltitude`
 - `moonAzimuth`
 - `moonDeclination`
 - `moonFullness`
 - `moonPhase`
+- `moonPhaseIndex` (index into the moon-phases list: 0 = new .. 4 = full .. 7 = waning crescent)
 - `moonRightAscension`
 - `moonrise`
 - `moonset`
 - `moonTransit`
+- `moonWaxing` (1 while the moon is waxing, else 0)
 - `nauticalTwilightEnd`
 - `nauticalTwilightStart`
+- `neptuneAltitude`
+- `neptuneAzimuth`
 - `nextEquinox`
 - `nextFullMoon`
 - `nextNewMoon`
 - `nextSolstice`
+- `plutoAltitude`
+- `plutoAzimuth`
+- `saturnAltitude`
+- `saturnAzimuth`
 - `sunAltitude`
 - `sunAzimuth`
 - `sunDeclination`
@@ -152,6 +119,10 @@ The following observations are available in the LOOP packet (names as of version
 - `sunTransit`
 - `tomorrowSunrise`
 - `tomorrowSunset`
+- `uranusAltitude`
+- `uranusAzimuth`
+- `venusAltitude`
+- `venusAzimuth`
 - `yesterdayDaylightDur`
 
 ### Deprecated loop field names
@@ -162,10 +133,13 @@ observation names (e.g., `outTemp`, `windSpeed`).  In addition, `daySunshineDur`
 measure the time the sun is above the horizon (daylight), not "sunshine duration" in the
 meteorological sense of measured bright sunshine.
 
-**In 3.x releases, every value is written to the loop packet under BOTH its new name and its
-old (pre-3.0) name**, so existing `[LoopData]` fields lists and skins keep working unchanged.
-**The old names will be REMOVED in version 4.0** — update your `weewx.conf` and any custom skins
-to the new names before then.  The old names and their replacements:
+In 3.x releases, every value was written to the loop packet under both its new name and its
+old (pre-3.0) name.  **As of version 4.0, the old names are no longer emitted** — your
+`weewx.conf` and any custom skins must use the new names.  **There is no need to edit
+`weewx.conf` by hand**: the bundled `--migrate-loopdata-fields` utility renames every
+deprecated field in your `[LoopData]` fields line automatically (see the Upgrade Instructions
+below).  The table that follows is the reference for updating custom skins and javascript,
+which the utility cannot see:
 
 | Deprecated (removed in 4.0) | Use instead |
 |---|---|
@@ -197,22 +171,39 @@ to the new names before then.  The old names and their replacements:
    `current.Moonrise`
    `current.Moonset`
 
-1. As of version 2.3, `update_rate_secs = 10` will be added to the `[Celestial]` section of weewx.conf.  This results in celestial fields being
-   updated no more than every 10s or every loop record, whichever is longer.  To return the behavior to updating on every loop record, simply
-   replace the `10` with `0`.
+1. As of version 4.0, fields are cached by how often they can change (see the Description above), which makes per-record updates cheap:
+   `update_rate_secs` now throttles only the continuously varying fields (positions, distances, moon phase) and the installed default is
+   `0` (update on every loop record).  If your weewx.conf still has `update_rate_secs = 10` from an earlier release, it keeps working;
+   change it to `0` for live updates on every loop record.
 
-1. As of version 3.0, `replace_builtin_almanac = true` will be added to the `[Celestial]` section of weewx.conf.  With WeeWX 5.2 or later, reports
-   (e.g., the Seasons skin's Celestial page) are now generated with Skyfield almanac values rather than WeeWX's built-in PyEphem/weeutil
-   almanac.  To return report generation to the built-in almanac, replace the `true` with `false`.
+1. As of version 4.0, weewx-celestial no longer replaces the almanac used in report generation (versions 3.x did).  If your reports rely
+   on Skyfield-computed `$almanac` tags (including named-star tags such as `$almanac.rigel.rise`), install the
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension.  The `replace_builtin_almanac` option is gone; a
+   leftover setting in the `[Celestial]` section of `weewx.conf` is ignored harmlessly.
 
-1. As of version 3.0, the loop fields have new (lowerCamelCase) names — see "Deprecated loop field names" above.  Nothing breaks when you
-   upgrade: every value is written under both the new and the old name, so your existing `[LoopData]` fields line and any custom skins
-   keep working.  However, the old names will be REMOVED in version 4.0, so plan to update:
-   - the `[LoopData] [[Include]] [[[fields]]]` line in `weewx.conf` (the full new list is in the installation instructions below), and
-   - any custom skins or JavaScript that read the old names from loop-data.txt.
+1. As of version 4.0, the deprecated pre-3.0 loop field names are no longer emitted (see "Deprecated loop field names" above), and there
+   are new loop fields — `moonPhaseIndex`, `moonWaxing` and azimuth/altitude for all eight planets — feeding the redesigned live sample
+   report (moon disc, countdown chips, day strip, planets-now chips).  **A bundled utility updates your `[LoopData] [[Include]]
+   [[[fields]]]` line for both changes at once**: it renames the deprecated celestial fields in place (keeping their rendition suffixes
+   and the line's order), drops the duplicates the renames create, appends the fields the new sample report reads, and never touches
+   non-celestial fields.  Run it after installing 4.0:
 
-   Note that the bundled Celestial sample skin already uses the new names as of 3.0, so if you use it, update the fields line when you
-   upgrade (during 3.x you can simply list both old and new names if you want a gradual transition).
+   `PYTHONPATH=/home/weewx/bin python -m user.celestial --migrate-loopdata-fields --config /home/weewx/weewx.conf --output /home/weewx/weewx.conf.migrated`
+
+   Compare the two files (`diff /home/weewx/weewx.conf /home/weewx/weewx.conf.migrated`), then move the migrated file into place and
+   restart WeeWX.  Alternatives: `--in-place` rewrites `weewx.conf` directly (a `.bak-celestial-4.0` backup is made first), and
+   `--print-fields-value` just prints the migrated value as a bare comma-separated list for manual pasting (do not add brackets or
+   quotes).  The utility is safe to re-run; a second pass changes nothing.
+
+   One caveat: `daySunshineDur`/`yesterdaySunshineDur` are renamed to `daylightDur`/`yesterdayDaylightDur`.  If another extension
+   (e.g., weewx-sunduration) provides a *real* `daySunshineDur` on your system, restore those entries by hand — the utility calls
+   this out in its summary when it happens.
+
+   Also update any custom skins or JavaScript that read the old names from loop-data.txt (the bundled Celestial sample skin already
+   uses the new names as of 3.0).  Without the new fields the page still works and the new visual components simply stay empty.  Displayed times now use the station's timezone, auto-detected at report
+   generation time (previously the javascript hardcoded America/Los_Angeles); a new `time_zone` Extras option can override (an IANA
+   name, or `browser` for the viewer's browser-local timezone).  The `refresh_rate` Extras option (seconds between loop-data polls) is
+   now honored; it existed before but was ignored.
 
 1. As of version 3.0, the bundled JPL ephemeris is named `celestial_de421.bsp` (formerly `de421.bsp`).  `weectl` does not remove
    files dropped from an extension's file list when upgrading, so after upgrading from 2.x, delete the orphaned 17 MB file:
@@ -258,7 +249,7 @@ to the new names before then.  The old names and their replacements:
 
 1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
 
-   `current.astronomicalTwilightEnd.raw, current.astronomicalTwilightStart.raw, current.civilTwilightEnd.raw, current.civilTwilightStart.raw, current.earthJupiterDistance, current.earthMarsDistance, current.earthMercuryDistance, current.earthMoonDistance, current.earthNeptuneDistance, current.earthPlutoDistance, current.earthSaturnDistance, current.earthSunDistance, current.earthUranusDistance, current.earthVenusDistance, current.moonAltitude.raw, current.moonAzimuth.raw, current.moonDeclination.raw, current.moonFullness, current.moonPhase, current.moonRightAscension.raw, current.moonTransit, current.moonTransit.raw, current.moonrise, current.moonrise.raw, current.moonset, current.moonset.raw, current.nauticalTwilightEnd.raw, current.nauticalTwilightStart.raw, current.nextEquinox, current.nextFullMoon, current.nextNewMoon, current.nextSolstice, current.sunAltitude.raw, current.sunAzimuth.raw, current.sunDeclination.raw, current.sunRightAscension.raw, current.sunTransit.raw, current.sunrise.raw, current.sunset.raw, current.daylightDur.raw, current.yesterdayDaylightDur.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
+   `current.astronomicalTwilightEnd.raw, current.astronomicalTwilightStart.raw, current.civilTwilightEnd.raw, current.civilTwilightStart.raw, current.dateTime.raw, current.daylightDur.raw, current.earthJupiterDistance, current.earthMarsDistance, current.earthMercuryDistance, current.earthMoonDistance, current.earthNeptuneDistance, current.earthPlutoDistance, current.earthProximaCentauriDistance.raw, current.earthSaturnDistance, current.earthSunDistance, current.earthUranusDistance, current.earthVenusDistance, current.jupiterAltitude.raw, current.jupiterAzimuth.raw, current.marsAltitude.raw, current.marsAzimuth.raw, current.mercuryAltitude.raw, current.mercuryAzimuth.raw, current.moonAltitude.raw, current.moonAzimuth.raw, current.moonDeclination.raw, current.moonFullness, current.moonFullness.raw, current.moonPhase, current.moonPhaseIndex.raw, current.moonRightAscension.raw, current.moonTransit, current.moonTransit.raw, current.moonWaxing.raw, current.moonrise, current.moonrise.raw, current.moonset, current.moonset.raw, current.nauticalTwilightEnd.raw, current.nauticalTwilightStart.raw, current.neptuneAltitude.raw, current.neptuneAzimuth.raw, current.nextEquinox, current.nextEquinox.raw, current.nextFullMoon, current.nextFullMoon.raw, current.nextNewMoon, current.nextNewMoon.raw, current.nextSolstice, current.nextSolstice.raw, current.plutoAltitude.raw, current.plutoAzimuth.raw, current.saturnAltitude.raw, current.saturnAzimuth.raw, current.sunAltitude.raw, current.sunAzimuth.raw, current.sunDeclination.raw, current.sunRightAscension.raw, current.sunTransit.raw, current.sunrise.raw, current.sunset.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw, current.uranusAltitude.raw, current.uranusAzimuth.raw, current.venusAltitude.raw, current.venusAzimuth.raw, current.yesterdayDaylightDur.raw`
 
 1. Restart WeeWX.
 
@@ -276,7 +267,7 @@ to the new names before then.  The old names and their replacements:
 
 1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
 
-   `current.astronomicalTwilightEnd.raw, current.astronomicalTwilightStart.raw, current.civilTwilightEnd.raw, current.civilTwilightStart.raw, current.earthJupiterDistance, current.earthMarsDistance, current.earthMercuryDistance, current.earthMoonDistance, current.earthNeptuneDistance, current.earthPlutoDistance, current.earthSaturnDistance, current.earthSunDistance, current.earthUranusDistance, current.earthVenusDistance, current.moonAltitude.raw, current.moonAzimuth.raw, current.moonDeclination.raw, current.moonFullness, current.moonPhase, current.moonRightAscension.raw, current.moonTransit.raw, current.moonrise.raw, current.moonset.raw, current.nauticalTwilightEnd.raw, current.nauticalTwilightStart.raw, current.nextEquinox, current.nextFullMoon, current.nextNewMoon, current.nextSolstice, current.sunAltitude.raw, current.sunAzimuth.raw, current.sunDeclination.raw, current.sunRightAscension.raw, current.sunTransit.raw, current.sunrise.raw, current.sunset.raw, current.daylightDur.raw, current.yesterdayDaylightDur.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
+   `current.astronomicalTwilightEnd.raw, current.astronomicalTwilightStart.raw, current.civilTwilightEnd.raw, current.civilTwilightStart.raw, current.dateTime.raw, current.daylightDur.raw, current.earthJupiterDistance, current.earthMarsDistance, current.earthMercuryDistance, current.earthMoonDistance, current.earthNeptuneDistance, current.earthPlutoDistance, current.earthProximaCentauriDistance.raw, current.earthSaturnDistance, current.earthSunDistance, current.earthUranusDistance, current.earthVenusDistance, current.jupiterAltitude.raw, current.jupiterAzimuth.raw, current.marsAltitude.raw, current.marsAzimuth.raw, current.mercuryAltitude.raw, current.mercuryAzimuth.raw, current.moonAltitude.raw, current.moonAzimuth.raw, current.moonDeclination.raw, current.moonFullness, current.moonFullness.raw, current.moonPhase, current.moonPhaseIndex.raw, current.moonRightAscension.raw, current.moonTransit, current.moonTransit.raw, current.moonWaxing.raw, current.moonrise, current.moonrise.raw, current.moonset, current.moonset.raw, current.nauticalTwilightEnd.raw, current.nauticalTwilightStart.raw, current.neptuneAltitude.raw, current.neptuneAzimuth.raw, current.nextEquinox, current.nextEquinox.raw, current.nextFullMoon, current.nextFullMoon.raw, current.nextNewMoon, current.nextNewMoon.raw, current.nextSolstice, current.nextSolstice.raw, current.plutoAltitude.raw, current.plutoAzimuth.raw, current.saturnAltitude.raw, current.saturnAzimuth.raw, current.sunAltitude.raw, current.sunAzimuth.raw, current.sunDeclination.raw, current.sunRightAscension.raw, current.sunTransit.raw, current.sunrise.raw, current.sunset.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw, current.uranusAltitude.raw, current.uranusAzimuth.raw, current.venusAltitude.raw, current.venusAzimuth.raw, current.yesterdayDaylightDur.raw`
 
 1. Download the lastest release, weewx-celestial.zip, from
 
@@ -299,20 +290,17 @@ to the new names before then.  The old names and their replacements:
 ```
 [Celestial]
     enable = true
-    update_rate_secs = 10
-    replace_builtin_almanac = true
+    update_rate_secs = 0
     stars = true
 ```
 
- * `enable`                 : When true, the celestial observations are added to every loop record.
- * `update_rate_secs`       : number of seconds that have to pass to recalculate observations (`0` to recalculate on every loop record).
- * `replace_builtin_almanac`: When true (the default), reports are generated with Skyfield almanac values
-                       (`$almanac.sunrise`, `$almanac.moon.transit`, etc.) rather than WeeWX's built-in
-                       PyEphem/weeutil almanac.  Requires WeeWX 5.2 or later (on earlier versions of
-                       WeeWX, reports continue to use the built-in almanac).
- * `stars`                  : When true (the default), named stars (e.g., `$almanac.rigel.rise`) are available
-                       in the report almanac, computed from the bundled Hipparcos catalog excerpt
-                       (`celestial_stars.dat`).
+ * `enable`          : When true, the celestial observations are added to every loop record.
+ * `update_rate_secs`: number of seconds that have to pass before the continuously varying fields
+                       (positions, distances, moon phase) are recalculated; `0` (the default)
+                       recalculates them on every loop record.  The daily and next-event fields
+                       have their own natural lifetimes and are unaffected by this setting.
+ * `stars`           : When true (the default), the `earthProximaCentauriDistance` loop field is emitted,
+                       computed from the bundled Hipparcos catalog excerpt (`celestial_stars.dat`).
 
 ## Entries in `CelestialReport` section of `weewx.conf`:
 
@@ -323,6 +311,7 @@ to the new names before then.  The old names and their replacements:
         skin = Celestial
         [[[Extras]]]
             loop_data_file = ../loop-data.txt
+            refresh_rate = 2
             expiration_time = 24
             page_update_pwd = foobar
 ```
@@ -333,6 +322,14 @@ to the new names before then.  The old names and their replacements:
  * `loop_data_file` : The path of the loop-dat.txt file (written by the loopdata extension).
                       If a relative path is specified, it is relative to the
                      `target_report` directory.
+ * `refresh_rate`   : Seconds between loop-data polls.  Match weewx-loopdata's write cadence
+                      (2 seconds for the Vantage driver).
+ * `time_zone`      : Timezone for every time shown on the page (rise/set cells, day strip,
+                      clock).  By default the station's timezone is auto-detected at report
+                      generation time, so remote viewers of a public page see station time —
+                      no setting needed.  Set only to override: an IANA name (e.g.,
+                      `America/New_York`) forces that zone; `browser` forces the viewer's
+                      browser-local timezone.
  * `expiration_time`: The number of hours before expiring the autoupdate of the report.
  * `page_update_pwd`: The password to specify in the URL such that the page never expires.
                       That is, `<machine>/weewx/celestial/?pageUpdate=foobar`
@@ -341,15 +338,16 @@ to the new names before then.  The old names and their replacements:
 
 ### Automated tests
 
-A pytest test suite lives in the `tests` directory.  It exercises the Skyfield report almanac
-(sun/moon rise/set/transit, twilight horizons, equinoxes/solstices, moon phases, positions,
-magnitudes/sizes/phases, named stars, polar day/night edge cases, and consistency between
-report almanac values and loop packet fields).  It also contains two permanent audits:
-one verifying that, with PyEphem installed, everything WeeWX's built-in almanac can do still
-works (including direct PyEphem attributes such as `$almanac.jupiter.cmlI`); and one verifying
-that on a system *without* PyEphem, all standard-skin tags (and much more) work with Skyfield
-alone.  Run the suite from the root of this repository with the Python from your WeeWX virtual
-environment (WeeWX, Skyfield and pytest must be installed in that environment):
+A pytest test suite lives in the `tests` directory.  It exercises the loop fields and their
+Sky engine (rise/set/transit and twilight times, equinoxes/solstices, moon phases, positions,
+distances and their units, polar day/night edge cases, the sample skin's end-to-end render,
+and pinned regression values for Palo Alto on 2025-06-21).  When the
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension is available
+(installed on the machine, or checked out as a sibling repository), the loop fields are also
+cross-checked against its report almanac: the two extensions compute from the same definitions,
+so their values must agree.  Run the suite from the root of this repository with the Python
+from your WeeWX virtual environment (WeeWX, Skyfield and pytest must be installed in that
+environment):
 
 ```
 /home/weewx/weewx-venv/bin/python -m pytest tests
@@ -369,47 +367,47 @@ Celestial can be run from the command line to verify the readings.  Below are ex
 
 Example output from above test execution:
 ```
-Skyfield version: 1.49.
-                MoonPhase:                      Waning gibbous
-     EarthJupiterDistance:                 406,289,210.7 miles
-        EarthMarsDistance:                  60,129,317.7 miles
-     EarthMercuryDistance:                 126,589,292.9 miles
-     EarthNeptuneDistance:               2,825,596,755.3 miles
-        EarthMoonDistance:                     249,266.8 miles
-       EarthPlutoDistance:               3,361,859,320.1 miles
-      EarthSaturnDistance:                 954,622,337.7 miles
-         EarthSunDistance:                  91,463,855.1 miles
-      EarthUranusDistance:               1,777,984,877.0 miles
-       EarthVenusDistance:                  57,437,297.2 miles
-           daySunshineDur:  9 hours, 57 minutes and 23 seconds
-     yesterdaySunshineDur:  9 hours, 55 minutes and 55 seconds
-             MoonFullness:                            76% full
-             MoonAltitude:                              -49.9°
-              MoonAzimuth:                              337.6°
-          MoonDeclination:                                0.6°
-       MoonRightAscension:                              177.5°
-              SunAltitude:                               19.8°
-               SunAzimuth:                              222.2°
-           SunDeclination:                              -20.4°
-        SunRightAscension:                              300.9°
-  AstronomicalTwilightEnd:        January 18, 2025 at 06:49 PM
-AstronomicalTwilightStart:        January 18, 2025 at 05:48 AM
-         CivilTwilightEnd:        January 18, 2025 at 05:46 PM
-       CivilTwilightStart:        January 18, 2025 at 06:52 AM
-                 Moonrise:        January 18, 2025 at 10:20 PM
-                  Moonset:        January 18, 2025 at 10:04 AM
-              MoonTransit:        January 18, 2025 at 03:47 AM
-      NauticalTwilightEnd:        January 18, 2025 at 06:18 PM
-    NauticalTwilightStart:        January 18, 2025 at 06:20 AM
-              NextEquinox:          March 20, 2025 at 02:01 AM
-             NextFullMoon:       February 12, 2025 at 05:53 AM
-              NextNewMoon:        January 29, 2025 at 04:35 AM
-             NextSolstice:           June 20, 2025 at 07:42 PM
-                  Sunrise:        January 18, 2025 at 07:20 AM
-                   Sunset:        January 18, 2025 at 05:17 PM
-               SunTransit:        January 18, 2025 at 12:19 PM
-          tomorrowSunrise:        January 19, 2025 at 07:20 AM
-           tomorrowSunset:        January 19, 2025 at 05:18 PM
+Skyfield version: 1.54.
+                moonPhase:                      Waning gibbous
+     earthJupiterDistance:                 580,002,076.2 miles
+        earthMarsDistance:                 194,417,412.8 miles
+     earthMercuryDistance:                  53,857,884.8 miles
+     earthNeptuneDistance:               2,760,433,627.2 miles
+        earthMoonDistance:                     241,090.0 miles
+       earthPlutoDistance:               3,216,323,226.6 miles
+      earthSaturnDistance:                 875,208,906.9 miles
+         earthSunDistance:                  94,502,823.0 miles
+      earthUranusDistance:               1,880,091,466.7 miles
+       earthVenusDistance:                  93,494,330.4 miles
+              daylightDur: 14 hours, 39 minutes and 13 seconds
+     yesterdayDaylightDur: 14 hours, 39 minutes and 57 seconds
+             moonFullness:                            70% full
+             moonAltitude:                              -37.2°
+              moonAzimuth:                              300.5°
+          moonDeclination:                               -2.7°
+       moonRightAscension:                              350.1°
+              sunAltitude:                               66.3°
+               sunAzimuth:                              237.8°
+           sunDeclination:                               22.7°
+        sunRightAscension:                              105.1°
+  astronomicalTwilightEnd:           July 05, 2026 at 10:24 PM
+astronomicalTwilightStart:           July 05, 2026 at 04:01 AM
+         civilTwilightEnd:           July 05, 2026 at 09:03 PM
+       civilTwilightStart:           July 05, 2026 at 05:22 AM
+                 moonrise:           July 05, 2026 at 11:51 PM
+                  moonset:           July 05, 2026 at 11:20 AM
+              moonTransit:           July 05, 2026 at 05:19 AM
+      nauticalTwilightEnd:           July 05, 2026 at 09:41 PM
+    nauticalTwilightStart:           July 05, 2026 at 04:44 AM
+              nextEquinox:      September 22, 2026 at 05:05 PM
+             nextFullMoon:           July 29, 2026 at 07:35 AM
+              nextNewMoon:           July 14, 2026 at 02:43 AM
+             nextSolstice:       December 21, 2026 at 12:50 PM
+                  sunrise:           July 05, 2026 at 05:53 AM
+                   sunset:           July 05, 2026 at 08:32 PM
+               sunTransit:           July 05, 2026 at 01:13 PM
+          tomorrowSunrise:           July 06, 2026 at 05:53 AM
+           tomorrowSunset:           July 06, 2026 at 08:32 PM
 All fields present and of the correct type.  The test passed.
 ```
 

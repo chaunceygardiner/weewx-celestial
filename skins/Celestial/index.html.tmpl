@@ -10,41 +10,27 @@
 <html lang="en">
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <meta name="viewport" content="width=1124">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     #if $Extras.has_key('meta_title')
       <title>$Extras.meta_title</title>
     #else
       <title>$station.location</title>
     #end if
     <meta name="description" content="Up-to-date celestial data for $station.location.">
-    <style>
-      .label {
-          font-size: 80%;
-          vertical-align: top;
-          text-align: right;
-          padding-top: 4px;
-          padding-right: 5px;
-      }
-      .data {
-          font-weight: bold;
-          font-size: 80%;
-          vertical-align: top;
-          text-align: left;
-          padding-top: 4px;
-      }
-      .celestial_body {
-          margin-bottom: 30px;
-          float: left;
-      }
-    </style>
+    ## All styling lives in celestial.css: Cheetah owns '#', so hex colors
+    ## must never appear in this template or the javascript include.
+    <link rel="stylesheet" href="celestial.css">
   </head>
-  <body style="background-color:black;font-family:monospace;color:white;">
+  <body>
     #include "realtime_updater.inc"
-    ## As of 3.0, all values are also computed at report generation time with
-    ## the Skyfield almanac (formatted to match the javascript above, which
-    ## then keeps them updated from loop data on every loop record).  Without
-    ## an extended almanac (no Skyfield registration and no PyEphem), the
-    ## cells are left empty and the javascript fills them, as in 2.x.
+    ## All values are also computed at report generation time with whatever
+    ## capable almanac is installed -- the weewx-skyfield extension for full
+    ## fidelity, or WeeWX's built-in PyEphem almanac (formatted to match the
+    ## javascript above, which then keeps them updated from loop data on
+    ## every loop record).  Without an extended almanac, the cells are left
+    ## empty and the javascript fills them, as in 2.x.  The moon disc, the
+    ## countdown chips, the day strip and the planet chips are javascript-
+    ## only: they populate on the first loop-data fetch.
     #set $extras = $almanac.hasExtras
     #set $time_hms = "%I:%M:%S %p"
     #set $time_full = "%m/%d/%Y %I:%M:%S %p"
@@ -101,33 +87,68 @@
     #pass
     #end try
     #end if
-    <div>
-      <div>
-        <table style="font-size:32px;width:100%;margin:auto;">
-          <tr>
-            <td style="text-align:left;width:220px;">
-              <span id="last-update"></span>
-            </td>
-            <td style="text-align:center;">
-              <h1 style="font-size:32px;text-decoration:underline;">
-                #if $Extras.has_key('title')
-                  $Extras.title
-                #else
-                  $station.location
-                #end if
-              </h1>
-            </td>
-            <td style="text-align:right;width:220px;">
-              <span id="live-label"></span>
-            </td>
-          </tr>
-        </table>
-      </div>
-    </div>
-    <div style="font-size:20px;">
-      <div class="celestial_body">
-        <table class="celestial">
-          <tr><th style="font-weight:bold;">&#9728; Sun</th><th></th></tr>
+    ## Station coordinates: hemisphere-lettered for the header, and the
+    ## latitude also feeds the javascript moon disc (lit-side flip).
+    #set $lat_f = $station.stn_info.latitude_f
+    #set $lon_f = $station.stn_info.longitude_f
+    #set $lat_letter = 'N' if $lat_f >= 0 else 'S'
+    #set $lon_letter = 'E' if $lon_f >= 0 else 'W'
+    <div class="page">
+      <header>
+        <div>
+          <h1>
+            #if $Extras.has_key('title')
+              $Extras.title
+            #else
+              Celestial <span class="over">over</span> $station.location
+            #end if
+          </h1>
+          <div class="sub mono">
+            $("%.2f&deg; %s &middot; %.2f&deg; %s" % (abs($lat_f), $lat_letter, abs($lon_f), $lon_letter))
+            &middot; <span id="live-clock"></span>
+            &middot; updated <span id="last-update"></span> <span id="live-label"></span>
+          </div>
+          <div class="countdown" id="countdowns">
+            <div class="count" id="count-fullmoon"><span class="k">full moon</span><span class="v mono"></span><span class="d"></span></div>
+            <div class="count" id="count-newmoon"><span class="k">new moon</span><span class="v mono"></span><span class="d"></span></div>
+            <div class="count" id="count-equinox"><span class="k">equinox</span><span class="v mono"></span><span class="d"></span></div>
+            <div class="count" id="count-solstice"><span class="k">solstice</span><span class="v mono"></span><span class="d"></span></div>
+          </div>
+        </div>
+        <div class="moonbox">
+          <div class="mlabel">
+            <div class="mname"><span id="current.moonPhase">#if $extras#$($almanac.moon_phase)#end if#</span></div>
+            <div class="mpct mono"><span id="current.moonFullness">#if $extras#$(('%s%% full' % $almanac.moon_fullness))#end if#</span></div>
+          </div>
+          <div id="moon-disc"></div>
+        </div>
+      </header>
+
+      <section id="day-strip-card">
+        <p class="eyebrow">Today &middot; light &amp; dark</p>
+        <div id="day-strip"></div>
+        <p class="caption">Twilight bands (USNO geometric definitions), sun and moon
+        rise/set ticks, and the brass line is now.</p>
+      </section>
+
+      <section id="planets-card">
+        <p class="eyebrow">Planets &middot; now</p>
+        <div class="chips" id="planet-chips">
+          <div class="chip" id="planet-mercury"><span class="dot dot-mercury"></span><div><div class="chipname">Mercury</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-venus"><span class="dot dot-venus"></span><div><div class="chipname">Venus</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-mars"><span class="dot dot-mars"></span><div><div class="chipname">Mars</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-jupiter"><span class="dot dot-jupiter"></span><div><div class="chipname">Jupiter</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-saturn"><span class="dot dot-saturn"></span><div><div class="chipname">Saturn</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-uranus"><span class="dot dot-uranus"></span><div><div class="chipname">Uranus</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-neptune"><span class="dot dot-neptune"></span><div><div class="chipname">Neptune</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-pluto"><span class="dot dot-pluto"></span><div><div class="chipname">Pluto</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+        </div>
+      </section>
+
+      <div class="cards">
+        <section>
+          <p class="eyebrow">Sun</p>
+          <table class="celestial">
           <tr>
             <td class="label">Start astronomical twilight</td>
             <td class="data" id="current.astronomicalTwilightStart.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).rise.format($time_hms))#end if#</td>
@@ -206,8 +227,7 @@
             <td class="label">Total daylight</td>
             <td class="data" id="daylight">$daylight_html</td>
           </tr>
-          <tr><td class="label">&nbsp;</td><td>&nbsp;</td></tr>
-          <tr><th style="font-weight:bold;">&#9728; Tomorrow</th><th></th></tr>
+          <tr><th>Tomorrow</th><th></th></tr>
           <tr>
             <td class="label">Sunrise</td>
             <td class="data" id="current.tomorrowSunrise.raw">#if $extras#$($tomorrow.sunrise.format($time_hms))#end if#</td>
@@ -216,11 +236,11 @@
             <td class="label">Sunset</td>
             <td class="data" id="current.tomorrowSunset.raw">#if $extras#$($tomorrow.sunset.format($time_hms))#end if#</td>
           </tr>
-        </table>
-      </div>
-      <div>
-        <table class="celestial">
-          <tr><th style="font-weight:bold;">&#9789; Moon</th><th></th></tr>
+          </table>
+        </section>
+        <section>
+          <p class="eyebrow">Moon</p>
+          <table class="celestial">
           <tr>
             <td class="label">Moonrise</td>
             <td class="data" id="current.moonrise">#if $extras#$($almanac.moon.rise.format($time_full))#end if#</td>
@@ -268,63 +288,62 @@
               <td class="data" id="current.nextFullMoon">#if $extras#$($almanac.next_full_moon.format($time_full))#end if#</td>
             </tr>
           #end if
+          </table>
+        </section>
+        <section>
+          <p class="eyebrow">Earth to heavenly bodies</p>
+          <table class="celestial">
           <tr>
-            <td class="label">Phase</td>
-            <td class="data"><span id="current.moonPhase">#if $extras#$($almanac.moon_phase)#end if#</span><br>
-              <span id="current.moonFullness">#if $extras#$(('%s%% full' % $almanac.moon_fullness))#end if#</span></td>
-          </tr>
-          <tr><td class="label">&nbsp;</td><td>&nbsp;</td></tr>
-          <tr><th style="font-weight:bold;">&#9793; Earth</th><th style="font-weight:bold;">to Heavenly Bodies</th></tr>
-          <tr>
-            <td class="label">&#9789; Moon</td>
+            <td class="label">Moon</td>
             <td class="data" id="current.earthMoonDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.moon.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9728; Sun</td>
+            <td class="label">Sun</td>
             <td class="data" id="current.earthSunDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.sun.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9791; Mercury</td>
+            <td class="label">Mercury</td>
             <td class="data" id="current.earthMercuryDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mercury.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9792; Venus</td>
+            <td class="label">Venus</td>
             <td class="data" id="current.earthVenusDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.venus.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9794; Mars</td>
+            <td class="label">Mars</td>
             <td class="data" id="current.earthMarsDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mars.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9795; Jupiter</td>
+            <td class="label">Jupiter</td>
             <td class="data" id="current.earthJupiterDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.jupiter.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9796; Saturn</td>
+            <td class="label">Saturn</td>
             <td class="data" id="current.earthSaturnDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.saturn.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9797; Uranus</td>
+            <td class="label">Uranus</td>
             <td class="data" id="current.earthUranusDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.uranus.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9798; Neptune</td>
+            <td class="label">Neptune</td>
             <td class="data" id="current.earthNeptuneDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.neptune.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#9799; Pluto</td>
+            <td class="label">Pluto</td>
             <td class="data" id="current.earthPlutoDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.pluto.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
-            <td class="label">&#10038; Proxima Centauri</td>
+            <td class="label">Proxima Centauri</td>
             <td class="data" id="current.earthProximaCentauriDistance.raw" style="text-align:right">$proxima_html</td>
           </tr>
-        </table>
+          </table>
+        </section>
       </div>
-      <div style='text-align:center;font-size:16px;font-style:italic;'>
-        <br>
-        Calculated with Skyfield and JPL's 421.bsp ephemeris.
-      </div>
+
+      <footer>
+        Calculated with Skyfield and JPL's DE421 ephemeris &middot; live via weewx-loopdata.
+      </footer>
     </div>
   </body>
 </html>

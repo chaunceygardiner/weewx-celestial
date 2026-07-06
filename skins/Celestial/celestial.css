@@ -1,0 +1,109 @@
+/* Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
+ * Distributed under the terms of the GNU Public License (GPLv3)
+ *
+ * Stylesheet for the Celestial live report.  ALL colors live here: Cheetah
+ * owns '#' in the .tmpl/.inc files, so hex literals must never appear there
+ * -- the javascript reaches every color through a class in this file.
+ * The palette and type system are ported from the weewx-skyfield "Sky"
+ * page (same author), so the two pages read as one family. */
+
+:root{
+  --night:#0A0F22;   /* page background */
+  --vault:#111834;   /* cards and chips */
+  --ink:#E9E4D4;     /* primary text */
+  --muted:#8B93B8;   /* secondary text */
+  --brass:#D3A94C;   /* accent */
+  --line:#2A3358;    /* borders, hairlines */
+  /* Per-body identity colors (Sky page values; pluto is celestial's own
+   * addition -- the Sky palette has no pluto). */
+  --c-sun:#B98C31; --c-moon:#7E92DA; --c-mercury:#AB763B; --c-venus:#D2B458;
+  --c-mars:#C04F36; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
+  --c-uranus:#35A8BE; --c-neptune:#5F85E6; --c-pluto:#8A7FB0;
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+body{background:var(--night); color:var(--ink);
+     font-family:Charter, Georgia, 'Times New Roman', serif;
+     margin:0; padding:32px 20px 40px; line-height:1.55}
+.page{max-width:1280px; margin:0 auto; display:flex; flex-direction:column; gap:30px}
+.mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
+.smallcaps{font-variant-caps:small-caps; letter-spacing:.14em}
+
+/* Header */
+header{display:flex; justify-content:space-between; align-items:flex-start; gap:24px;
+       flex-wrap:wrap; border-bottom:1px solid var(--line); padding-bottom:22px}
+h1{font-family:Georgia,'Times New Roman',serif; font-variant-caps:small-caps;
+   letter-spacing:.16em; font-weight:400; font-size:clamp(1.6rem,4vw,2.4rem);
+   margin:0; color:var(--ink); text-wrap:balance}
+h1 .over{color:var(--brass)}
+.sub{color:var(--muted); margin-top:6px; font-size:.95rem}
+#live-label{color:var(--brass); font-variant-caps:small-caps; letter-spacing:.1em}
+.moonbox{display:flex; align-items:center; gap:14px; margin-left:auto}
+.moonbox .mlabel{text-align:right}
+.moonbox .mname{font-variant-caps:small-caps; letter-spacing:.1em}
+.moonbox .mpct{color:var(--muted); font-size:.85rem}
+#moon-disc{width:76px; height:76px; flex:none}
+
+/* Countdown chips */
+.countdown{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
+.count{border:1px solid var(--line); padding:7px 12px; display:flex; gap:8px;
+       align-items:baseline; background:var(--vault)}
+.count .k{color:var(--muted); font-variant-caps:small-caps; letter-spacing:.1em; font-size:.8rem}
+.count .v{font-size:.9rem}
+.count .d{color:var(--brass); font-size:.8rem}
+
+/* Cards */
+section{background:var(--vault); border:1px solid var(--line); padding:20px 22px 16px}
+.eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass);
+         font-size:.85rem; margin:0 0 4px}
+.caption{color:var(--muted); font-size:.85rem; margin:10px 0 0; max-width:68ch}
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+       gap:30px; align-items:start}
+
+/* Planets-now chips */
+.chips{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:9px}
+.chip{display:flex; gap:10px; align-items:flex-start; border-bottom:1px solid var(--line);
+      padding:7px 2px}
+.dot{width:10px; height:10px; border-radius:50%; display:inline-block; flex:none; margin-top:6px}
+.dot-sun{background:var(--c-sun)} .dot-moon{background:var(--c-moon)}
+.dot-mercury{background:var(--c-mercury)} .dot-venus{background:var(--c-venus)}
+.dot-mars{background:var(--c-mars)} .dot-jupiter{background:var(--c-jupiter)}
+.dot-saturn{background:var(--c-saturn)} .dot-uranus{background:var(--c-uranus)}
+.dot-neptune{background:var(--c-neptune)} .dot-pluto{background:var(--c-pluto)}
+.chipname{font-variant-caps:small-caps; letter-spacing:.1em}
+.chipline{font-size:.85rem}
+.chipsub{font-size:.78rem; color:var(--muted)}
+
+/* Data tables (the legacy cells, restyled) */
+table.celestial{border-collapse:collapse; width:100%; font-size:.9rem}
+.label{color:var(--muted); text-align:right; padding:4px 10px 4px 0; vertical-align:top;
+       font-variant-caps:small-caps; letter-spacing:.06em; white-space:nowrap}
+.data{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+      font-variant-numeric:tabular-nums; text-align:left; padding:4px 0; vertical-align:top}
+table.celestial th{color:var(--ink); font-variant-caps:small-caps; letter-spacing:.1em;
+                   font-weight:400; text-align:left; padding:10px 0 4px;
+                   border-bottom:1px solid var(--line)}
+
+/* Moon disc + day strip SVG fills (no hex ever enters the templates) */
+.moon-dark{fill:#1E2745}
+.moon-lit{fill:#DDD8C4}
+.moon-ring{fill:none; stroke:var(--line); stroke-width:1}
+.band-night{fill:#0B1129} .band-astro{fill:#131B38} .band-naut{fill:#1A2547}
+.band-civil{fill:#233153} .band-day{fill:#2E3D5C}
+.tick-sun{stroke:var(--ink); stroke-width:2}
+.tick-moon{stroke:var(--c-moon); stroke-width:2}
+.gridline{stroke:var(--line); stroke-width:1}
+.nowline{stroke:var(--brass); stroke-width:1.5}
+svg{width:100%; height:auto; display:block}
+svg text{fill:var(--ink)}
+.gridlab{font-size:10px; fill:var(--muted)}
+.nowlab{font-size:10px; fill:var(--brass)}
+#day-strip{min-height:96px}
+
+footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
+       padding-top:16px; text-align:center; font-style:italic}
+
+@media (prefers-reduced-motion: no-preference){
+  .nowpulse{animation:pulse 3s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.55}}
+}
