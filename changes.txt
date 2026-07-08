@@ -1,6 +1,14 @@
 weewx-celestial change history
 ------------------------------
 
+4.1 2026/07/08
+--------------
+- The sample Celestial skin's body identity colors now match weewx-skyfield
+  1.5's traditional astronomy scheme: yellow sun, silver moon, gray Mercury,
+  pearly Venus (four CSS variables in celestial.css; Mars through Neptune
+  were traditional already and are unchanged, and Pluto remains celestial's
+  own).  Purely visual -- no configuration, tag or template change.
+
 4.0 Release 2026/07/05
 ----------------------
 - ACTION REQUIRED (report tags): the embedded Skyfield report almanac has

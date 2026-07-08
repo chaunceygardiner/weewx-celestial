@@ -14,9 +14,11 @@
   --muted:#8B93B8;   /* secondary text */
   --brass:#D3A94C;   /* accent */
   --line:#2A3358;    /* borders, hairlines */
-  /* Per-body identity colors (Sky page values; pluto is celestial's own
-   * addition -- the Sky palette has no pluto). */
-  --c-sun:#B98C31; --c-moon:#7E92DA; --c-mercury:#AB763B; --c-venus:#D2B458;
+  /* Per-body identity colors (weewx-skyfield 1.5's night-plate values --
+   * the traditional astronomy scheme: yellow sun, silver moon, gray
+   * Mercury, pearly Venus; pluto is celestial's own addition -- the Sky
+   * palette has no night pluto). */
+  --c-sun:#FFD75E; --c-moon:#C9D0DA; --c-mercury:#9CA0AC; --c-venus:#F0E3BE;
   --c-mars:#C04F36; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
   --c-uranus:#35A8BE; --c-neptune:#5F85E6; --c-pluto:#8A7FB0;
   color-scheme: dark;

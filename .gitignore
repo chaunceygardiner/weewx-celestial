@@ -128,3 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 bin/user/hip_main.dat
+
+# Claude Code project instructions and local settings; kept locally, not published.
+CLAUDE.md
+.claude/
