@@ -22,6 +22,10 @@ when one passes.  Every loop record still carries every field.  (Versions 2.3 th
 recomputed everything on a ten-second cycle, because a full recompute was too expensive to run
 per record.)
 
+As of version 4.2 the bundled JPL DE421 ephemeris is read fully into memory at startup (about
+16 MB), so upgrading this extension over a running WeeWX cannot disturb — or crash — the running
+service; the new files take effect on the restart that follows the install.
+
 Versions 3.x of weewx-celestial also replaced WeeWX's built-in almanac for report generation.
 As of version 4.0 it no longer does: that job now belongs to the independent
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension (same author),
@@ -421,3 +425,7 @@ versions of Python 3 earlier than 3.9.
 ## Licensing
 
 weewx-celestial is licensed under the GNU Public License v3.
+
+The bundled star catalog excerpt (`celestial_stars.dat`) contains data from the Hipparcos and
+Tycho Catalogues, which ESA distributes under the
+[CC BY-NC 3.0 IGO](https://creativecommons.org/licenses/by-nc/3.0/igo/) licence.  Credit: ESA.

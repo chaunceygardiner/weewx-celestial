@@ -1,8 +1,22 @@
 weewx-celestial change history
 ------------------------------
 
-4.1 2026/07/08
+4.2 2026/07/08
 --------------
+- The engine now reads the DE421 ephemeris fully into memory instead of
+  letting jplephem memory-map the file.  Rewriting the .bsp in place under
+  a running weewxd -- exactly what "weectl extension install" over a live
+  WeeWX does -- could kill the process with SIGBUS if a computation caught
+  the sub-second copy window; the running engine is now immune to the file
+  changing (or vanishing) underneath it.  Costs about 16 MB of resident
+  memory.
+- The Hipparcos star data licence is now documented: ESA distributes the
+  Hipparcos and Tycho Catalogues under CC BY-NC 3.0 IGO, and the README,
+  celestial_stars.dat and the sample skin's footer now carry the required
+  "Credit: ESA" acknowledgment.
+
+4.1 Release 2026/07/08
+----------------------
 - The sample Celestial skin's body identity colors now match weewx-skyfield
   1.5's traditional astronomy scheme: yellow sun, silver moon, gray Mercury,
   pearly Venus (four CSS variables in celestial.css; Mars through Neptune

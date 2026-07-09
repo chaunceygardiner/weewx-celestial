@@ -12,6 +12,7 @@ install the weewx-skyfield extension for a Skyfield-based report
 almanac computed from the same definitions as these loop fields.
 """
 
+import io
 import logging
 import math
 import os
@@ -23,12 +24,15 @@ from datetime import timedelta
 from datetime import timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import jplephem.daf
+import jplephem.spk
 import numpy
 
 import skyfield
 import skyfield.almanac
 import skyfield.api
 import skyfield.framelib
+import skyfield.jpllib
 import skyfield.timelib
 import weeutil.Moon
 import weeutil.weeutil
@@ -43,7 +47,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '4.1'
+CELESTIAL_VERSION = '4.2'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -429,6 +433,27 @@ BODY_RADIUS_KM: Dict[str, float] = {
 }
 
 
+class InMemorySpiceKernel(skyfield.jpllib.SpiceKernel):
+    """A SpiceKernel whose .bsp is read fully into memory (~16 MB for
+    DE421) instead of memory-mapped by jplephem.  A mapped ephemeris kills
+    the process with SIGBUS if the file is rewritten in place underneath
+    it -- which is exactly what 'weectl extension install' over a live
+    weewxd does.  Deliberately does not chain to SpiceKernel.__init__
+    (that would reopen the path with mmap); it reproduces its assignments
+    over an in-memory SPK, whose DAF falls back to plain reads when the
+    file object cannot be mapped."""
+
+    def __init__(self, path: str):
+        with open(path, 'rb') as f:
+            data: bytes = f.read()
+        self.path = path
+        self.filename = os.path.basename(path)
+        self.spk = jplephem.spk.SPK(jplephem.daf.DAF(io.BytesIO(data)))
+        self.segments = [skyfield.jpllib.SPICESegment(self, segment)
+                         for segment in self.spk.segments]
+        self.comments = self.spk.comments
+
+
 class Sky():
     def __init__(self, update_rate_secs, user_root: str, moon_phases: List[str], altitude_m: float, latitude: float, longitude: float, load_stars: bool = False):
         log.info("Skyfield version: %d.%d." % (skyfield.VERSION[0], skyfield.VERSION[1]))
@@ -470,10 +495,12 @@ class Sky():
         # Load the JPL ephemeris DE421 (covers 1900-2050).  The file is
         # prefixed 'celestial_' so that no other extension can claim (and,
         # on its uninstall, remove) it; skyfield itself does not care about
-        # the name.
+        # the name.  It is read fully into memory so that an extension
+        # install rewriting the file under a running weewxd cannot SIGBUS
+        # the process.
         try:
             planets_file: str = '%s/celestial_de421.bsp' % user_root
-            self.planets: skyfield.jpllib.SpiceKernel = skyfield.api.load_file(planets_file)
+            self.planets: skyfield.jpllib.SpiceKernel = InMemorySpiceKernel(planets_file)
         except Exception as e:
             log.error('init: Could not load %s: %s.  Celestial will not run.' % (planets_file, e))
             return

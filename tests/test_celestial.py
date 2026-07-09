@@ -20,10 +20,13 @@ agree).
 
 import contextlib
 import os
+import shutil
 import sys
 import time
 
 import pytest
+
+import skyfield.api
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(TEST_DIR)
@@ -866,3 +869,35 @@ class TestLoopPacketConsistency:
         sky.insert_fields(pkt)
         ly = wxskyfield_almanac.proxima_centauri.earth_distance / celestial.AU_PER_LIGHT_YEAR
         assert pkt['earthProximaCentauriDistance'] == pytest.approx(ly, abs=1e-6)
+
+
+class TestInMemoryEphemeris:
+    """The engine reads the .bsp fully into RAM (InMemorySpiceKernel).
+    'weectl extension install' over a live weewxd rewrites the ephemeris in
+    place; a memory-mapped kernel dies with SIGBUS when that happens, so
+    replacing or truncating the file under a loaded kernel must not disturb
+    its computations."""
+
+    def test_kernel_matches_mmap_and_survives_truncation(self, sky, tmp_path):
+        src = os.path.join(REPO_ROOT, 'bin', 'user', 'celestial_de421.bsp')
+        copy = str(tmp_path / 'celestial_de421.bsp')
+        shutil.copyfile(src, copy)
+        t = sky.ts.utc(2025, 6, 21, 19)
+
+        # Same answers as skyfield's own (mmap) loader on the pristine file.
+        reference = skyfield.api.load_file(src)
+        ref_ra, ref_dec, _ = reference['earth'].at(t).observe(reference['mars']).radec()
+        kernel = celestial.InMemorySpiceKernel(copy)
+        ra, dec, _ = kernel['earth'].at(t).observe(kernel['mars']).radec()
+        assert ra.radians == ref_ra.radians
+        assert dec.radians == ref_dec.radians
+
+        # Truncate the backing file to zero bytes underneath the kernel --
+        # the in-place rewrite window that used to SIGBUS weewxd.
+        open(copy, 'wb').close()
+        ra2, dec2, _ = kernel['earth'].at(t).observe(kernel['mars']).radec()
+        assert ra2.radians == ra.radians
+        assert dec2.radians == dec.radians
+
+    def test_engine_uses_in_memory_kernel(self, sky):
+        assert isinstance(sky.planets, celestial.InMemorySpiceKernel)
