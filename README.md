@@ -67,15 +67,6 @@ The bundled sample report (Palo Alto, a July evening at 9:12 PM — first-quarte
 west, the brass now-line in the dusk gradient):
 ![Celestial Sample Report](CelestialSampleReport.png)
 
-The following pages on [www.paloaltoweather.com](https://www.paloaltoweather.com/celestial.html) demonstrate what can be
-accomplished with this extension and the [weewx-skyfield extension](https://github.com/chaunceygardiner/weewx-skyfield).
-
-![Celestial Today Page](PAW_Celestial_Today.png)
-![Celestial Sun Page](PAW_Celestial_Sun.png)
-![Celestial Moon Page](PAW_Celestial_Moon.png)
-![Celestial Planets Page](PAW_Celestial_Planets.png)
-![Celestial Stars Page](PAW_Celestial_Stars.png)
-
 The following observations are available in the LOOP packet (names as of version 3.0):
 
 - `astronomicalTwilightEnd`
@@ -137,6 +128,17 @@ The following observations are available in the LOOP packet (names as of version
 - `venusAltitude`
 - `venusAzimuth`
 - `yesterdayDaylightDur`
+
+### weewx-celestial in Action
+
+The following pages on [www.paloaltoweather.com](https://www.paloaltoweather.com/celestial.html) demonstrate what can be
+accomplished with this extension and the [weewx-skyfield extension](https://github.com/chaunceygardiner/weewx-skyfield).
+
+![Celestial Today Page](PAW_Celestial_Today.png)
+![Celestial Sun Page](PAW_Celestial_Sun.png)
+![Celestial Moon Page](PAW_Celestial_Moon.png)
+![Celestial Planets Page](PAW_Celestial_Planets.png)
+![Celestial Stars Page](PAW_Celestial_Stars.png)
 
 ### Deprecated loop field names
 
