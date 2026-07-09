@@ -1,7 +1,7 @@
 # weewx-celestial
 *Open source plugin for WeeWX software.
 
-Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
+Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 
 **This extension requires Python 3.9 or later, WeeWX 4 or 5 and the Skyfield and NumPy libraries.**
 
@@ -45,10 +45,10 @@ Without weewx-skyfield, reports fall back to WeeWX's built-in PyEphem/weeutil al
 bundled sample report works either way: cells a capable almanac can fill are rendered at report
 generation time, and javascript fills and updates every cell live from loop data regardless.
 
-The information available in loop records, as well as the sample report provided is based on WeeWX's
-Seasons Report (Copyright Tom Keffer and Matthew Wall).  More fields are provided than in the Seasons
-report, including start/end times for astronomical and nautical twilight.  Also, distances from earth to
-the other planets (and Pluto); as well as the current distance to the moon and sun.
+The information available in loop recordsis based on WeeWX's Seasons Report (Copyright Tom Keffer
+and Matthew Wall).  More fields are provided than in the Seasons report, including start/end times
+for astronomical and nautical twilight.  Also, distances from earth to the other planets (and Pluto);
+as well as the current distance to the moon and sun.
 
 As of version 4.0, the sample report is a live "night-palette" page: a true-phase moon disc, a
 day strip showing the twilight bands with rise/set ticks and a pulsing "now" line that moves in
@@ -66,6 +66,15 @@ updates it in one command (see the Upgrade Instructions below).
 The bundled sample report (Palo Alto, a July evening at 9:12 PM — first-quarter moon in the
 west, the brass now-line in the dusk gradient):
 ![Celestial Sample Report](CelestialSampleReport.png)
+
+The following pages on [www.paloaltoweather.com](https://www.paloaltoweather.com/celestial.html) demonstrate what can be
+accomplished with this extension and the [weewx-skyfield extension](https://github.com/chaunceygardiner/weewx-skyfield).
+
+![Celestial Today Page](PAW_Celestial_Today.png)
+![Celestial Sun Page](PAW_Celestial_Sun.png)
+![Celestial Moon Page](PAW_Celestial_Moon.png)
+![Celestial Planets Page](PAW_Celestial_Planets.png)
+![Celestial Stars Page](PAW_Celestial_Stars.png)
 
 The following observations are available in the LOOP packet (names as of version 3.0):
 
