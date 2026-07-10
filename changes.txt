@@ -1,6 +1,33 @@
 weewx-celestial change history
 ------------------------------
 
+5.0 2026/07/09
+--------------
+- ACTION REQUIRED (WeeWX version): weewx-celestial now requires WeeWX 5.2
+  or later; WeeWX 4 support is dropped (it was supported through 4.2).
+  install.py refuses to install on an older WeeWX, and the service module
+  declines to load if copied in by hand.  On WeeWX 4, stay with
+  weewx-celestial 4.2 -- or, better, upgrade WeeWX.  WeeWX 5.2 is also what
+  the recommended weewx-skyfield extension requires, so the pair now has
+  one answer to "what WeeWX do I need?".
+- The sample report gains four sky-chart panels, drawn at report generation
+  time by the weewx-skyfield extension when it is installed: a sky dome of
+  everything above the horizon now (sun, true-phase moon, planets, and the
+  brightest named stars sized by magnitude), a midnight-to-midnight
+  rise-and-set timeline over the twilight bands, an orrery (solar-system
+  plan view), and the analemma.  Installing weewx-skyfield
+  (https://github.com/chaunceygardiner/weewx-skyfield) is recommended but
+  not required: without it each panel shows a short install hint and the
+  rest of the page is unchanged.  No [LoopData] fields changes; nothing to
+  migrate.
+- The skin reaches weewx-skyfield through a new CelestialSkyPage search
+  list in user.celestial (wired in the skin's skin.conf), which serves the
+  real $sky_page when weewx-skyfield is importable and None otherwise --
+  a missing optional extension must never abort report generation.
+- The README install and upgrade instructions now recommend installing
+  weewx-skyfield alongside this extension, and say exactly what the report
+  lacks without it.
+
 4.2 2026/07/08
 --------------
 - The engine now reads the DE421 ephemeris fully into memory instead of

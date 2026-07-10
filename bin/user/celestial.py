@@ -47,23 +47,31 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '4.2'
+CELESTIAL_VERSION = '5.0'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
         "weewx-celestial requires Python 3.9 or later, found %s.%s" % (sys.version_info[0], sys.version_info[1]))
 
-# Compare on the major version number (a plain string comparison would
-# misjudge a hypothetical WeeWX 10).  A version string whose first component
-# is not a plain integer (e.g., a dev build) is given the benefit of the doubt.
-_weewx_major: Optional[int]
-try:
-    _weewx_major = int(weewx.__version__.split('.')[0])
-except ValueError:
-    _weewx_major = None
-if _weewx_major is not None and _weewx_major < 4:
+
+def parse_weewx_version(version: str) -> Optional[Tuple[int, int]]:
+    """(major, minor) of a WeeWX version string, compared as integers (a
+    plain string comparison would misjudge 5.10 against 5.2).  None -- the
+    benefit of the doubt -- when the leading components are not plain
+    integers (e.g., a dev build)."""
+    parts = version.split('.')
+    try:
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except ValueError:
+        return None
+
+
+# The install-time guard in install.py enforces the same minimum with a
+# clear message; this one catches copied-in files and unsupported upgrades.
+_weewx_version = parse_weewx_version(weewx.__version__)
+if _weewx_version is not None and _weewx_version < (5, 2):
     raise weewx.UnsupportedFeature(
-        "weewx-celestial requires WeeWX 4 or later, found %s" % weewx.__version__)
+        "weewx-celestial requires WeeWX 5.2 or later, found %s" % weewx.__version__)
 
 # The loop fields inserted by this extension (as of 3.0), and the unit group
 # of each.
@@ -303,6 +311,65 @@ _MIGRATION_NEW_FIELDS: List[str] = [
     'current.uranusAltitude.raw', 'current.uranusAzimuth.raw',
     'current.venusAltitude.raw', 'current.venusAzimuth.raw',
 ]
+
+
+try:
+    from weewx.cheetahgenerator import SearchList
+except ImportError:  # pragma: no cover - Cheetah is a WeeWX dependency
+    class SearchList:  # type: ignore[no-redef]
+        """Stand-in so this module still imports without Cheetah."""
+        def __init__(self, generator: Any) -> None:
+            self.generator = generator
+
+
+def _import_wxskyfield_sky() -> Any:
+    """The weewx-skyfield sky-page module.  In an installed WeeWX, bin/user
+    modules are importable only as the user package (user.wxskyfield_sky);
+    the test suite imports an oracle checkout top-level."""
+    try:
+        import user.wxskyfield_sky
+        return user.wxskyfield_sky
+    except ImportError:
+        import wxskyfield_sky
+        return wxskyfield_sky
+
+
+class CelestialSkyPage(SearchList):
+    """$sky_page for the bundled Celestial skin.
+
+    The sample report's sky-chart panels (sky dome, rise/set timeline,
+    orrery, analemma) are drawn by the independent weewx-skyfield
+    extension's SkyPage.  This search list delegates to it when that
+    extension is installed, and serves sky_page = None when it is not, so
+    the skin renders an install hint in each panel instead of failing:
+    WeeWX aborts a whole report whose search_list_extensions fail to
+    import, so the skin must never name user.wxskyfield_sky directly."""
+
+    def __init__(self, generator: Any) -> None:
+        SearchList.__init__(self, generator)
+        self.delegate: Optional[Any] = None
+        try:
+            mod = _import_wxskyfield_sky()
+        except ImportError:
+            log.info('weewx-skyfield is not installed; the sample skin will '
+                     'show install hints in place of its sky-chart panels.')
+            return
+        try:
+            self.delegate = mod.SkyfieldSky(generator)
+        except Exception as e:
+            log.error('Could not initialize the weewx-skyfield sky page '
+                      '(%s: %s); showing install hints instead.'
+                      % (type(e).__name__, e))
+
+    def get_extension_list(self, timespan: Any, db_lookup: Any) -> List[Dict[str, Any]]:
+        if self.delegate is not None:
+            try:
+                return self.delegate.get_extension_list(timespan, db_lookup)
+            except Exception as e:
+                log.error('The weewx-skyfield sky page failed (%s: %s); '
+                          'showing install hints instead.'
+                          % (type(e).__name__, e))
+        return [{'sky_page': None}]
 
 
 def migrate_loopdata_fields(fields: List[str]) -> Tuple[List[str], Dict[str, Any]]:

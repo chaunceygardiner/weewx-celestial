@@ -131,6 +131,25 @@
         rise/set ticks, and the brass line is now.</p>
       </section>
 
+      ## The four sky-chart panels below are drawn by the weewx-skyfield
+      ## extension ($sky_page comes from the CelestialSkyPage search-list
+      ## shim; None when weewx-skyfield is not installed, and then each
+      ## panel shows an install hint instead).  Unlike the javascript-live
+      ## components, they are redrawn at report generation time.
+      <section id="ribbons-card">
+        <p class="eyebrow">Rise &amp; set &middot; today</p>
+        #if $sky_page
+        <figure class="skyfig">$sky_page.ribbons_svg($almanac)</figure>
+        <p class="caption">When each body is above the horizon, midnight to
+        midnight over the twilight bands, with ivory transit ticks.  Hover a
+        bar for the visible duration.  Redrawn each report cycle, so the
+        "now" mark is the last report time.</p>
+        #else
+        <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+        to draw the rise-and-set timeline of the sun, moon and planets here.</p>
+        #end if
+      </section>
+
       <section id="planets-card">
         <p class="eyebrow">Planets &middot; now</p>
         <div class="chips" id="planet-chips">
@@ -144,6 +163,52 @@
           <div class="chip" id="planet-pluto"><span class="dot dot-pluto"></span><div><div class="chipname">Pluto</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
         </div>
       </section>
+
+      <div class="skymain">
+        <section class="sec-dome">
+          <p class="eyebrow">The sky &middot; report time</p>
+          #if $sky_page
+          <figure class="skyfig">$sky_page.dome_svg($almanac)</figure>
+          <p class="caption">Everything above the horizon at report time: the
+          sun, the moon at its true phase, the planets, and the brightest
+          named stars sized by magnitude (dimmed while the sun is up).
+          North at top, east at left, as sky charts are drawn.  Hover any
+          mark for altitude, azimuth and magnitude.</p>
+          #else
+          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+          to chart the current sky here: sun, true-phase moon, planets and
+          the brightest named stars.</p>
+          #end if
+        </section>
+        <div class="skyrail">
+          <section class="sec-orrery">
+            <p class="eyebrow">Solar system &middot; plan view</p>
+            #if $sky_page
+            <figure class="skyfig">$sky_page.orrery_svg($almanac)</figure>
+            <p class="caption">From above the north ecliptic pole: the planets
+            at their true heliocentric longitudes today, on logarithmically
+            spaced orbits.  The dashed ray points to the vernal equinox.</p>
+            #else
+            <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+            to draw the solar system from above, planets at their true
+            positions.</p>
+            #end if
+          </section>
+          <section class="sec-analemma">
+            <p class="eyebrow">Analemma &middot; the year of the sun</p>
+            #if $sky_page
+            <figure class="skyfig">$sky_page.analemma_svg($almanac)</figure>
+            <p class="caption">Where the sun stands at clock noon, one point
+            per week for the whole year: the figure eight of the equation of
+            time.  The brass point is this week.</p>
+            #else
+            <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+            to draw the analemma, the figure eight the noon sun traces over a
+            year.</p>
+            #end if
+          </section>
+        </div>
+      </div>
 
       <div class="cards">
         <section>

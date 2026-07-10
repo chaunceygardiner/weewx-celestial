@@ -81,6 +81,18 @@ def load_wxskyfield():
     pytest.skip('the weewx-skyfield extension is not available')
 
 
+def load_wxskyfield_sky():
+    """Import weewx-skyfield's sky-page module (the $sky_page SVG panels the
+    sample skin embeds), or skip the calling test."""
+    for d in WXSKYFIELD_DIRS:
+        if os.path.exists(os.path.join(d, 'wxskyfield_sky.py')):
+            if d not in sys.path:
+                sys.path.append(d)     # append, NOT insert(0); see above
+            import wxskyfield_sky
+            return wxskyfield_sky
+    pytest.skip('the weewx-skyfield sky page is not available')
+
+
 @pytest.fixture(scope='session')
 def sky():
     s = celestial.Sky(0, os.path.join(REPO_ROOT, 'bin', 'user'),
@@ -166,7 +178,7 @@ class TestService:
 
 
 class TestEngineGuards:
-    """Skyfield version guard."""
+    """Skyfield and WeeWX version guards."""
 
     def test_old_skyfield_declines(self, monkeypatch):
         """Skyfield earlier than 1.47 lacks find_risings/find_settings; the
@@ -177,6 +189,34 @@ class TestEngineGuards:
                           weeutil.Moon.moon_phases, ALTITUDE_M, LATITUDE, LONGITUDE,
                           load_stars=False)
         assert not s.is_valid()
+
+    def test_weewx_version_parse(self):
+        """The 5.2 minimum is compared on integer (major, minor): 5.10 must
+        beat 5.2, dev builds get the benefit of the doubt (None)."""
+        assert celestial.parse_weewx_version('5.2.0') == (5, 2)
+        assert celestial.parse_weewx_version('5.10.1') == (5, 10)
+        assert celestial.parse_weewx_version('4.10.2') == (4, 10)
+        assert celestial.parse_weewx_version('10.0') == (10, 0)
+        assert celestial.parse_weewx_version('5') == (5, 0)
+        assert celestial.parse_weewx_version('dev') is None
+        assert celestial.parse_weewx_version('5.2.0') >= (5, 2)
+        assert celestial.parse_weewx_version('5.10.1') >= (5, 2)
+        assert celestial.parse_weewx_version('4.10.2') < (5, 2)
+        assert celestial.parse_weewx_version('5.1.0') < (5, 2)
+
+    def test_old_weewx_refused_at_import(self):
+        """As of 5.0 the module refuses to load on WeeWX older than 5.2
+        (the install-time guard in install.py is the friendly front door;
+        this catches copied-in files)."""
+        import importlib
+        saved = weewx.__version__
+        try:
+            weewx.__version__ = '4.10.2'
+            with pytest.raises(weewx.UnsupportedFeature):
+                importlib.reload(celestial)
+        finally:
+            weewx.__version__ = saved
+            importlib.reload(celestial)
 
 
 class TestStars:
@@ -282,7 +322,7 @@ class TestSampleSkinRenders:
     its else-value and dies with SyntaxError only at render time)."""
 
     @staticmethod
-    def render(almanac_obj, with_time_zone=True):
+    def render(almanac_obj, with_time_zone=True, sky_page=None):
         from Cheetah.Template import Template
 
         class Obj:
@@ -306,6 +346,7 @@ class TestSampleSkinRenders:
             extras['time_zone'] = 'America/Los_Angeles'
         template = Template(source, searchList=[{
             'almanac': almanac_obj,
+            'sky_page': sky_page,
             'current': Obj(dateTime=Obj(raw=TIME_TS)),
             'unit': Obj(label=Obj(earthMoonDistance=' miles'),
                         unit_type=Obj(earthMoonDistance='mile')),
@@ -342,6 +383,19 @@ class TestSampleSkinRenders:
         assert "'Azimuth.raw'" in html and "'Altitude.raw'" in html
         assert 'current.moonPhaseIndex.raw' in html
         assert '37.44' in html
+        # No sky_page was passed, so all four sky-chart panels show hints.
+        assert html.count('class="skyhint"') == 4
+
+    def test_renders_sky_panels_with_wxskyfield(self, wxskyfield_almanac):
+        """With weewx-skyfield present, $sky_page draws all four SVG
+        panels (this is what CelestialSkyPage delegates to in production)."""
+        sky_mod = load_wxskyfield_sky()
+        html = self.render(wxskyfield_almanac, sky_page=sky_mod.SkyPage())
+        assert 'aria-label="Rise and set timeline"' in html
+        assert 'aria-label="Sky dome chart"' in html
+        assert 'aria-label="Solar system plan view"' in html
+        assert 'aria-label="Analemma"' in html
+        assert 'skyhint' not in html
 
     def test_no_hex_colors_in_cheetah_files(self):
         """Cheetah owns '#': hex color literals in the template or the
@@ -378,6 +432,10 @@ class TestSampleSkinRenders:
         assert self.cell(html, 'current.sunrise.raw') == ''
         assert self.cell(html, 'current.earthProximaCentauriDistance.raw') == ''
         assert 'Proxima Centauri' in html
+        # Without weewx-skyfield the sky-chart panels invite installing it.
+        assert html.count('class="skyhint"') == 4
+        assert 'https://github.com/chaunceygardiner/weewx-skyfield' in html
+        assert 'aria-label="Sky dome chart"' not in html
         auto_tz = ''
         try:
             auto_tz = os.readlink('/etc/localtime').split('zoneinfo/')[-1]
@@ -387,6 +445,55 @@ class TestSampleSkinRenders:
             except OSError:
                 pass
         assert "time_zone = '%s'" % auto_tz in html
+
+
+class TestCelestialSkyPage:
+    """The search-list shim behind the skin's $sky_page: the real
+    weewx-skyfield sky page when that extension is importable, None
+    (install hints) when it is not -- never a failed report."""
+
+    @staticmethod
+    def _block_wxskyfield_sky(monkeypatch):
+        # A None entry in sys.modules makes the import raise ImportError,
+        # even if an earlier test appended the oracle checkout to sys.path.
+        monkeypatch.setitem(sys.modules, 'user.wxskyfield_sky', None)
+        monkeypatch.setitem(sys.modules, 'wxskyfield_sky', None)
+
+    def test_absent_serves_none(self, monkeypatch):
+        self._block_wxskyfield_sky(monkeypatch)
+        page = celestial.CelestialSkyPage(StubEngine())
+        assert page.get_extension_list(None, None) == [{'sky_page': None}]
+
+    def test_present_delegates(self, monkeypatch):
+        import types
+
+        class FakeSkyfieldSky:
+            def __init__(self, generator):
+                self.generator = generator
+
+            def get_extension_list(self, timespan, db_lookup):
+                return [{'sky_page': 'the-sky-page'}]
+
+        fake = types.ModuleType('wxskyfield_sky')
+        fake.SkyfieldSky = FakeSkyfieldSky
+        monkeypatch.setitem(sys.modules, 'user.wxskyfield_sky', None)
+        monkeypatch.setitem(sys.modules, 'wxskyfield_sky', fake)
+        page = celestial.CelestialSkyPage(StubEngine())
+        assert page.get_extension_list(None, None) == [{'sky_page': 'the-sky-page'}]
+
+    def test_broken_delegate_degrades_to_none(self, monkeypatch):
+        import types
+
+        class ExplodingSkyfieldSky:
+            def __init__(self, generator):
+                raise RuntimeError('boom')
+
+        fake = types.ModuleType('wxskyfield_sky')
+        fake.SkyfieldSky = ExplodingSkyfieldSky
+        monkeypatch.setitem(sys.modules, 'user.wxskyfield_sky', None)
+        monkeypatch.setitem(sys.modules, 'wxskyfield_sky', fake)
+        page = celestial.CelestialSkyPage(StubEngine())
+        assert page.get_extension_list(None, None) == [{'sky_page': None}]
 
 
 class TestDistanceUnits:

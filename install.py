@@ -19,25 +19,27 @@ import weewx
 from setup import ExtensionInstaller
 
 def loader():
-    if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 7):
-        sys.exit("weewx-celestial requires Python 3.7 or later, found %s.%s" % (
+    if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
+        sys.exit("weewx-celestial requires Python 3.9 or later, found %s.%s" % (
             sys.version_info[0], sys.version_info[1]))
 
-    # A version string whose first component is not a plain integer (e.g., a
-    # dev build) is given the benefit of the doubt.
+    # Compare on (major, minor).  A version string whose leading components
+    # are not plain integers (e.g., a dev build) is given the benefit of the
+    # doubt.
     try:
-        weewx_major = int(weewx.__version__.split('.')[0])
+        parts = weewx.__version__.split('.')
+        weewx_version = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
     except ValueError:
-        weewx_major = None
-    if weewx_major is not None and weewx_major < 4:
-        sys.exit("weewx-celestial requires WeeWX 4, found %s" % weewx.__version__)
+        weewx_version = None
+    if weewx_version is not None and weewx_version < (5, 2):
+        sys.exit("weewx-celestial requires WeeWX 5.2 or later, found %s" % weewx.__version__)
 
     return CelestialInstaller()
 
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "4.2",
+            version = "5.0",
             name = 'celestial',
             description = 'Inserts celestial observations into loop packets.',
             author = "John A Kline",

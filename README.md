@@ -1,9 +1,9 @@
 # weewx-celestial
-*Open source plugin for WeeWX software.
+Open source plugin for WeeWX software.
 
 Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 
-**This extension requires Python 3.9 or later, WeeWX 4 or 5 and the Skyfield and NumPy libraries.**
+**This extension requires Python 3.9 or later, WeeWX 5.2 or later, and the Skyfield and NumPy libraries.**
 
 
 ## Description
@@ -31,21 +31,29 @@ As of version 4.0 it no longer does: that job now belongs to the independent
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension (same author),
 whose almanac engine grew out of this extension's.
 
-### Report tags: install weewx-skyfield
+### Install weewx-skyfield too (recommended, not required)
 
-weewx-celestial does not touch report generation; report tags such as `$almanac.sunrise` are
-served by whatever almanac WeeWX has.  For report tags computed with Skyfield — from the same
-definitions as these loop fields, plus much more (planet magnitudes and angular sizes, named-star
-tags such as `$almanac.rigel.rise`, any Hipparcos star via `$almanac.hip_57939`, heliocentric
-coordinates, librations, and so on) — install
-[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield).  The two extensions are
-designed to run side by side and need no configuration to coexist.
+Installing [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) (same author)
+alongside this extension is recommended.  The two are designed to run side by side and need no
+configuration to coexist.  It completes the picture in two ways:
 
-Without weewx-skyfield, reports fall back to WeeWX's built-in PyEphem/weeutil almanac.  The
-bundled sample report works either way: cells a capable almanac can fill are rendered at report
-generation time, and javascript fills and updates every cell live from loop data regardless.
+- **The sample report's four sky-chart panels are drawn by weewx-skyfield**: a sky dome of
+  everything above the horizon now (sun, true-phase moon, planets, and the brightest named
+  stars sized by magnitude), a midnight-to-midnight rise-and-set timeline for the sun, moon
+  and planets over the twilight bands, an orrery (solar-system plan view), and the analemma.
+- **Report tags computed with Skyfield** — weewx-celestial does not touch report generation;
+  report tags such as `$almanac.sunrise` are served by whatever almanac WeeWX has.
+  weewx-skyfield serves them from the same definitions as these loop fields, plus much more
+  (planet magnitudes and angular sizes, named-star tags such as `$almanac.rigel.rise`, any
+  Hipparcos star via `$almanac.hip_57939`, heliocentric coordinates, librations, and so on).
 
-The information available in loop recordsis based on WeeWX's Seasons Report (Copyright Tom Keffer
+Without weewx-skyfield, everything still works, minus the above: each sky-chart panel shows a
+short install hint in its place, and reports fall back to WeeWX's built-in PyEphem/weeutil
+almanac.  The bundled sample report generates either way: cells a capable almanac can fill are
+rendered at report generation time, and javascript fills and updates every cell live from loop
+data regardless.
+
+The information available in loop records is based on WeeWX's Seasons Report (Copyright Tom Keffer
 and Matthew Wall).  More fields are provided than in the Seasons report, including start/end times
 for astronomical and nautical twilight.  Also, distances from earth to the other planets (and Pluto);
 as well as the current distance to the moon and sun.
@@ -63,8 +71,15 @@ loop fields in the `[LoopData]` fields list; without them the page works and tho
 simply stay empty.  **You do not need to edit the fields list by hand** — a bundled utility
 updates it in one command (see the Upgrade Instructions below).
 
+As of version 5.0, the sample report also carries four sky charts drawn at report generation
+time when the [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension is
+installed: the sky dome, the rise-and-set timeline, the orrery and the analemma (see "Install
+weewx-skyfield too" above).  Without weewx-skyfield, each of those panels shows a short install
+hint and the rest of the page is unaffected.
+
 The bundled sample report (Palo Alto, a July evening at 9:12 PM — first-quarter moon in the
-west, the brass now-line in the dusk gradient):
+west, the brass now-line in the dusk gradient, and the four weewx-skyfield sky charts: the
+rise-and-set timeline, the sky dome, the orrery and the analemma):
 ![Celestial Sample Report](CelestialSampleReport.png)
 
 The following observations are available in the LOOP packet (names as of version 3.0):
@@ -175,11 +190,24 @@ which the utility cannot see:
 
 # Upgrade Instructions
 
-1. If you re upgrading from a previous version to 1.x, and you are using the sample skin, you'll need to add the following
+1. **As of version 5.0, weewx-celestial requires WeeWX 5.2 or later** (WeeWX 4 was supported
+   through version 4.2).  On an older WeeWX, stay with
+   [weewx-celestial 4.2](https://github.com/chaunceygardiner/weewx-celestial/releases) — or,
+   better, upgrade WeeWX.  The installer refuses to install 5.0 on an unsupported WeeWX.
+
+1. As of version 5.0, the sample report includes four sky-chart panels — the sky dome, the
+   rise-and-set timeline, the orrery and the analemma — drawn by the
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension.  Installing
+   weewx-skyfield is recommended but not strictly necessary: without it, each of those panels
+   shows a short install hint, report-time cell values fall back to WeeWX's built-in PyEphem
+   almanac, and everything else works exactly as before.  No `[LoopData]` fields changes are
+   needed for this release; there is nothing to migrate.
+
+1. If you are upgrading from a previous version to 1.x, and you are using the sample skin, you'll need to add the following
    two fields to the `fields` line in `weewx.conf`:
    `current.tomorrowSunrise.raw, current.tomorrowSunset.raw`
 
-1. If you are upgrading from 1.x versioun, you'll need to install skyfield.  See the install instructions above for how to install skyfield.
+1. If you are upgrading from a 1.x version, you'll need to install skyfield.  See the install instructions above for how to install skyfield.
 
 1. If you are upgrading from 2.0 to a later version, you'll need to add the following fields in the `fields` line in `weewx.conf`:
    `current.MoonTransit`
@@ -238,7 +266,8 @@ which the utility cannot see:
 
 # Installation Instructions
 
-## WeeWX 5 Installation Instructions
+weewx-celestial requires WeeWX 5.2 or later.  (WeeWX 4 was supported through version 4.2;
+on WeeWX 4, stay with [weewx-celestial 4.2](https://github.com/chaunceygardiner/weewx-celestial/releases).)
 
 1. If pip install,
    Activate the virtual environment (actual syntax varies by type of WeeWX install):
@@ -254,7 +283,14 @@ which the utility cannot see:
 
    [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
 
-1. Download the lastest release, weewx-celestial.zip, from
+1. Recommended (not required): install the
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension.  It draws
+   the sample report's four sky-chart panels (sky dome, rise-and-set timeline, orrery,
+   analemma) and serves Skyfield-computed report tags.  Without it, those panels show a short
+   install hint, report-time values fall back to WeeWX's built-in PyEphem almanac, and
+   everything else works.
+
+1. Download the latest release, weewx-celestial.zip, from
 
    [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
 
@@ -268,37 +304,8 @@ which the utility cannot see:
 
 1. Restart WeeWX.
 
-1. After a reporting cycle runs, check navigate to `<weewx-url>/celestial/ in your browser
-   to see the default celestial sample report. (Reports typcially run every 5 minutes.)
-
-## WeeWX 4 Installation Instructions
-
-1. Install the prerequisite skyfield package.  On debian, that can be accomplished with:
-   `sudo apt install python3-skyfield` 
-
-1. Install the latest release of weewx-loopdata at
-
-   [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
-
-1. Add the following fields to the `[LoopData][[Include]][[[fields]]]` line in `weewx.conf`.  (They are used by the sample report.)
-
-   `current.astronomicalTwilightEnd.raw, current.astronomicalTwilightStart.raw, current.civilTwilightEnd.raw, current.civilTwilightStart.raw, current.dateTime.raw, current.daylightDur.raw, current.earthJupiterDistance, current.earthMarsDistance, current.earthMercuryDistance, current.earthMoonDistance, current.earthNeptuneDistance, current.earthPlutoDistance, current.earthProximaCentauriDistance.raw, current.earthSaturnDistance, current.earthSunDistance, current.earthUranusDistance, current.earthVenusDistance, current.jupiterAltitude.raw, current.jupiterAzimuth.raw, current.marsAltitude.raw, current.marsAzimuth.raw, current.mercuryAltitude.raw, current.mercuryAzimuth.raw, current.moonAltitude.raw, current.moonAzimuth.raw, current.moonDeclination.raw, current.moonFullness, current.moonFullness.raw, current.moonPhase, current.moonPhaseIndex.raw, current.moonRightAscension.raw, current.moonTransit, current.moonTransit.raw, current.moonWaxing.raw, current.moonrise, current.moonrise.raw, current.moonset, current.moonset.raw, current.nauticalTwilightEnd.raw, current.nauticalTwilightStart.raw, current.neptuneAltitude.raw, current.neptuneAzimuth.raw, current.nextEquinox, current.nextEquinox.raw, current.nextFullMoon, current.nextFullMoon.raw, current.nextNewMoon, current.nextNewMoon.raw, current.nextSolstice, current.nextSolstice.raw, current.plutoAltitude.raw, current.plutoAzimuth.raw, current.saturnAltitude.raw, current.saturnAzimuth.raw, current.sunAltitude.raw, current.sunAzimuth.raw, current.sunDeclination.raw, current.sunRightAscension.raw, current.sunTransit.raw, current.sunrise.raw, current.sunset.raw, current.tomorrowSunrise.raw, current.tomorrowSunset.raw, current.uranusAltitude.raw, current.uranusAzimuth.raw, current.venusAltitude.raw, current.venusAzimuth.raw, current.yesterdayDaylightDur.raw`
-
-1. Download the lastest release, weewx-celestial.zip, from
-
-   [weewx-celestial GitHub Repository](https://github.com/chaunceygardiner/weewx-celestial).
-
-1. Run the following command.
-
-   `sudo /home/weewx/bin/wee_extension --install weewx-celestial.zip`
-
-   Note: this command assumes weewx is installed in /home/weewx.  If it's installed
-   elsewhere, adjust the path of wee_extension accordingly.
-
-1. Restart WeeWX.
-
-1. After a reporting cycle runs, check navigate to `<weewx-url>/celestial/ in your browser
-   to see the default celestial sample report. (Reports typcially run every 5 minutes.)
+1. After a reporting cycle runs, navigate to `<weewx-url>/celestial/ in your browser
+   to see the default celestial sample report. (Reports typically run every 5 minutes.)
 
 ## Entries in `Celestial` section of `weewx.conf`:
 
@@ -334,7 +341,7 @@ which the utility cannot see:
  * HTML_ROOT        : The HTML output directory in which to write the report.
  * `enable`         : When true, the report is generated.
  * `skin`           : Must be `Celestial`
- * `loop_data_file` : The path of the loop-dat.txt file (written by the loopdata extension).
+ * `loop_data_file` : The path of the loop-data.txt file (written by the loopdata extension).
                       If a relative path is specified, it is relative to the
                      `target_report` directory.
  * `refresh_rate`   : Seconds between loop-data polls.  Match weewx-loopdata's write cadence
