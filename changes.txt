@@ -1,6 +1,30 @@
 weewx-celestial change history
 ------------------------------
 
+5.1 2026/07/11
+--------------
+- The sample report gains the three sky-chart panels weewx-skyfield 1.7
+  added: the sun's path today (its altitude-and-azimuth arc with a dot
+  every hour, the moon's path dashed alongside), the solar year (sunrise,
+  sunset and solar noon for every week of the year over the twilight
+  bands), and the lunar month (the current lunation as a strip of thirty
+  phase discs, today ringed).  These need weewx-skyfield 1.7 or later:
+  with an older weewx-skyfield the three new panels show a short upgrade
+  hint while the original four keep drawing, and without weewx-skyfield
+  all seven show install hints as before.  No [LoopData] fields changes;
+  nothing to migrate.
+- The sample page is reorganized: it now opens with the planets-now chips
+  and the sky charts, and the data cards close the page as one balanced
+  band -- the "Today: light & dark" strip and the rise-and-set timeline
+  moved from the top to sit beneath the moon and distance cards, filling
+  the space beside the taller sun card.
+- The README now opens with the sample report screenshot (regenerated for
+  the new layout), gains an "Adding the live celestial panels to your own
+  skin" how-to (loop fields, the realtime updater include, element ids,
+  the fixed-id visual components, first paint), and moves the
+  paloaltoweather.com page gallery -- with fresh captures -- to a "See it
+  in action" section at the end.
+
 5.0 2026/07/09
 --------------
 - ACTION REQUIRED (WeeWX version): weewx-celestial now requires WeeWX 5.2

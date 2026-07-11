@@ -124,32 +124,15 @@
         </div>
       </header>
 
-      <section id="day-strip-card">
-        <p class="eyebrow">Today &middot; light &amp; dark</p>
-        <div id="day-strip"></div>
-        <p class="caption">Twilight bands (USNO geometric definitions), sun and moon
-        rise/set ticks, and the brass line is now.</p>
-      </section>
-
-      ## The four sky-chart panels below are drawn by the weewx-skyfield
+      ## The seven sky-chart panels below are drawn by the weewx-skyfield
       ## extension ($sky_page comes from the CelestialSkyPage search-list
       ## shim; None when weewx-skyfield is not installed, and then each
       ## panel shows an install hint instead).  Unlike the javascript-live
-      ## components, they are redrawn at report generation time.
-      <section id="ribbons-card">
-        <p class="eyebrow">Rise &amp; set &middot; today</p>
-        #if $sky_page
-        <figure class="skyfig">$sky_page.ribbons_svg($almanac)</figure>
-        <p class="caption">When each body is above the horizon, midnight to
-        midnight over the twilight bands, with ivory transit ticks.  Hover a
-        bar for the visible duration.  Redrawn each report cycle, so the
-        "now" mark is the last report time.</p>
-        #else
-        <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-        to draw the rise-and-set timeline of the sun, moon and planets here.</p>
-        #end if
-      </section>
-
+      ## components, they are redrawn at report generation time.  The sun
+      ## path, solar year and lunar month panels need weewx-skyfield 1.7;
+      ## with an older weewx-skyfield ($sky_17 false) they show an upgrade
+      ## hint while the original four panels keep drawing.
+      #set $sky_17 = hasattr($sky_page, 'sunpath_svg') and hasattr($sky_page, 'daylength_svg') and hasattr($sky_page, 'lunation_svg')
       <section id="planets-card">
         <p class="eyebrow">Planets &middot; now</p>
         <div class="chips" id="planet-chips">
@@ -164,7 +147,14 @@
         </div>
       </section>
 
+      ## Two columns, balanced like weewx-skyfield's own Sky page: the wide
+      ## panels (dome, solar year, lunar month) fill the left column while
+      ## the square panels (sun path, orrery, analemma) fill the rail, so
+      ## the columns come out nearly the same height.  Below the breakpoint
+      ## celestial.css dissolves both columns (display:contents) and
+      ## reorders the six sections into one sensible column.
       <div class="skymain">
+        <div class="skyprim">
         <section class="sec-dome">
           <p class="eyebrow">The sky &middot; report time</p>
           #if $sky_page
@@ -180,7 +170,63 @@
           the brightest named stars.</p>
           #end if
         </section>
+        <section class="sec-daylength">
+          <p class="eyebrow">The solar year &middot; week by week</p>
+          #if $sky_17
+          <figure class="skyfig">$sky_page.daylength_svg($almanac)</figure>
+          <p class="caption">Sunrise, sunset and solar noon (dashed) for every
+          week of the year, over the civil, nautical and astronomical twilight
+          bands; the brass line is today.  Times are local clock time, so the
+          daylight-saving steps in spring and fall are real, and the dashed
+          noon curve carries the equation of time.</p>
+          #elif $sky_page
+          <p class="skyhint">Upgrade <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+          to 1.7 or later to chart sunrise, sunset and solar noon for every
+          week of the year here.</p>
+          #else
+          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+          to chart sunrise, sunset and solar noon for every week of the year
+          here.</p>
+          #end if
+        </section>
+        <section class="sec-lunation">
+          <p class="eyebrow">The lunar month &middot; new moon to new moon</p>
+          #if $sky_17
+          <figure class="skyfig">$sky_page.lunation_svg($almanac)</figure>
+          <p class="caption">The current lunation as a month of phase discs,
+          the principal phases dated and today's disc ringed in brass.  Hover
+          a disc for its date and illumination.</p>
+          #elif $sky_page
+          <p class="skyhint">Upgrade <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+          to 1.7 or later to draw the current lunation here as a month of
+          moon-phase discs.</p>
+          #else
+          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+          to draw the current lunation here as a month of moon-phase discs.</p>
+          #end if
+        </section>
+        </div>
         <div class="skyrail">
+          <section class="sec-sunpath">
+            <p class="eyebrow">The sun's path &middot; today</p>
+            #if $sky_17
+            <figure class="skyfig">$sky_page.sunpath_svg($almanac)</figure>
+            <p class="caption">Today's sun, midnight to midnight, as altitude
+            against azimuth, with a dot every hour.  The dashed curve is the
+            moon's path, drawn at its true phase; the bands below the horizon
+            line are twilight depth.  The azimuth axis is the fixed full
+            compass, so the arc's seasonal swing between the solstices reads
+            at a glance.</p>
+            #elif $sky_page
+            <p class="skyhint">Upgrade <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+            to 1.7 or later to draw the sun's altitude-and-azimuth arc for
+            today here, with the moon's path dashed alongside.</p>
+            #else
+            <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+            to draw the sun's altitude-and-azimuth arc for today here, with
+            the moon's path dashed alongside.</p>
+            #end if
+          </section>
           <section class="sec-orrery">
             <p class="eyebrow">Solar system &middot; plan view</p>
             #if $sky_page
@@ -303,6 +349,12 @@
           </tr>
           </table>
         </section>
+        ## The right two-thirds of the cards band: the moon and distance
+        ## cards side by side, with the day strip and the rise/set timeline
+        ## tucked beneath them -- they fill the space beside the taller sun
+        ## card, so the band closes the page as one solid rectangle.
+        <div class="cardsband">
+        <div class="cardspair">
         <section>
           <p class="eyebrow">Moon</p>
           <table class="celestial">
@@ -404,6 +456,27 @@
           </tr>
           </table>
         </section>
+        </div>
+        <section id="day-strip-card">
+          <p class="eyebrow">Today &middot; light &amp; dark</p>
+          <div id="day-strip"></div>
+          <p class="caption">Twilight bands (USNO geometric definitions), sun and moon
+          rise/set ticks, and the brass line is now.</p>
+        </section>
+        <section id="ribbons-card">
+          <p class="eyebrow">Rise &amp; set &middot; today</p>
+          #if $sky_page
+          <figure class="skyfig">$sky_page.ribbons_svg($almanac)</figure>
+          <p class="caption">When each body is above the horizon, midnight to
+          midnight over the twilight bands, with ivory transit ticks.  Hover a
+          bar for the visible duration.  Redrawn each report cycle, so the
+          "now" mark is the last report time.</p>
+          #else
+          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+          to draw the rise-and-set timeline of the sun, moon and planets here.</p>
+          #end if
+        </section>
+        </div>
       </div>
 
       <footer>

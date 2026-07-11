@@ -383,11 +383,11 @@ class TestSampleSkinRenders:
         assert "'Azimuth.raw'" in html and "'Altitude.raw'" in html
         assert 'current.moonPhaseIndex.raw' in html
         assert '37.44' in html
-        # No sky_page was passed, so all four sky-chart panels show hints.
-        assert html.count('class="skyhint"') == 4
+        # No sky_page was passed, so all seven sky-chart panels show hints.
+        assert html.count('class="skyhint"') == 7
 
     def test_renders_sky_panels_with_wxskyfield(self, wxskyfield_almanac):
-        """With weewx-skyfield present, $sky_page draws all four SVG
+        """With weewx-skyfield present, $sky_page draws all seven SVG
         panels (this is what CelestialSkyPage delegates to in production)."""
         sky_mod = load_wxskyfield_sky()
         html = self.render(wxskyfield_almanac, sky_page=sky_mod.SkyPage())
@@ -395,7 +395,36 @@ class TestSampleSkinRenders:
         assert 'aria-label="Sky dome chart"' in html
         assert 'aria-label="Solar system plan view"' in html
         assert 'aria-label="Analemma"' in html
+        assert 'aria-label="Sun path today"' in html
+        assert 'aria-label="Day length through the year"' in html
+        assert 'aria-label="The lunar month"' in html
         assert 'skyhint' not in html
+
+    def test_old_wxskyfield_shows_upgrade_hints(self, wxskyfield_almanac):
+        """A pre-1.7 weewx-skyfield lacks the sun path, solar year and
+        lunar month panels: those three cells must degrade to upgrade
+        hints while the original four panels keep drawing."""
+        sky_mod = load_wxskyfield_sky()
+        real = sky_mod.SkyPage()
+
+        class Old16SkyPage:
+            """Only the four panel methods weewx-skyfield 1.6 had."""
+            dome_svg = staticmethod(real.dome_svg)
+            ribbons_svg = staticmethod(real.ribbons_svg)
+            orrery_svg = staticmethod(real.orrery_svg)
+            analemma_svg = staticmethod(real.analemma_svg)
+
+        html = self.render(wxskyfield_almanac, sky_page=Old16SkyPage())
+        assert 'aria-label="Rise and set timeline"' in html
+        assert 'aria-label="Sky dome chart"' in html
+        assert 'aria-label="Solar system plan view"' in html
+        assert 'aria-label="Analemma"' in html
+        assert 'aria-label="Sun path today"' not in html
+        assert 'aria-label="Day length through the year"' not in html
+        assert 'aria-label="The lunar month"' not in html
+        assert html.count('class="skyhint"') == 3
+        assert html.count('Upgrade <a') == 3
+        assert 'Install <a' not in html
 
     def test_no_hex_colors_in_cheetah_files(self):
         """Cheetah owns '#': hex color literals in the template or the
@@ -433,7 +462,7 @@ class TestSampleSkinRenders:
         assert self.cell(html, 'current.earthProximaCentauriDistance.raw') == ''
         assert 'Proxima Centauri' in html
         # Without weewx-skyfield the sky-chart panels invite installing it.
-        assert html.count('class="skyhint"') == 4
+        assert html.count('class="skyhint"') == 7
         assert 'https://github.com/chaunceygardiner/weewx-skyfield' in html
         assert 'aria-label="Sky dome chart"' not in html
         auto_tz = ''

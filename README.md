@@ -15,6 +15,32 @@ The information is then available via
 As of version 2.0, weewx-celestial uses [Skyfield](https://rhodesmill.org/skyfield/) for *much* more accurate
 information than [PyEphem](https://rhodesmill.org/pyephem/index.html), which is currently used by WeeWX.
 
+The bundled sample report (Palo Alto, a July evening at 9:12 PM — first-quarter moon in the
+west, the brass now-line in the dusk gradient, and the seven weewx-skyfield sky charts):
+![Celestial Sample Report](CelestialSampleReport.png)
+
+As of version 4.0, the sample report is a live "night-palette" page: a true-phase moon disc, a
+day strip showing the twilight bands with rise/set ticks and a pulsing "now" line that moves in
+real time, countdown chips for the next full/new moon and equinox/solstice, planets-now chips
+(up/down, altitude, compass direction, distance, one identity color per body), and the full data
+cards — all updated by javascript from the loop-data.txt file on every loop record (for the
+Vantage driver, that happens every 2 seconds).  The data cells are additionally computed at
+report generation time when a capable almanac is available (weewx-skyfield, or WeeWX's built-in
+PyEphem almanac) so the page first-paints populated; without an extended almanac the page still
+generates and the javascript fills everything in.  The new visual components require the 4.0
+loop fields in the `[LoopData]` fields list; without them the page works and those components
+simply stay empty.  **You do not need to edit the fields list by hand** — a bundled utility
+updates it in one command (see the Upgrade Instructions below).
+
+As of version 5.0, the sample report also carries sky charts drawn at report generation
+time when the [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension is
+installed: the sky dome, the rise-and-set timeline, the orrery and the analemma (see "Install
+weewx-skyfield too" below).  Without weewx-skyfield, each of those panels shows a short install
+hint and the rest of the page is unaffected.  Version 5.1 adds three more: the sun's path for
+today, the solar year, and the lunar month.  These need weewx-skyfield 1.7 or later — with an
+older weewx-skyfield the three new panels show a short upgrade hint while the original four
+keep drawing.
+
 As of version 4.0, each observation is recomputed only as often as it can change: positions,
 distances and the moon's phase on every loop record (about 20 ms on a Raspberry Pi 5); rise/set,
 twilight and daylight times once per local day; and the next equinox/solstice/full/new moon only
@@ -37,10 +63,14 @@ Installing [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) 
 alongside this extension is recommended.  The two are designed to run side by side and need no
 configuration to coexist.  It completes the picture in two ways:
 
-- **The sample report's four sky-chart panels are drawn by weewx-skyfield**: a sky dome of
+- **The sample report's seven sky-chart panels are drawn by weewx-skyfield**: a sky dome of
   everything above the horizon now (sun, true-phase moon, planets, and the brightest named
   stars sized by magnitude), a midnight-to-midnight rise-and-set timeline for the sun, moon
-  and planets over the twilight bands, an orrery (solar-system plan view), and the analemma.
+  and planets over the twilight bands, an orrery (solar-system plan view), the analemma,
+  the sun's altitude-and-azimuth path for today (moon path dashed alongside), the solar
+  year (sunrise, sunset and solar noon for every week of the year), and the lunar month
+  (the current lunation as a strip of phase discs).  The last three need weewx-skyfield
+  1.7 or later.
 - **Report tags computed with Skyfield** — weewx-celestial does not touch report generation;
   report tags such as `$almanac.sunrise` are served by whatever almanac WeeWX has.
   weewx-skyfield serves them from the same definitions as these loop fields, plus much more
@@ -57,30 +87,6 @@ The information available in loop records is based on WeeWX's Seasons Report (Co
 and Matthew Wall).  More fields are provided than in the Seasons report, including start/end times
 for astronomical and nautical twilight.  Also, distances from earth to the other planets (and Pluto);
 as well as the current distance to the moon and sun.
-
-As of version 4.0, the sample report is a live "night-palette" page: a true-phase moon disc, a
-day strip showing the twilight bands with rise/set ticks and a pulsing "now" line that moves in
-real time, countdown chips for the next full/new moon and equinox/solstice, planets-now chips
-(up/down, altitude, compass direction, distance, one identity color per body), and the full data
-cards — all updated by javascript from the loop-data.txt file on every loop record (for the
-Vantage driver, that happens every 2 seconds).  The data cells are additionally computed at
-report generation time when a capable almanac is available (weewx-skyfield, or WeeWX's built-in
-PyEphem almanac) so the page first-paints populated; without an extended almanac the page still
-generates and the javascript fills everything in.  The new visual components require the 4.0
-loop fields in the `[LoopData]` fields list; without them the page works and those components
-simply stay empty.  **You do not need to edit the fields list by hand** — a bundled utility
-updates it in one command (see the Upgrade Instructions below).
-
-As of version 5.0, the sample report also carries four sky charts drawn at report generation
-time when the [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension is
-installed: the sky dome, the rise-and-set timeline, the orrery and the analemma (see "Install
-weewx-skyfield too" above).  Without weewx-skyfield, each of those panels shows a short install
-hint and the rest of the page is unaffected.
-
-The bundled sample report (Palo Alto, a July evening at 9:12 PM — first-quarter moon in the
-west, the brass now-line in the dusk gradient, and the four weewx-skyfield sky charts: the
-rise-and-set timeline, the sky dome, the orrery and the analemma):
-![Celestial Sample Report](CelestialSampleReport.png)
 
 The following observations are available in the LOOP packet (names as of version 3.0):
 
@@ -144,16 +150,76 @@ The following observations are available in the LOOP packet (names as of version
 - `venusAzimuth`
 - `yesterdayDaylightDur`
 
-### weewx-celestial in Action
+## Adding the live celestial panels to your own skin
 
-The following pages on [www.paloaltoweather.com](https://www.paloaltoweather.com/celestial.html) demonstrate what can be
-accomplished with this extension and the [weewx-skyfield extension](https://github.com/chaunceygardiner/weewx-skyfield).
+The sample report's live components are deliberately framework-free: one Cheetah include
+produces a single `<script>` block, and each component finds its place in your page by element
+id.  You can lift exactly the pieces you want into any WeeWX skin — this is how the
+[paloaltoweather.com celestial pages](https://www.paloaltoweather.com/celestial.html) are built
+(see "See it in action" below).
 
-![Celestial Today Page](PAW_Celestial_Today.png)
-![Celestial Sun Page](PAW_Celestial_Sun.png)
-![Celestial Moon Page](PAW_Celestial_Moon.png)
-![Celestial Planets Page](PAW_Celestial_Planets.png)
-![Celestial Stars Page](PAW_Celestial_Stars.png)
+1. **Serve the loop fields.**  Install
+   [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) and add the celestial
+   fields to the `[LoopData] [[Include]] [[[fields]]]` line in `weewx.conf` (the full line is in
+   the Installation Instructions below).  weewx-loopdata then rewrites `loop-data.txt` on every
+   loop record — that file is the page's only data source.
+
+1. **Include the updater.**  Copy `skins/Celestial/realtime_updater.inc` into your skin's
+   directory and add `#include "realtime_updater.inc"` inside your template's `<body>` (your
+   report must use WeeWX's CheetahGenerator; every stock skin does).  Configure it through your
+   report's `[[[Extras]]]`:
+
+   ```
+   [[[Extras]]]
+       loop_data_file = ../loop-data.txt   # path to loop-data.txt, relative to this report
+       refresh_rate = 2                    # seconds between polls; match loopdata's write cadence
+       expiration_time = 24                # hours before the page stops polling
+       #time_zone = America/New_York       # optional; defaults to the station's zone.
+                                           # 'browser' = the viewer's timezone.
+   ```
+
+1. **Data cells: give an element the loop-data key as its id.**  The updater writes into
+   whatever elements exist and silently skips the rest, so use only the cells you want:
+
+   ```html
+   Sunrise: <span id="current.sunrise.raw"></span>
+   Sun altitude: <span id="current.sunAltitude.raw"></span>
+   Distance to Mars: <span id="current.earthMarsDistance"></span>
+   Next full moon: <span id="current.nextFullMoon"></span>
+   ```
+
+   `.raw` time ids render as `HH:MM:SS AM/PM` in the display timezone; `.raw` angle ids as one
+   decimal with a degree sign; distance ids gain thousands separators; `current.nextFullMoon`
+   and its like render as full date+times.  The authoritative map of which ids exist and how
+   each renders is the short, readable `renderDataCells` function at the bottom of
+   `realtime_updater.inc`.
+
+1. **The visual components mount on fixed ids.**  Each renders itself into (or under) a
+   specific element, and a component whose element is absent simply does not run:
+
+   ```html
+   <div id="moon-disc"></div>     <!-- the true-phase moon disc -->
+   <div id="day-strip"></div>     <!-- twilight bands, rise/set ticks, moving now-line -->
+   <div class="count" id="count-fullmoon"><span class="k">full moon</span><span class="v mono"></span><span class="d"></span></div>
+   <div class="chip" id="planet-mars"><span class="dot dot-mars"></span><div><div class="chipname">Mars</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+   ```
+
+   The countdown chips exist for `count-fullmoon`, `count-newmoon`, `count-equinox` and
+   `count-solstice`; the planet chips for `planet-mercury` through `planet-pluto`.  Copy the
+   markup from `skins/Celestial/index.html.tmpl` and the classes these components use from
+   `skins/Celestial/celestial.css` (`moon-*`, `band-*`, `tick-*`, `nowline`, `gridlab`,
+   `nowlab`, the `.count` and `.chip` families) — restyle them there freely.  Keep color
+   literals in the CSS, not the template: Cheetah owns `#`, and a hex color in a template is a
+   parsing accident waiting to happen.
+
+1. **First paint (optional).**  Cells are empty until the first poll (at most `refresh_rate`
+   seconds).  The sample report also renders report-time values into the same cells with
+   `$almanac` tags so the page arrives populated; see any data cell in
+   `skins/Celestial/index.html.tmpl` for the pattern.
+
+1. **Missing fields are harmless.**  Every read in the updater is guarded: a field you left out
+   of the `[LoopData]` fields line leaves its own cell alone and never breaks the rest of the
+   page.
 
 ### Deprecated loop field names
 
@@ -194,6 +260,13 @@ which the utility cannot see:
    through version 4.2).  On an older WeeWX, stay with
    [weewx-celestial 4.2](https://github.com/chaunceygardiner/weewx-celestial/releases) — or,
    better, upgrade WeeWX.  The installer refuses to install 5.0 on an unsupported WeeWX.
+
+1. As of version 5.1, the sample report includes three more sky-chart panels — the sun's
+   path for today, the solar year, and the lunar month — which need
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) 1.7 or later.  With
+   an older weewx-skyfield those three panels show a short upgrade hint (the original four
+   keep drawing); without weewx-skyfield all seven show install hints.  No `[LoopData]`
+   fields changes are needed for this release; there is nothing to migrate.
 
 1. As of version 5.0, the sample report includes four sky-chart panels — the sky dome, the
    rise-and-set timeline, the orrery and the analemma — drawn by the
@@ -284,11 +357,12 @@ on WeeWX 4, stay with [weewx-celestial 4.2](https://github.com/chaunceygardiner/
    [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
 
 1. Recommended (not required): install the
-   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension.  It draws
-   the sample report's four sky-chart panels (sky dome, rise-and-set timeline, orrery,
-   analemma) and serves Skyfield-computed report tags.  Without it, those panels show a short
-   install hint, report-time values fall back to WeeWX's built-in PyEphem almanac, and
-   everything else works.
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension, 1.7 or
+   later.  It draws the sample report's seven sky-chart panels (sky dome, rise-and-set
+   timeline, orrery, analemma, sun path, solar year, lunar month) and serves
+   Skyfield-computed report tags.  Without it, those panels show a short install hint,
+   report-time values fall back to WeeWX's built-in PyEphem almanac, and everything else
+   works.
 
 1. Download the latest release, weewx-celestial.zip, from
 
@@ -355,6 +429,20 @@ on WeeWX 4, stay with [weewx-celestial 4.2](https://github.com/chaunceygardiner/
  * `expiration_time`: The number of hours before expiring the autoupdate of the report.
  * `page_update_pwd`: The password to specify in the URL such that the page never expires.
                       That is, `<machine>/weewx/celestial/?pageUpdate=foobar`
+
+## See it in action at PaloAltoWeather.com
+
+The celestial pages at
+[www.paloaltoweather.com](https://www.paloaltoweather.com/celestial.html) are a custom skin
+built exactly as described in "Adding the live celestial panels to your own skin" above:
+weewx-celestial loop fields for the live values, plus report tags and sky panels from the
+[weewx-skyfield extension](https://github.com/chaunceygardiner/weewx-skyfield).
+
+![Celestial Today Page](PAW_Celestial_Today.png)
+![Celestial Sun Page](PAW_Celestial_Sun.png)
+![Celestial Moon Page](PAW_Celestial_Moon.png)
+![Celestial Planets Page](PAW_Celestial_Planets.png)
+![Celestial Stars Page](PAW_Celestial_Stars.png)
 
 ## Testing
 
