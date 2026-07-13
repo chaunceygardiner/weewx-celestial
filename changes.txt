@@ -1,8 +1,8 @@
 weewx-celestial change history
 ------------------------------
 
-5.2 (in development)
---------------------
+5.2 2026/07/12
+--------------
 - weewx can now shut down while celestial is computing.  WeeWX stops by
   raising an exception from its TERM signal handler, from inside whatever
   code is running when the signal lands; when that was celestial's
