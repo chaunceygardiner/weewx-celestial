@@ -219,6 +219,62 @@ class TestEngineGuards:
             importlib.reload(celestial)
 
 
+class TestTerminatePropagation:
+    """weewxd stops by raising Terminate from its SIGTERM signal handler --
+    inside whatever the main thread is executing at that instant, which is
+    often this extension's per-packet computation.  The broad exception
+    handlers on the loop path (and in Sky.__init__) must hand it back:
+    swallowing it (logged as 'get_az_alt_ra_dec(mars): .') left weewx unable
+    to shut down until the TERM landed outside celestial's compute window."""
+
+    class Terminate(Exception):
+        """Stands in for weewxd's Terminate, which is recognized by name
+        (weewxd runs as __main__, so the real class cannot be imported)."""
+
+    def test_insert_fields_lets_terminate_through(self, sky, monkeypatch):
+        def raise_terminate(*args, **kwargs):
+            raise self.Terminate
+        monkeypatch.setattr(sky, 'get_az_alt_ra_dec', raise_terminate)
+        pkt = {'dateTime': TIME_TS, 'usUnits': weewx.US}
+        with pytest.raises(self.Terminate):
+            sky.insert_fields(pkt)
+
+    def test_new_loop_lets_terminate_through(self, monkeypatch):
+        engine = StubEngine()
+        service = celestial.Celestial(engine, make_config(stars='false'))
+        def raise_terminate(pkt):
+            raise self.Terminate
+        monkeypatch.setattr(service.sky, 'insert_fields', raise_terminate)
+        event = weewx.Event(weewx.NEW_LOOP_PACKET,
+                            packet={'dateTime': TIME_TS, 'usUnits': weewx.US})
+        with pytest.raises(self.Terminate):
+            service.new_loop(event)
+
+    def test_sky_init_lets_terminate_through(self, monkeypatch):
+        """A TERM during engine startup must stop weewx too: Terminate is a
+        shutdown request, not a failure, so it is the one exception exempt
+        from Sky.__init__'s never-raise contract."""
+        def raise_terminate(*args, **kwargs):
+            raise self.Terminate
+        monkeypatch.setattr(celestial.skyfield.api.load, 'timescale', raise_terminate)
+        with pytest.raises(self.Terminate):
+            celestial.Sky(0, os.path.join(REPO_ROOT, 'bin', 'user'),
+                          weeutil.Moon.moon_phases, ALTITUDE_M, LATITUDE, LONGITUDE,
+                          load_stars=False)
+
+    def test_ordinary_exception_still_swallowed(self, sky, monkeypatch):
+        """The reraise guard must not change error handling for real
+        failures: a compute error still loses only its own fields."""
+        def raise_valueerror(*args, **kwargs):
+            raise ValueError('boom')
+        monkeypatch.setattr(sky, 'get_az_alt_ra_dec', raise_valueerror)
+        pkt = {'dateTime': TIME_TS, 'usUnits': weewx.US}
+        sky.insert_fields(pkt)
+        assert 'sunAzimuth' not in pkt
+        assert 'moonPhase' in pkt      # get_moon_phase is unaffected
+        assert 'sunrise' in pkt        # day fields are unaffected
+
+
 class TestStars:
     """The star catalog, which feeds the earthProximaCentauriDistance loop
     field.  (Named-star report tags are the weewx-skyfield extension's job.)"""

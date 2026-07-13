@@ -1,6 +1,18 @@
 weewx-celestial change history
 ------------------------------
 
+5.2 (in development)
+--------------------
+- weewx can now shut down while celestial is computing.  WeeWX stops by
+  raising an exception from its TERM signal handler, from inside whatever
+  code is running when the signal lands; when that was celestial's
+  per-packet computation, the extension's error handling swallowed the
+  exception (logged as, e.g., "get_az_alt_ra_dec(mars): .") and weewxd
+  kept running, so a restart or "systemctl stop" only worked when the
+  signal happened to land outside celestial's compute window.  Every
+  error handler on that path now hands the shutdown exception back to
+  WeeWX.
+
 5.1 2026/07/11
 --------------
 - The sample report gains the three sky-chart panels weewx-skyfield 1.7

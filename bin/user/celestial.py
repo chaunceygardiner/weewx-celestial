@@ -47,7 +47,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '5.1'
+CELESTIAL_VERSION = '5.2'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -64,6 +64,18 @@ def parse_weewx_version(version: str) -> Optional[Tuple[int, int]]:
         return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
     except ValueError:
         return None
+
+
+def reraise_if_terminate(e: BaseException) -> None:
+    """weewxd stops by raising Terminate from its SIGTERM signal handler --
+    inside whatever the main thread is executing at that instant, which is
+    often this extension's per-packet computation.  Every broad exception
+    handler on that path (and in Sky.__init__, which runs at engine startup)
+    must call this first and hand the exception back, or weewx cannot shut
+    down.  weewxd runs as __main__, so its Terminate class cannot be
+    imported here and is recognized by name."""
+    if type(e).__name__ == 'Terminate':
+        raise e
 
 
 # The install-time guard in install.py enforces the same minimum with a
@@ -196,6 +208,7 @@ class Celestial(StdService):
             log.debug(pkt)
             self.sky.insert_fields(pkt)
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('new_loop: %s.' % e)
 
 # The stars used by the loop-field path, mapped to their Hipparcos catalog
@@ -556,6 +569,7 @@ class Sky():
         try:
             self.ts: skyfield.timelib.Timescale = skyfield.api.load.timescale()
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('init: Could not build the skyfield timescale: %s.  Celestial will not run.' % e)
             return
 
@@ -569,6 +583,7 @@ class Sky():
             planets_file: str = '%s/celestial_de421.bsp' % user_root
             self.planets: skyfield.jpllib.SpiceKernel = InMemorySpiceKernel(planets_file)
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('init: Could not load %s: %s.  Celestial will not run.' % (planets_file, e))
             return
 
@@ -582,6 +597,7 @@ class Sky():
             for orb, key in EPHEMERIS_KEYS.items():
                 self.orbs[orb] = self.planets[key]
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('init: Could not find %s in ephermis file %s: %s.  Celestial will not run.' % (orb, planets_file, e))
             return
 
@@ -607,17 +623,20 @@ class Sky():
                 self.stars = Sky.load_named_stars(user_root)
                 log.info('Loaded %d named stars from the Hipparcos catalog.' % len(self.stars))
             except Exception as e:
+                reraise_if_terminate(e)
                 log.error('init: Could not load the Hipparcos star catalog: %s.  Star support disabled.' % e)
                 self.load_stars = False
 
         try:
             self.bluffton = skyfield.api.wgs84.latlon(self.latitude, self.longitude, elevation_m=self.altitude_m)
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('init: skyfield.api.wgs84.latlon(%f, %f, %f): %s.  Celestial will not run.' % (self.latitude, self.longitude, self.altitude_m, e))
             return
         try:
             self.observer = self.earth + self.bluffton
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('init: Could not set observer (earth: %r, bluffton: %r): %s.  Celestial will not run.' % (self.earth, self.bluffton, e))
             return
 
@@ -895,6 +914,7 @@ class Sky():
             fields['sunRightAscension'] = sun_ra
             fields['sunDeclination'] = sun_dec
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_continuous_fields: get_az_alt_ra_dec(%r, %r, %r, %r, %r): %s.' % (ts, self.sun, pkt_datetime, tempC, pressureMbar, e))
 
         try:
@@ -904,6 +924,7 @@ class Sky():
             fields['moonRightAscension'] = moon_ra
             fields['moonDeclination'] = moon_dec
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_continuous_fields: get_az_alt_ra_dec(moon): %s.' % e)
 
         try:
@@ -914,6 +935,7 @@ class Sky():
             fields['moonPhaseIndex'] = index
             fields['moonWaxing'] = 1 if moon_phase_degrees < 180.0 else 0
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_continuous_fields: get_moon_phase: %s.' % e)
 
         for planet in LOOP_PLANETS:
@@ -922,6 +944,7 @@ class Sky():
                 fields[planet + 'Azimuth'] = az
                 fields[planet + 'Altitude'] = alt
             except Exception as e:
+                reraise_if_terminate(e)
                 log.error('get_continuous_fields: get_az_alt_ra_dec(%s): %s.' % (planet, e))
 
         # Convert astronomical units to miles (US) or kilometers (METRIC and METRICWX).
@@ -953,6 +976,7 @@ class Sky():
             orb = 'pluto'
             fields['earthPlutoDistance'] = self.distance_au(ts_pkt_time, self.pluto) * multiplier
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_continuous_fields: distance_au(%r, %s): %s.' % (ts_pkt_time, orb, e))
 
         # Distance to Proxima Centauri, the nearest star (needs the star
@@ -966,6 +990,7 @@ class Sky():
                     self.proxima_light_years = (
                         self.distance_au(ts_pkt_time, self.stars['proxima_centauri'][0]) / AU_PER_LIGHT_YEAR)
                 except Exception as e:
+                    reraise_if_terminate(e)
                     log.error('get_continuous_fields: distance_au(%r, proxima_centauri): %s.' % (ts_pkt_time, e))
             if self.proxima_light_years is not None:
                 fields['earthProximaCentauriDistance'] = self.proxima_light_years
@@ -994,6 +1019,7 @@ class Sky():
             fields['daylightDur'] = daylight
             fields['sunTransit'] = transit
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_day_fields: get_sunrise_sunset_transit_daylight(%r): %s.' % (day_start, e))
             ok = False
 
@@ -1006,6 +1032,7 @@ class Sky():
                 fields['moonset'] = moonset
             fields['moonTransit'] = moontransit
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_day_fields: get_rise_set_transit(moon, %r): %s.' % (day_start, e))
             ok = False
 
@@ -1036,6 +1063,7 @@ class Sky():
                             fields['civilTwilightStart'] = t.utc_datetime().timestamp()
                             civil_encountered = True
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_day_fields: skyfield.almanac.find_discrete twilight(%r, %r): %s.' % (day_start, f, e))
             ok = False
 
@@ -1045,6 +1073,7 @@ class Sky():
             _, _, _, yesterday_daylight = self.get_sunrise_sunset_transit_daylight(ts, yesterday_start)
             fields['yesterdayDaylightDur'] = yesterday_daylight
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_day_fields: get_sunrise_sunset_transit_daylight(yesterday_start: %r): %s.' % (yesterday_start, e))
             ok = False
 
@@ -1057,6 +1086,7 @@ class Sky():
             if  tomorrow_sunset is not None:
                 fields['tomorrowSunset'] = tomorrow_sunset
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_day_fields: get_sunrise_sunset_transit_daylight(tomorrow_start: %r): %s.' % (tomorrow_start, e))
             ok = False
 
@@ -1081,6 +1111,7 @@ class Sky():
             if next_solstice is not None:
                 fields['nextSolstice'] = next_solstice
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_event_fields: get_next_equinox_and_solstice(%r): %s.' % (day_start, e))
             ok = False
 
@@ -1091,6 +1122,7 @@ class Sky():
             if newmoon is not None:
                 fields['nextNewMoon'] = newmoon
         except Exception as e:
+            reraise_if_terminate(e)
             log.error('get_event_fields: get_next_fullmoon_and_newmoon(%r): %s.' % (day_start, e))
             ok = False
 
