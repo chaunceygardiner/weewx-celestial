@@ -39,10 +39,11 @@
     #set $time_full = "%m/%d/%Y %I:%M:%S %p"
     ## Earth-to-body distances are in astronomical units; convert to the
     ## report's distance unit.
-    #set $distance_label = str($unit.label.earthMoonDistance)
-    ## These constants must match celestial.py's AU_KM/AU_MILES (a template
-    ## cannot import the module; a test ties them together).
-    #if $unit.unit_type.earthMoonDistance == 'km'
+    #set $distance_label = str($unit.label.windrun)
+    ## Kilometers/miles per IAU astronomical unit; a test ties these to the
+    ## javascript include's copies.  (windrun stands in for group_distance --
+    ## this extension no longer registers distance observation types.)
+    #if $unit.unit_type.windrun == 'km'
       #set $per_au = 1.4959787e8    ## kilometers per astronomical unit
     #else
       #set $per_au = 9.2955807e7    ## miles per astronomical unit
@@ -186,8 +187,8 @@
         </div>
         <div class="moonbox">
           <div class="mlabel">
-            <div class="mname"><span id="current.moonPhase">#if $extras#$($almanac.moon_phase)#end if#</span></div>
-            <div class="mpct mono"><span id="current.moonFullness">#if $extras#$(('%s%% full' % $almanac.moon_fullness))#end if#</span></div>
+            <div class="mname"><span id="almanac.moon_phase">#if $extras#$($almanac.moon_phase)#end if#</span></div>
+            <div class="mpct mono"><span id="almanac.moon.phase">#if $extras#$(('%s%% full' % $almanac.moon_fullness))#end if#</span></div>
           </div>
           <div id="moon-disc"></div>
         </div>
@@ -336,55 +337,55 @@
           <table class="celestial">
           <tr>
             <td class="label">Start astronomical twilight</td>
-            <td class="data" id="current.astronomicalTwilightStart.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).rise.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(horizon=-18).sun(use_center=1).rise.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).rise.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Start nautical twilight</td>
-            <td class="data" id="current.nauticalTwilightStart.raw">#if $extras#$($almanac(horizon=-12).sun(use_center=1).rise.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(horizon=-12).sun(use_center=1).rise.raw">#if $extras#$($almanac(horizon=-12).sun(use_center=1).rise.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Start civil twilight</td>
-            <td class="data" id="current.civilTwilightStart.raw">#if $extras#$($almanac(horizon=-6).sun(use_center=1).rise.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(horizon=-6).sun(use_center=1).rise.raw">#if $extras#$($almanac(horizon=-6).sun(use_center=1).rise.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Sunrise</td>
-            <td class="data" id="current.sunrise.raw">#if $extras#$($almanac.sunrise.format($time_hms))#end if#</td>
+            <td class="data" id="almanac.sunrise.raw">#if $extras#$($almanac.sunrise.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Transit</td>
-            <td class="data" id="current.sunTransit.raw">#if $extras#$($almanac.sun.transit.format($time_hms))#end if#</td>
+            <td class="data" id="almanac.sun.transit.raw">#if $extras#$($almanac.sun.transit.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Sunset</td>
-            <td class="data" id="current.sunset.raw">#if $extras#$($almanac.sunset.format($time_hms))#end if#</td>
+            <td class="data" id="almanac.sunset.raw">#if $extras#$($almanac.sunset.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">End civil twilight</td>
-            <td class="data" id="current.civilTwilightEnd.raw">#if $extras#$($almanac(horizon=-6).sun(use_center=1).set.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(horizon=-6).sun(use_center=1).set.raw">#if $extras#$($almanac(horizon=-6).sun(use_center=1).set.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">End nautical twilight</td>
-            <td class="data" id="current.nauticalTwilightEnd.raw">#if $extras#$($almanac(horizon=-12).sun(use_center=1).set.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(horizon=-12).sun(use_center=1).set.raw">#if $extras#$($almanac(horizon=-12).sun(use_center=1).set.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">End astronomical twilight</td>
-            <td class="data" id="current.astronomicalTwilightEnd.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).set.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(horizon=-18).sun(use_center=1).set.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).set.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Azimuth</td>
-            <td class="data" id="current.sunAzimuth.raw">#if $extras#$(("%.1f&deg;" % $almanac.sun.az))#end if#</td>
+            <td class="data" id="almanac.sun.az">#if $extras#$(("%.1f&deg;" % $almanac.sun.az))#end if#</td>
           </tr>
           <tr>
             <td class="label">Altitude</td>
-            <td class="data" id="current.sunAltitude.raw">#if $extras#$(("%.1f&deg;" % $almanac.sun.alt))#end if#</td>
+            <td class="data" id="almanac.sun.alt">#if $extras#$(("%.1f&deg;" % $almanac.sun.alt))#end if#</td>
           </tr>
           <tr>
             <td class="label">Right ascension</td>
-            <td class="data" id="current.sunRightAscension.raw">#if $extras#$(("%.1f&deg;" % $almanac.sun.ra))#end if#</td>
+            <td class="data" id="almanac.sun.ra">#if $extras#$(("%.1f&deg;" % $almanac.sun.ra))#end if#</td>
           </tr>
           <tr>
             <td class="label">Declination</td>
-            <td class="data" id="current.sunDeclination.raw">#if $extras#$(("%.1f&deg;" % $almanac.sun.dec))#end if#</td>
+            <td class="data" id="almanac.sun.dec">#if $extras#$(("%.1f&deg;" % $almanac.sun.dec))#end if#</td>
           </tr>
           ## Report-time only (weewx-skyfield 1.9); the row is omitted, not
           ## left empty, when the almanac does not serve the tag.
@@ -398,22 +399,22 @@
             ## The equinox is before the solstice. Display them in order.
             <tr>
               <td class="label">Equinox</td>
-              <td class="data" id="current.nextEquinox">$almanac.next_equinox.format($time_full)</td>
+              <td class="data" id="almanac.next_equinox">$almanac.next_equinox.format($time_full)</td>
             </tr>
             <tr>
               <td class="label">Solstice</td>
-              <td class="data" id="current.nextSolstice">$almanac.next_solstice.format($time_full)</td>
+              <td class="data" id="almanac.next_solstice">$almanac.next_solstice.format($time_full)</td>
             </tr>
           #else
             ## The solstice is before the equinox (or there is no extended
             ## almanac and the javascript will fill the cells in).
             <tr>
               <td class="label">Solstice</td>
-              <td class="data" id="current.nextSolstice">#if $extras#$($almanac.next_solstice.format($time_full))#end if#</td>
+              <td class="data" id="almanac.next_solstice">#if $extras#$($almanac.next_solstice.format($time_full))#end if#</td>
             </tr>
             <tr>
               <td class="label">Equinox</td>
-              <td class="data" id="current.nextEquinox">#if $extras#$($almanac.next_equinox.format($time_full))#end if#</td>
+              <td class="data" id="almanac.next_equinox">#if $extras#$($almanac.next_equinox.format($time_full))#end if#</td>
             </tr>
           #end if
           ## The next solar eclipse VISIBLE from this station, with the
@@ -431,11 +432,11 @@
           <tr><th>Tomorrow</th><th></th></tr>
           <tr>
             <td class="label">Sunrise</td>
-            <td class="data" id="current.tomorrowSunrise.raw">#if $extras#$($tomorrow.sunrise.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(days=1).sunrise.raw">#if $extras#$($tomorrow.sunrise.format($time_hms))#end if#</td>
           </tr>
           <tr>
             <td class="label">Sunset</td>
-            <td class="data" id="current.tomorrowSunset.raw">#if $extras#$($tomorrow.sunset.format($time_hms))#end if#</td>
+            <td class="data" id="almanac(days=1).sunset.raw">#if $extras#$($tomorrow.sunset.format($time_hms))#end if#</td>
           </tr>
           </table>
         </section>
@@ -450,31 +451,31 @@
           <table class="celestial">
           <tr>
             <td class="label">Moonrise</td>
-            <td class="data" id="current.moonrise">#if $extras#$($almanac.moon.rise.format($time_full))#end if#</td>
+            <td class="data" id="almanac.moon.rise">#if $extras#$($almanac.moon.rise.format($time_full))#end if#</td>
           </tr>
           <tr>
             <td class="label">Transit</td>
-            <td class="data" id="current.moonTransit">#if $extras#$($almanac.moon.transit.format($time_full))#end if#</td>
+            <td class="data" id="almanac.moon.transit">#if $extras#$($almanac.moon.transit.format($time_full))#end if#</td>
           </tr>
           <tr>
             <td class="label">Moonset</td>
-            <td class="data" id="current.moonset">#if $extras#$($almanac.moon.set.format($time_full))#end if#</td>
+            <td class="data" id="almanac.moon.set">#if $extras#$($almanac.moon.set.format($time_full))#end if#</td>
           </tr>
           <tr>
             <td class="label">Azimuth</td>
-            <td class="data" id="current.moonAzimuth.raw">#if $extras#$(("%.1f&deg;" % $almanac.moon.az))#end if#</td>
+            <td class="data" id="almanac.moon.az">#if $extras#$(("%.1f&deg;" % $almanac.moon.az))#end if#</td>
           </tr>
           <tr>
             <td class="label">Altitude</td>
-            <td class="data" id="current.moonAltitude.raw">#if $extras#$(("%.1f&deg;" % $almanac.moon.alt))#end if#</td>
+            <td class="data" id="almanac.moon.alt">#if $extras#$(("%.1f&deg;" % $almanac.moon.alt))#end if#</td>
           </tr>
           <tr>
             <td class="label">Right ascension</td>
-            <td class="data" id="current.moonRightAscension.raw">#if $extras#$(("%.1f&deg;" % $almanac.moon.ra))#end if#</td>
+            <td class="data" id="almanac.moon.ra">#if $extras#$(("%.1f&deg;" % $almanac.moon.ra))#end if#</td>
           </tr>
           <tr>
             <td class="label">Declination</td>
-            <td class="data" id="current.moonDeclination.raw">#if $extras#$(("%.1f&deg;" % $almanac.moon.dec))#end if#</td>
+            <td class="data" id="almanac.moon.dec">#if $extras#$(("%.1f&deg;" % $almanac.moon.dec))#end if#</td>
           </tr>
           ## Report-time only (weewx-skyfield 1.9); the row is omitted, not
           ## left empty, when the almanac does not serve the tag.
@@ -487,20 +488,20 @@
           #if $extras and $almanac.next_full_moon.raw < $almanac.next_new_moon.raw
             <tr>
               <td class="label">Full moon</td>
-              <td class="data" id="current.nextFullMoon">$almanac.next_full_moon.format($time_full)</td>
+              <td class="data" id="almanac.next_full_moon">$almanac.next_full_moon.format($time_full)</td>
             </tr>
             <tr>
               <td class="label">New moon</td>
-              <td class="data" id="current.nextNewMoon">$almanac.next_new_moon.format($time_full)</td>
+              <td class="data" id="almanac.next_new_moon">$almanac.next_new_moon.format($time_full)</td>
             </tr>
           #else
             <tr>
               <td class="label">New moon</td>
-              <td class="data" id="current.nextNewMoon">#if $extras#$($almanac.next_new_moon.format($time_full))#end if#</td>
+              <td class="data" id="almanac.next_new_moon">#if $extras#$($almanac.next_new_moon.format($time_full))#end if#</td>
             </tr>
             <tr>
               <td class="label">Full moon</td>
-              <td class="data" id="current.nextFullMoon">#if $extras#$($almanac.next_full_moon.format($time_full))#end if#</td>
+              <td class="data" id="almanac.next_full_moon">#if $extras#$($almanac.next_full_moon.format($time_full))#end if#</td>
             </tr>
           #end if
           ## The next lunar eclipse VISIBLE from this station, with the
@@ -518,47 +519,47 @@
           <table class="celestial">
           <tr>
             <td class="label">Moon</td>
-            <td class="data" id="current.earthMoonDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.moon.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.moon.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.moon.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Sun</td>
-            <td class="data" id="current.earthSunDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.sun.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.sun.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.sun.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Mercury</td>
-            <td class="data" id="current.earthMercuryDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mercury.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.mercury.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mercury.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Venus</td>
-            <td class="data" id="current.earthVenusDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.venus.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.venus.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.venus.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Mars</td>
-            <td class="data" id="current.earthMarsDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mars.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.mars.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mars.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Jupiter</td>
-            <td class="data" id="current.earthJupiterDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.jupiter.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.jupiter.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.jupiter.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Saturn</td>
-            <td class="data" id="current.earthSaturnDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.saturn.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.saturn.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.saturn.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Uranus</td>
-            <td class="data" id="current.earthUranusDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.uranus.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.uranus.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.uranus.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Neptune</td>
-            <td class="data" id="current.earthNeptuneDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.neptune.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.neptune.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.neptune.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Pluto</td>
-            <td class="data" id="current.earthPlutoDistance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.pluto.earth_distance * $per_au) + $distance_label))#end if#</td>
+            <td class="data" id="almanac.pluto.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.pluto.earth_distance * $per_au) + $distance_label))#end if#</td>
           </tr>
           <tr>
             <td class="label">Proxima Centauri</td>
-            <td class="data" id="current.earthProximaCentauriDistance.raw" style="text-align:right">$proxima_html</td>
+            <td class="data" id="almanac.proxima_centauri.earth_distance" style="text-align:right">$proxima_html</td>
           </tr>
           </table>
         </section>

@@ -1,4 +1,4 @@
-# Copyright 2022-2025 by John A Kline <john@johnkline.com>
+# Copyright 2022-2026 by John A Kline <john@johnkline.com>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -39,18 +39,12 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "5.3",
+            version = "6.0",
             name = 'celestial',
-            description = 'Inserts celestial observations into loop packets.',
+            description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
             author_email = "john@johnkline.com",
-            data_services = 'user.celestial.Celestial',
             config = {
-                'Celestial': {
-                    'enable'          : 'true',
-                    'update_rate_secs': 0,
-                    'stars'           : 'true',
-                },
                 'StdReport': {
                     'CelestialReport': {
                         'HTML_ROOT':'celestial',
@@ -68,8 +62,6 @@ class CelestialInstaller(ExtensionInstaller):
             files = [
                 ('bin/user', [
                     'bin/user/celestial.py',
-                    'bin/user/celestial_stars.dat',
-                    'bin/user/celestial_de421.bsp',
                     ]),
                 ('skins/Celestial', [
                     'skins/Celestial/celestial.css',

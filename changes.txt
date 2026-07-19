@@ -1,6 +1,40 @@
 weewx-celestial change history
 ------------------------------
 
+6.0 2026/07/19
+--------------
+ACTION REQUIRED when upgrading: this release removes the loop-field
+service.  Run `weectl extension uninstall celestial` BEFORE installing 6.0
+-- `weectl extension install` over an old version only overlays files and
+never reverses the old registrations, so installing over the top leaves
+`user.celestial.Celestial` in data_services and orphans the old
+ephemeris/star files; the uninstall, done first, removes both.  (Installing
+over the top is survivable: 6.0 ships a stub Celestial service that logs a
+warning and exits, so weewxd still starts -- remove the data_services
+entry and the two celestial_* files by hand.)  Requires weewx-loopdata
+5.0+ (and weewx-skyfield, recommended).  Then run
+`python -m user.celestial --migrate-loopdata-fields` to rewrite the
+[LoopData] [[Include]] fields line (celestial `current.*` entries become
+weewx-loopdata almanac entries) and restart WeeWX.  See the README's
+upgrade instructions.
+- The extension no longer computes celestial values or inserts loop
+  fields: weewx-loopdata 5.0 evaluates almanac fields (report almanac tags
+  with the $ removed) directly against the registered weewx-skyfield
+  almanac, so the live page and the report tags now come from one engine
+  and always agree.  What remains here: the Celestial skin, the
+  CelestialSkyPage search-list shim, and the migration utility.
+- The sample skin reads the almanac fields (element ids equal the new
+  keys); waxing is derived in javascript (next full moon before next new
+  moon), distances convert from raw AU in javascript, and Proxima
+  Centauri converts AU to light years.
+- Removed: the [Celestial] weewx.conf section, the Sky engine, the bundled
+  celestial_de421.bsp ephemeris and celestial_stars.dat catalog, and the
+  Skyfield/NumPy requirements (weewx-skyfield still needs them).
+- The --migrate-loopdata-fields utility now targets 6.0: it also collapses
+  pre-3.0 PascalCase names, drops moonWaxing (derived in the page), and
+  appends the 6.0 sample-report field set; --in-place backups are named
+  .bak-celestial-6.0.  The --test option is gone with the engine.
+
 5.3 2026/07/18
 --------------
 - The sample report picks up the two almanac tag families weewx-skyfield

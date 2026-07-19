@@ -65,6 +65,17 @@
   }
   ## Station latitude decides the moon disc's lit side (hemisphere flip).
   STATION_LAT = $station.stn_info.latitude_f;
+  ## Distances arrive as raw AU (weewx-loopdata almanac fields); convert to
+  ## the report's distance units here.  windrun stands in for group_distance
+  ## (this extension no longer registers distance observation types).
+  #set $dist_label = str($unit.label.windrun)
+  #if $unit.unit_type.windrun == 'km'
+  #set $per_au = 1.4959787e8
+  #else
+  #set $per_au = 9.2955807e7
+  #end if
+  PER_AU = $per_au;
+  DIST_LABEL = '$dist_label';
   function addLoadEvent(func) {
     var oldonload = window.onload;
     if (typeof window.onload != 'function') {
@@ -201,8 +212,10 @@
     }
   }
   function setDist(r, key) {
-    if (r[key] !== undefined) {
-      setHtml(key, numberWithCommas(r[key]));
+    // Distances arrive as raw AU; format to match the template's
+    // "{:,.1f}" + label first paint.
+    if (typeof r[key] === 'number') {
+      setHtml(key, numberWithCommas((r[key] * PER_AU).toFixed(1)) + DIST_LABEL);
     }
   }
   function setFullTime(r, key) {
@@ -244,17 +257,18 @@
   // True-phase moon disc (geometry ported from the weewx-skyfield Sky page).
   function renderMoonDisc(r) {
     var el = document.getElementById('moon-disc');
-    var fullness = r["current.moonFullness.raw"];
-    var index = r["current.moonPhaseIndex.raw"];
+    var fullness = r["almanac.moon.phase"];
+    var index = r["almanac.moon_index"];
     if (!el || typeof fullness !== 'number' || typeof index !== 'number') {
       return;   // fields not in the loop-data list: leave the container empty
     }
     var frac = fullness / 100.0;
-    // moonWaxing is exact; the phase index is a coarse fallback (index 0
-    // also covers the last ~1.5 days of waning crescent, which would draw
-    // the lit side mirrored).
-    var waxingRaw = r["current.moonWaxing.raw"];
-    var waxing = (typeof waxingRaw === 'number') ? (waxingRaw !== 0) : (index <= 3);
+    // Waxing iff the next full moon precedes the next new moon (exact);
+    // the phase index is a coarse fallback (index 0 also covers the last
+    // ~1.5 days of waning crescent, which would draw the lit side mirrored).
+    var nextFull = r["almanac.next_full_moon.raw"], nextNew = r["almanac.next_new_moon.raw"];
+    var waxing = (typeof nextFull === 'number' && typeof nextNew === 'number')
+        ? (nextFull < nextNew) : (index <= 3);
     var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
     var c = 38, R = 34;
     var rx = Math.abs(2 * frac - 1) * R;
@@ -273,10 +287,10 @@
 
   // Countdown chips: next full/new moon, equinox, solstice.
   function renderCountdowns(r, nowTs) {
-    var chips = [['count-fullmoon', 'current.nextFullMoon.raw'],
-                 ['count-newmoon', 'current.nextNewMoon.raw'],
-                 ['count-equinox', 'current.nextEquinox.raw'],
-                 ['count-solstice', 'current.nextSolstice.raw']];
+    var chips = [['count-fullmoon', 'almanac.next_full_moon.raw'],
+                 ['count-newmoon', 'almanac.next_new_moon.raw'],
+                 ['count-equinox', 'almanac.next_equinox.raw'],
+                 ['count-solstice', 'almanac.next_solstice.raw']];
     chips.forEach(function(chip) {
       var el = document.getElementById(chip[0]);
       var ts = r[chip[1]];
@@ -312,14 +326,14 @@
     // (polar day/night, sun up at midnight) drop out, and the band before
     // the first surviving edge is that edge's FROM state -- so a day that
     // starts with the sun up starts with the day band, not night.
-    var edges = [[r["current.astronomicalTwilightStart.raw"], 'band-astro', 'band-night'],
-                 [r["current.nauticalTwilightStart.raw"], 'band-naut', 'band-astro'],
-                 [r["current.civilTwilightStart.raw"], 'band-civil', 'band-naut'],
-                 [r["current.sunrise.raw"], 'band-day', 'band-civil'],
-                 [r["current.sunset.raw"], 'band-civil', 'band-day'],
-                 [r["current.civilTwilightEnd.raw"], 'band-naut', 'band-civil'],
-                 [r["current.nauticalTwilightEnd.raw"], 'band-astro', 'band-naut'],
-                 [r["current.astronomicalTwilightEnd.raw"], 'band-night', 'band-astro']]
+    var edges = [[r["almanac(horizon=-18).sun(use_center=1).rise.raw"], 'band-astro', 'band-night'],
+                 [r["almanac(horizon=-12).sun(use_center=1).rise.raw"], 'band-naut', 'band-astro'],
+                 [r["almanac(horizon=-6).sun(use_center=1).rise.raw"], 'band-civil', 'band-naut'],
+                 [r["almanac.sunrise.raw"], 'band-day', 'band-civil'],
+                 [r["almanac.sunset.raw"], 'band-civil', 'band-day'],
+                 [r["almanac(horizon=-6).sun(use_center=1).set.raw"], 'band-naut', 'band-civil'],
+                 [r["almanac(horizon=-12).sun(use_center=1).set.raw"], 'band-astro', 'band-naut'],
+                 [r["almanac(horizon=-18).sun(use_center=1).set.raw"], 'band-night', 'band-astro']]
       .filter(function(e) { return typeof e[0] === 'number'; })
       .sort(function(a, b) { return a[0] - b[0]; });
     var firstBand;
@@ -327,7 +341,7 @@
       firstBand = edges[0][2];
     } else {
       // No transitions at all today: polar day or polar night.
-      var daylight = r["current.daylightDur.raw"];
+      var daylight = r["almanac.sun.visible.raw"];
       firstBand = (typeof daylight === 'number' && daylight >= 43200) ? 'band-day' : 'band-night';
     }
     edges.unshift([stripSod, firstBand, firstBand]);
@@ -349,11 +363,11 @@
       svg += '<text class="mono gridlab" x="' + gx + '" y="' + (bandBot + 18) + '" text-anchor="' + anchor + '">' + fmtHour(t) + '</text>';
     }
     // Sun and moon ticks (each may be absent today).
-    var ticks = [['current.sunrise.raw', 'tick-sun'],
-                 ['current.sunTransit.raw', 'tick-sun'],
-                 ['current.sunset.raw', 'tick-sun'],
-                 ['current.moonrise.raw', 'tick-moon'],
-                 ['current.moonset.raw', 'tick-moon']];
+    var ticks = [['almanac.sunrise.raw', 'tick-sun'],
+                 ['almanac.sun.transit.raw', 'tick-sun'],
+                 ['almanac.sunset.raw', 'tick-sun'],
+                 ['almanac.moon.rise.raw', 'tick-moon'],
+                 ['almanac.moon.set.raw', 'tick-moon']];
     ticks.forEach(function(tick) {
       var ts2 = r[tick[0]];
       if (typeof ts2 === 'number' && ts2 >= stripSod && ts2 <= stripEod) {
@@ -389,10 +403,9 @@
       if (!chip) {
         return;
       }
-      var cap = planet.charAt(0).toUpperCase() + planet.slice(1);
-      var alt = r['current.' + planet + 'Altitude.raw'];
-      var az = r['current.' + planet + 'Azimuth.raw'];
-      var dist = r['current.earth' + cap + 'Distance'];
+      var alt = r['almanac.' + planet + '.alt'];
+      var az = r['almanac.' + planet + '.az'];
+      var dist = r['almanac.' + planet + '.earth_distance'];
       if (typeof alt === 'number' && typeof az === 'number') {
         var line;
         if (alt >= 0) {
@@ -402,8 +415,9 @@
         }
         chip.querySelector('.chipline').innerHTML = line;
       }
-      if (dist !== undefined) {
-        chip.querySelector('.chipsub').innerHTML = numberWithCommas(dist);
+      if (typeof dist === 'number') {
+        chip.querySelector('.chipsub').innerHTML =
+            numberWithCommas(Math.round(dist * PER_AU)) + DIST_LABEL;
       }
     });
   }
@@ -411,56 +425,57 @@
   // The 41 data cells (dual-source: first-painted by the report almanac,
   // kept live from loop data here).
   function renderDataCells(r) {
-    setTime(r, "current.sunrise.raw");
-    setTime(r, "current.sunTransit.raw");
-    setTime(r, "current.sunset.raw");
-    setTime(r, "current.tomorrowSunrise.raw");
-    setTime(r, "current.tomorrowSunset.raw");
-    setTime(r, "current.astronomicalTwilightStart.raw");
-    setTime(r, "current.nauticalTwilightStart.raw");
-    setTime(r, "current.civilTwilightStart.raw");
-    setTime(r, "current.civilTwilightEnd.raw");
-    setTime(r, "current.nauticalTwilightEnd.raw");
-    setTime(r, "current.astronomicalTwilightEnd.raw");
-    if (typeof r["current.yesterdayDaylightDur.raw"] === 'number' &&
-        typeof r["current.daylightDur.raw"] === 'number') {
-      setHtml("daylight", daylightString(r["current.yesterdayDaylightDur.raw"],
-                                         r["current.daylightDur.raw"]));
+    setTime(r, "almanac.sunrise.raw");
+    setTime(r, "almanac.sun.transit.raw");
+    setTime(r, "almanac.sunset.raw");
+    setTime(r, "almanac(days=1).sunrise.raw");
+    setTime(r, "almanac(days=1).sunset.raw");
+    setTime(r, "almanac(horizon=-18).sun(use_center=1).rise.raw");
+    setTime(r, "almanac(horizon=-12).sun(use_center=1).rise.raw");
+    setTime(r, "almanac(horizon=-6).sun(use_center=1).rise.raw");
+    setTime(r, "almanac(horizon=-6).sun(use_center=1).set.raw");
+    setTime(r, "almanac(horizon=-12).sun(use_center=1).set.raw");
+    setTime(r, "almanac(horizon=-18).sun(use_center=1).set.raw");
+    if (typeof r["almanac(days=-1).sun.visible.raw"] === 'number' &&
+        typeof r["almanac.sun.visible.raw"] === 'number') {
+      setHtml("daylight", daylightString(r["almanac(days=-1).sun.visible.raw"],
+                                         r["almanac.sun.visible.raw"]));
     }
-    setDeg(r, "current.sunAzimuth.raw");
-    setDeg(r, "current.sunAltitude.raw");
-    setDeg(r, "current.sunRightAscension.raw");
-    setDeg(r, "current.sunDeclination.raw");
-    setFullTime(r, "current.nextEquinox");
-    setFullTime(r, "current.nextSolstice");
-    setFullTime(r, "current.moonrise");
-    setFullTime(r, "current.moonTransit");
-    setFullTime(r, "current.moonset");
-    setDeg(r, "current.moonAzimuth.raw");
-    setDeg(r, "current.moonAltitude.raw");
-    setDeg(r, "current.moonRightAscension.raw");
-    setDeg(r, "current.moonDeclination.raw");
-    setStr(r, "current.moonPhase");
-    if (r["current.moonFullness"] !== undefined) {
-      setHtml("current.moonFullness", r["current.moonFullness"] + " full");
+    setDeg(r, "almanac.sun.az");
+    setDeg(r, "almanac.sun.alt");
+    setDeg(r, "almanac.sun.ra");
+    setDeg(r, "almanac.sun.dec");
+    setFullTime(r, "almanac.next_equinox");
+    setFullTime(r, "almanac.next_solstice");
+    setFullTime(r, "almanac.moon.rise");
+    setFullTime(r, "almanac.moon.transit");
+    setFullTime(r, "almanac.moon.set");
+    setDeg(r, "almanac.moon.az");
+    setDeg(r, "almanac.moon.alt");
+    setDeg(r, "almanac.moon.ra");
+    setDeg(r, "almanac.moon.dec");
+    setStr(r, "almanac.moon_phase");
+    if (typeof r["almanac.moon.phase"] === 'number') {
+      setHtml("almanac.moon.phase", Math.round(r["almanac.moon.phase"]) + "% full");
     }
-    setFullTime(r, "current.nextNewMoon");
-    setFullTime(r, "current.nextFullMoon");
-    setDist(r, "current.earthMoonDistance");
-    setDist(r, "current.earthSunDistance");
-    setDist(r, "current.earthMercuryDistance");
-    setDist(r, "current.earthVenusDistance");
-    setDist(r, "current.earthMarsDistance");
-    setDist(r, "current.earthJupiterDistance");
-    setDist(r, "current.earthSaturnDistance");
-    setDist(r, "current.earthUranusDistance");
-    setDist(r, "current.earthNeptuneDistance");
-    setDist(r, "current.earthPlutoDistance");
-    // Light years; only present when the star catalog is enabled and the
-    // field is in the [LoopData] fields list.
-    var proximaLY = r["current.earthProximaCentauriDistance.raw"];
-    if (proximaLY !== undefined) {
-      setHtml("current.earthProximaCentauriDistance.raw", proximaLY.toFixed(2) + " light years");
+    setFullTime(r, "almanac.next_new_moon");
+    setFullTime(r, "almanac.next_full_moon");
+    setDist(r, "almanac.moon.earth_distance");
+    setDist(r, "almanac.sun.earth_distance");
+    setDist(r, "almanac.mercury.earth_distance");
+    setDist(r, "almanac.venus.earth_distance");
+    setDist(r, "almanac.mars.earth_distance");
+    setDist(r, "almanac.jupiter.earth_distance");
+    setDist(r, "almanac.saturn.earth_distance");
+    setDist(r, "almanac.uranus.earth_distance");
+    setDist(r, "almanac.neptune.earth_distance");
+    setDist(r, "almanac.pluto.earth_distance");
+    // Raw AU converted to light years; present when weewx-skyfield's star
+    // catalog is enabled and the field is in the [LoopData] fields list.
+    var proximaAU = r["almanac.proxima_centauri.earth_distance"];
+    if (typeof proximaAU === 'number') {
+      setHtml("almanac.proxima_centauri.earth_distance",
+              (proximaAU / 63241.077).toFixed(2) + " light years");
     }
   }
 
