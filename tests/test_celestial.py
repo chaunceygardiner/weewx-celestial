@@ -482,6 +482,36 @@ class TestSampleSkinRenders:
         assert html.count('Upgrade <a') == 3
         assert 'Install <a' not in html
 
+    def test_renders_skyfield_19_tags(self, wxskyfield_almanac):
+        """weewx-skyfield 1.9 added constellations and station-visible
+        eclipses; the skin uses them wherever it renders its own
+        presentation, at report time only (no loop fields).  Values are
+        pinned for Palo Alto at TIME_TS -- see weewx-skyfield's
+        TestConstellations/TestEclipses for the cross-checked sources."""
+        try:
+            wxskyfield_almanac.saturn.constellation
+        except Exception:
+            pytest.skip('the weewx-skyfield oracle predates 1.9')
+        html = self.render(wxskyfield_almanac)
+        # The countdown row gains a static next-eclipse chip via the
+        # combined tags: from Palo Alto the sooner eclipse is the
+        # 2026-03-03 total lunar (the 2025-09-07 total is not visible).
+        assert '<span class="k">lunar eclipse</span>' in html
+        assert 'Mar 3 2026' in html
+        # Sun and moon cards: constellation rows, and per-kind eclipse
+        # rows whose dates carry the year (an eclipse can be years out).
+        assert '>Gemini<' in html                  # the sun, just past the boundary
+        assert '>Aries<' in html                   # the moon
+        assert '03/03/2026' in html                # lunar eclipse row
+        assert '(total)' in html
+        assert '01/14/2029' in html                # solar eclipse row: the 2029 partial
+        assert '(partial)' in html
+        # Every planet chip names its constellation, statically, after the
+        # javascript-filled chipsub (renderPlanets targets the first).
+        assert 'in Pisces' in html                 # saturn
+        assert 'in Leo' in html                    # mars
+        assert html.count('<div class="chipsub mono">in ') == 8
+
     def test_no_hex_colors_in_cheetah_files(self):
         """Cheetah owns '#': hex color literals in the template or the
         javascript include would be eaten as directives/comments.  All
@@ -517,6 +547,10 @@ class TestSampleSkinRenders:
         assert self.cell(html, 'current.sunrise.raw') == ''
         assert self.cell(html, 'current.earthProximaCentauriDistance.raw') == ''
         assert 'Proxima Centauri' in html
+        # The 1.9-tag cells (eclipses, constellations) are omitted
+        # entirely, not rendered empty.
+        assert 'eclipse' not in html.lower()
+        assert 'Constellation' not in html
         # Without weewx-skyfield the sky-chart panels invite installing it.
         assert html.count('class="skyhint"') == 7
         assert 'https://github.com/chaunceygardiner/weewx-skyfield' in html

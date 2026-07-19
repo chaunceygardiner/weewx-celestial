@@ -5,6 +5,7 @@
 ## See LICENSE for your rights.
 #errorCatcher Echo
 #encoding UTF-8
+#import datetime
 #import time
 <!DOCTYPE html>
 <html lang="en">
@@ -30,7 +31,9 @@
     ## every loop record).  Without an extended almanac, the cells are left
     ## empty and the javascript fills them, as in 2.x.  The moon disc, the
     ## countdown chips, the day strip and the planet chips are javascript-
-    ## only: they populate on the first loop-data fetch.
+    ## only: they populate on the first loop-data fetch.  Exceptions: the
+    ## eclipse chip and the constellation lines/rows are report-time only
+    ## (weewx-skyfield 1.9 tags with no loop-data counterpart).
     #set $extras = $almanac.hasExtras
     #set $time_hms = "%I:%M:%S %p"
     #set $time_full = "%m/%d/%Y %I:%M:%S %p"
@@ -87,6 +90,65 @@
     #pass
     #end try
     #end if
+    ## Constellations and eclipses (almanac tags added in weewx-skyfield
+    ## 1.9).  Both are day-scale facts with no loop-data counterpart, so
+    ## they render at report generation time only; every use is guarded,
+    ## and an almanac without the tags simply omits each cell.
+    #set $sun_constellation = ''
+    #set $moon_constellation = ''
+    #set $constellations = {}
+    #set $eclipse_chip_html = ''
+    #set $solar_eclipse_html = ''
+    #set $lunar_eclipse_html = ''
+    #if $extras
+    #try
+    #set $sun_constellation = str($almanac.sun.constellation)
+    #except
+    #pass
+    #end try
+    #try
+    #set $moon_constellation = str($almanac.moon.constellation)
+    #except
+    #pass
+    #end try
+    #for $planet_name in ('mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto')
+    #try
+    #silent $constellations.update({$planet_name: str(getattr($almanac, $planet_name).constellation)})
+    #except
+    #pass
+    #end try
+    #end for
+    ## The next eclipse visible from this station, whichever kind comes
+    ## sooner -- always the combined next_eclipse tags, never re-selected
+    ## here.  An eclipse can be years out, so the chip's date carries the
+    ## year and the countdown counts calendar days.
+    #try
+    #set $eclipse_ts = $almanac.next_eclipse.raw
+    #set $eclipse_days = max(0, (datetime.date.fromtimestamp($eclipse_ts) - datetime.date.fromtimestamp($current.dateTime.raw)).days)
+    #if $eclipse_days == 0
+    #set $eclipse_when = 'today'
+    #elif $eclipse_days == 1
+    #set $eclipse_when = 'in 1 day'
+    #else
+    #set $eclipse_when = 'in %d days' % $eclipse_days
+    #end if
+    #set $eclipse_chip_html = '<span class="k">%s eclipse</span><span class="v mono">%s</span><span class="d">%s &middot; %s</span>' % (str($almanac.next_eclipse_kind), time.strftime('%b %-d %Y', time.localtime($eclipse_ts)), str($almanac.next_eclipse_type), $eclipse_when)
+    #except
+    #pass
+    #end try
+    ## Per-kind rows for the sun and moon cards (the type shown is the
+    ## type as seen from this station).
+    #try
+    #set $solar_eclipse_html = '%s (%s)' % ($almanac.next_solar_eclipse.format($time_full), str($almanac.next_solar_eclipse_type))
+    #except
+    #pass
+    #end try
+    #try
+    #set $lunar_eclipse_html = '%s (%s)' % ($almanac.next_lunar_eclipse.format($time_full), str($almanac.next_lunar_eclipse_type))
+    #except
+    #pass
+    #end try
+    #end if
     ## Station coordinates: hemisphere-lettered for the header, and the
     ## latitude also feeds the javascript moon disc (lit-side flip).
     #set $lat_f = $station.stn_info.latitude_f
@@ -113,6 +175,13 @@
             <div class="count" id="count-newmoon"><span class="k">new moon</span><span class="v mono"></span><span class="d"></span></div>
             <div class="count" id="count-equinox"><span class="k">equinox</span><span class="v mono"></span><span class="d"></span></div>
             <div class="count" id="count-solstice"><span class="k">solstice</span><span class="v mono"></span><span class="d"></span></div>
+            ## Unlike the four chips above, the eclipse chip is report-time
+            ## static (no loop field; no id, so renderCountdowns never
+            ## touches it) and appears only when the almanac serves the
+            ## weewx-skyfield 1.9 eclipse tags.
+            #if $eclipse_chip_html
+            <div class="count">$eclipse_chip_html</div>
+            #end if
           </div>
         </div>
         <div class="moonbox">
@@ -135,15 +204,20 @@
       #set $sky_17 = hasattr($sky_page, 'sunpath_svg') and hasattr($sky_page, 'daylength_svg') and hasattr($sky_page, 'lunation_svg')
       <section id="planets-card">
         <p class="eyebrow">Planets &middot; now</p>
+        ## The chipline and first chipsub of each chip are javascript-filled
+        ## from loop data.  The constellation line is report-time static
+        ## (weewx-skyfield 1.9 tag; constellations change over weeks) and
+        ## must stay AFTER the javascript-filled chipsub -- renderPlanets
+        ## targets the chip's first '.chipsub'.
         <div class="chips" id="planet-chips">
-          <div class="chip" id="planet-mercury"><span class="dot dot-mercury"></span><div><div class="chipname">Mercury</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-venus"><span class="dot dot-venus"></span><div><div class="chipname">Venus</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-mars"><span class="dot dot-mars"></span><div><div class="chipname">Mars</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-jupiter"><span class="dot dot-jupiter"></span><div><div class="chipname">Jupiter</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-saturn"><span class="dot dot-saturn"></span><div><div class="chipname">Saturn</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-uranus"><span class="dot dot-uranus"></span><div><div class="chipname">Uranus</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-neptune"><span class="dot dot-neptune"></span><div><div class="chipname">Neptune</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
-          <div class="chip" id="planet-pluto"><span class="dot dot-pluto"></span><div><div class="chipname">Pluto</div><div class="chipline mono"></div><div class="chipsub mono"></div></div></div>
+          <div class="chip" id="planet-mercury"><span class="dot dot-mercury"></span><div><div class="chipname">Mercury</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('mercury')#<div class="chipsub mono">in $constellations.mercury</div>#end if#</div></div>
+          <div class="chip" id="planet-venus"><span class="dot dot-venus"></span><div><div class="chipname">Venus</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('venus')#<div class="chipsub mono">in $constellations.venus</div>#end if#</div></div>
+          <div class="chip" id="planet-mars"><span class="dot dot-mars"></span><div><div class="chipname">Mars</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('mars')#<div class="chipsub mono">in $constellations.mars</div>#end if#</div></div>
+          <div class="chip" id="planet-jupiter"><span class="dot dot-jupiter"></span><div><div class="chipname">Jupiter</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('jupiter')#<div class="chipsub mono">in $constellations.jupiter</div>#end if#</div></div>
+          <div class="chip" id="planet-saturn"><span class="dot dot-saturn"></span><div><div class="chipname">Saturn</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('saturn')#<div class="chipsub mono">in $constellations.saturn</div>#end if#</div></div>
+          <div class="chip" id="planet-uranus"><span class="dot dot-uranus"></span><div><div class="chipname">Uranus</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('uranus')#<div class="chipsub mono">in $constellations.uranus</div>#end if#</div></div>
+          <div class="chip" id="planet-neptune"><span class="dot dot-neptune"></span><div><div class="chipname">Neptune</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('neptune')#<div class="chipsub mono">in $constellations.neptune</div>#end if#</div></div>
+          <div class="chip" id="planet-pluto"><span class="dot dot-pluto"></span><div><div class="chipname">Pluto</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('pluto')#<div class="chipsub mono">in $constellations.pluto</div>#end if#</div></div>
         </div>
       </section>
 
@@ -312,6 +386,14 @@
             <td class="label">Declination</td>
             <td class="data" id="current.sunDeclination.raw">#if $extras#$(("%.1f&deg;" % $almanac.sun.dec))#end if#</td>
           </tr>
+          ## Report-time only (weewx-skyfield 1.9); the row is omitted, not
+          ## left empty, when the almanac does not serve the tag.
+          #if $sun_constellation
+          <tr>
+            <td class="label">Constellation</td>
+            <td class="data">$sun_constellation</td>
+          </tr>
+          #end if
           #if $extras and $almanac.next_equinox.raw < $almanac.next_solstice.raw
             ## The equinox is before the solstice. Display them in order.
             <tr>
@@ -333,6 +415,14 @@
               <td class="label">Equinox</td>
               <td class="data" id="current.nextEquinox">#if $extras#$($almanac.next_equinox.format($time_full))#end if#</td>
             </tr>
+          #end if
+          ## The next solar eclipse VISIBLE from this station, with the
+          ## type as locally seen (weewx-skyfield 1.9; report-time only).
+          #if $solar_eclipse_html
+          <tr>
+            <td class="label">Solar eclipse</td>
+            <td class="data">$solar_eclipse_html</td>
+          </tr>
           #end if
           <tr>
             <td class="label">Total daylight</td>
@@ -386,6 +476,14 @@
             <td class="label">Declination</td>
             <td class="data" id="current.moonDeclination.raw">#if $extras#$(("%.1f&deg;" % $almanac.moon.dec))#end if#</td>
           </tr>
+          ## Report-time only (weewx-skyfield 1.9); the row is omitted, not
+          ## left empty, when the almanac does not serve the tag.
+          #if $moon_constellation
+          <tr>
+            <td class="label">Constellation</td>
+            <td class="data">$moon_constellation</td>
+          </tr>
+          #end if
           #if $extras and $almanac.next_full_moon.raw < $almanac.next_new_moon.raw
             <tr>
               <td class="label">Full moon</td>
@@ -404,6 +502,14 @@
               <td class="label">Full moon</td>
               <td class="data" id="current.nextFullMoon">#if $extras#$($almanac.next_full_moon.format($time_full))#end if#</td>
             </tr>
+          #end if
+          ## The next lunar eclipse VISIBLE from this station, with the
+          ## type as locally seen (weewx-skyfield 1.9; report-time only).
+          #if $lunar_eclipse_html
+          <tr>
+            <td class="label">Lunar eclipse</td>
+            <td class="data">$lunar_eclipse_html</td>
+          </tr>
           #end if
           </table>
         </section>

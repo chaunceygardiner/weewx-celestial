@@ -47,7 +47,7 @@ from weewx.engine import StdService
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '5.2'
+CELESTIAL_VERSION = '5.3'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(

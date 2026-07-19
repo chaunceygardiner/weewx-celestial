@@ -1,7 +1,20 @@
 weewx-celestial change history
 ------------------------------
 
-5.2 2026/07/12
+5.3 2026/07/18
+--------------
+- The sample report picks up the two almanac tag families weewx-skyfield
+  1.9 added, everywhere the page renders its own presentation: the
+  countdown row gains a next-eclipse chip (the nearest eclipse visible
+  from the station, lunar or solar, with the type as locally seen and a
+  day count); the sun and moon cards each gain a Constellation row and a
+  next solar/lunar eclipse row (dates carry the year -- an eclipse can be
+  years out); and every planets-now chip names the constellation its
+  planet currently stands in.  These are day-scale facts, so they render
+  at report generation time only -- no new loop fields -- and each new
+  cell is omitted entirely with an older weewx-skyfield (or none at all);
+  the rest of the page is unchanged.  The seven embedded sky-chart panels
+  are unaffected.  No [LoopData] fields changes; nothing to migrate.
 --------------
 - weewx can now shut down while celestial is computing.  WeeWX stops by
   raising an exception from its TERM signal handler, from inside whatever

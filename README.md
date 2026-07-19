@@ -39,7 +39,12 @@ weewx-skyfield too" below).  Without weewx-skyfield, each of those panels shows 
 hint and the rest of the page is unaffected.  Version 5.1 adds three more: the sun's path for
 today, the solar year, and the lunar month.  These need weewx-skyfield 1.7 or later — with an
 older weewx-skyfield the three new panels show a short upgrade hint while the original four
-keep drawing.
+keep drawing.  Version 5.3 uses the almanac tags weewx-skyfield 1.9 added: a countdown chip
+for the next eclipse visible from the station (lunar or solar, with the type as seen locally),
+next solar/lunar eclipse and constellation rows in the sun and moon cards, and each planets-now
+chip names the constellation its planet stands in.  These render at report generation time
+(they are day-scale facts — no new loop fields), and every one of those cells is simply
+omitted with an older weewx-skyfield.
 
 As of version 4.0, each observation is recomputed only as often as it can change: positions,
 distances and the moon's phase on every loop record (about 20 ms on a Raspberry Pi 5); rise/set,
@@ -71,6 +76,12 @@ configuration to coexist.  It completes the picture in two ways:
   year (sunrise, sunset and solar noon for every week of the year), and the lunar month
   (the current lunation as a strip of phase discs).  The last three need weewx-skyfield
   1.7 or later.
+- **Eclipses and constellations (weewx-skyfield 1.9 or later)**: the sample report shows a
+  countdown chip for the next eclipse visible from your station (lunar or solar, with the
+  type as seen from your location), next solar/lunar eclipse and constellation rows in the
+  sun and moon cards, and the constellation each planet currently stands in on its
+  planets-now chip.  These render at report generation time; with an older weewx-skyfield
+  each of those cells is simply omitted.
 - **Report tags computed with Skyfield** — weewx-celestial does not touch report generation;
   report tags such as `$almanac.sunrise` are served by whatever almanac WeeWX has.
   weewx-skyfield serves them from the same definitions as these loop fields, plus much more
@@ -205,7 +216,12 @@ id.  You can lift exactly the pieces you want into any WeeWX skin — this is ho
    ```
 
    The countdown chips exist for `count-fullmoon`, `count-newmoon`, `count-equinox` and
-   `count-solstice`; the planet chips for `planet-mercury` through `planet-pluto`.  Copy the
+   `count-solstice`; the planet chips for `planet-mercury` through `planet-pluto`.  (The
+   sample skin's eclipse chip and constellation lines are not live components: they are
+   `$almanac` tags rendered at report time, weewx-skyfield 1.9+ only — if you want them in
+   your own skin, copy the guarded Cheetah from `index.html.tmpl`, and keep any extra
+   `.chipsub` line *after* the javascript-filled one, which must stay the chip's first.)
+   Copy the
    markup from `skins/Celestial/index.html.tmpl` and the classes these components use from
    `skins/Celestial/celestial.css` (`moon-*`, `band-*`, `tick-*`, `nowline`, `gridlab`,
    `nowlab`, the `.count` and `.chip` families) — restyle them there freely.  Keep color
@@ -260,6 +276,15 @@ which the utility cannot see:
    through version 4.2).  On an older WeeWX, stay with
    [weewx-celestial 4.2](https://github.com/chaunceygardiner/weewx-celestial/releases) — or,
    better, upgrade WeeWX.  The installer refuses to install 5.0 on an unsupported WeeWX.
+
+1. As of version 5.3, the sample report shows eclipse and constellation cells — a
+   next-eclipse countdown chip, next solar/lunar eclipse and constellation rows in the sun
+   and moon cards, and each planet's constellation on its chip — computed at report
+   generation time from almanac tags added in
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) 1.9.  With an older
+   weewx-skyfield (or none) those cells are simply omitted and the rest of the page is
+   unchanged.  No `[LoopData]` fields changes are needed for this release; there is nothing
+   to migrate.
 
 1. As of version 5.1, the sample report includes three more sky-chart panels — the sun's
    path for today, the solar year, and the lunar month — which need
@@ -357,12 +382,12 @@ on WeeWX 4, stay with [weewx-celestial 4.2](https://github.com/chaunceygardiner/
    [weewx-loopdata GitHub repository](https://github.com/chaunceygardiner/weewx-loopdata).
 
 1. Recommended (not required): install the
-   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension, 1.7 or
+   [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) extension, 1.9 or
    later.  It draws the sample report's seven sky-chart panels (sky dome, rise-and-set
-   timeline, orrery, analemma, sun path, solar year, lunar month) and serves
-   Skyfield-computed report tags.  Without it, those panels show a short install hint,
-   report-time values fall back to WeeWX's built-in PyEphem almanac, and everything else
-   works.
+   timeline, orrery, analemma, sun path, solar year, lunar month), fills its eclipse and
+   constellation cells, and serves Skyfield-computed report tags.  Without it, those panels
+   show a short install hint, the eclipse/constellation cells are omitted, report-time
+   values fall back to WeeWX's built-in PyEphem almanac, and everything else works.
 
 1. Download the latest release, weewx-celestial.zip, from
 
