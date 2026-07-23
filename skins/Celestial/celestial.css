@@ -56,7 +56,7 @@ h1 .over{color:var(--brass)}
 
 /* Cards */
 section{background:var(--vault); border:1px solid var(--line); padding:20px 22px 16px}
-.eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass);
+.eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass); font-weight:400;
          font-size:.85rem; margin:0 0 4px}
 .caption{color:var(--muted); font-size:.85rem; margin:10px 0 0; max-width:68ch}
 /* The closing band: the tall sun card on the left; on the right the moon

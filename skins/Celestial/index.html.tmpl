@@ -204,7 +204,7 @@
       ## hint while the original four panels keep drawing.
       #set $sky_17 = hasattr($sky_page, 'sunpath_svg') and hasattr($sky_page, 'daylength_svg') and hasattr($sky_page, 'lunation_svg')
       <section id="planets-card">
-        <p class="eyebrow">Planets &middot; now</p>
+        <h2 class="eyebrow">Planets &middot; now</h2>
         ## The chipline and first chipsub of each chip are javascript-filled
         ## from loop data.  The constellation line is report-time static
         ## (weewx-skyfield 1.9 tag; constellations change over weeks) and
@@ -231,7 +231,7 @@
       <div class="skymain">
         <div class="skyprim">
         <section class="sec-dome">
-          <p class="eyebrow">The sky &middot; report time</p>
+          <h2 class="eyebrow">The sky &middot; report time</h2>
           #if $sky_page
           <figure class="skyfig">$sky_page.dome_svg($almanac)</figure>
           <p class="caption">Everything above the horizon at report time: the
@@ -246,7 +246,7 @@
           #end if
         </section>
         <section class="sec-daylength">
-          <p class="eyebrow">The solar year &middot; week by week</p>
+          <h2 class="eyebrow">The solar year &middot; week by week</h2>
           #if $sky_17
           <figure class="skyfig">$sky_page.daylength_svg($almanac)</figure>
           <p class="caption">Sunrise, sunset and solar noon (dashed) for every
@@ -265,7 +265,7 @@
           #end if
         </section>
         <section class="sec-lunation">
-          <p class="eyebrow">The lunar month &middot; new moon to new moon</p>
+          <h2 class="eyebrow">The lunar month &middot; new moon to new moon</h2>
           #if $sky_17
           <figure class="skyfig">$sky_page.lunation_svg($almanac)</figure>
           <p class="caption">The current lunation as a month of phase discs,
@@ -283,7 +283,7 @@
         </div>
         <div class="skyrail">
           <section class="sec-sunpath">
-            <p class="eyebrow">The sun's path &middot; today</p>
+            <h2 class="eyebrow">The sun's path &middot; today</h2>
             #if $sky_17
             <figure class="skyfig">$sky_page.sunpath_svg($almanac)</figure>
             <p class="caption">Today's sun, midnight to midnight, as altitude
@@ -303,7 +303,7 @@
             #end if
           </section>
           <section class="sec-orrery">
-            <p class="eyebrow">Solar system &middot; plan view</p>
+            <h2 class="eyebrow">Solar system &middot; plan view</h2>
             #if $sky_page
             <figure class="skyfig">$sky_page.orrery_svg($almanac)</figure>
             <p class="caption">From above the north ecliptic pole: the planets
@@ -316,7 +316,7 @@
             #end if
           </section>
           <section class="sec-analemma">
-            <p class="eyebrow">Analemma &middot; the year of the sun</p>
+            <h2 class="eyebrow">Analemma &middot; the year of the sun</h2>
             #if $sky_page
             <figure class="skyfig">$sky_page.analemma_svg($almanac)</figure>
             <p class="caption">Where the sun stands at clock noon, one point
@@ -333,7 +333,7 @@
 
       <div class="cards">
         <section>
-          <p class="eyebrow">Sun</p>
+          <h2 class="eyebrow">Sun</h2>
           <table class="celestial">
           <tr>
             <td class="label">Start astronomical twilight</td>
@@ -447,7 +447,7 @@
         <div class="cardsband">
         <div class="cardspair">
         <section>
-          <p class="eyebrow">Moon</p>
+          <h2 class="eyebrow">Moon</h2>
           <table class="celestial">
           <tr>
             <td class="label">Moonrise</td>
@@ -515,7 +515,7 @@
           </table>
         </section>
         <section>
-          <p class="eyebrow">Earth to heavenly bodies</p>
+          <h2 class="eyebrow">Earth to heavenly bodies</h2>
           <table class="celestial">
           <tr>
             <td class="label">Moon</td>
@@ -565,13 +565,13 @@
         </section>
         </div>
         <section id="day-strip-card">
-          <p class="eyebrow">Today &middot; light &amp; dark</p>
+          <h2 class="eyebrow">Today &middot; light &amp; dark</h2>
           <div id="day-strip"></div>
           <p class="caption">Twilight bands (USNO geometric definitions), sun and moon
           rise/set ticks, and the brass line is now.</p>
         </section>
         <section id="ribbons-card">
-          <p class="eyebrow">Rise &amp; set &middot; today</p>
+          <h2 class="eyebrow">Rise &amp; set &middot; today</h2>
           #if $sky_page
           <figure class="skyfig">$sky_page.ribbons_svg($almanac)</figure>
           <p class="caption">When each body is above the horizon, midnight to

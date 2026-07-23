@@ -1,6 +1,14 @@
 weewx-celestial change history
 ------------------------------
 
+6.0.1 2026/07/23
+----------------
+- Sample skin: the Celestial page's card titles (<p class="eyebrow">) are
+  now real <h2> headings, satisfying the current Nu Html Checker's rule
+  that every <section> carry a heading (h1 -> h2 cards, no level skips).
+  The .eyebrow rule gains font-weight:400 so the headings keep the exact
+  non-bold look; no visual change.
+
 6.0 2026/07/19
 --------------
 ACTION REQUIRED when upgrading: this release removes the loop-field
