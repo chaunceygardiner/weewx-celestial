@@ -1,12 +1,10 @@
-## Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
+## Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 ## This sample report is based on WeeWX's Seasons Report
 ## Copyright Tom Keffer and Matthew Wall.
 ## Distributed under the terms of the GNU Public License (GPLv3)
 ## See LICENSE for your rights.
 #errorCatcher Echo
 #encoding UTF-8
-#import datetime
-#import time
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -17,145 +15,54 @@
     #else
       <title>$station.location</title>
     #end if
-    <meta name="description" content="Up-to-date celestial data for $station.location.">
+    <meta name="description" content="The live sky over $station.location.">
     ## All styling lives in celestial.css: Cheetah owns '#', so hex colors
-    ## must never appear in this template or the javascript include.
-    <link rel="stylesheet" href="celestial.css">
+    ## must never appear in this template or the javascript include.  The
+    ## skin version tags the URL so browsers refetch the stylesheet after
+    ## an upgrade (CopyGenerator re-copies copy_once files on every report
+    ## first-run, but a browser would happily keep serving its cached copy
+    ## of an unversioned URL).
+    #set $css_href = 'celestial.css'
+    #if $Extras.has_key('version')
+    #set $css_href = 'celestial.css?v=' + str($Extras.version)
+    #end if
+    <link rel="stylesheet" href="$css_href">
   </head>
   <body>
     #include "realtime_updater.inc"
-    ## All values are also computed at report generation time with whatever
-    ## capable almanac is installed -- the weewx-skyfield extension for full
-    ## fidelity, or WeeWX's built-in PyEphem almanac (formatted to match the
-    ## javascript above, which then keeps them updated from loop data on
-    ## every loop record).  Without an extended almanac, the cells are left
-    ## empty and the javascript fills them, as in 2.x.  The moon disc, the
-    ## countdown chips, the day strip and the planet chips are javascript-
-    ## only: they populate on the first loop-data fetch.  Exceptions: the
-    ## eclipse chip and the constellation lines/rows are report-time only
-    ## (weewx-skyfield 1.9 tags with no loop-data counterpart).
+    ## The page is one live panel: the Geocentric.  The roster's distance,
+    ## AU and altitude cells are dual-source -- first-painted here from
+    ## whatever capable report almanac is installed (weewx-skyfield for
+    ## full fidelity including Proxima Centauri, or PyEphem), then kept
+    ## live from loop data by the javascript above.  The dial, the trails
+    ## and the rate readouts are javascript-only: the dial draws on the
+    ## first loop-data fetch, and the rates and trails need two loop
+    ## packets to derive motion.  Without an extended almanac the roster
+    ## first-paints empty and the javascript fills it, as always.
     #set $extras = $almanac.hasExtras
-    #set $time_hms = "%I:%M:%S %p"
-    #set $time_full = "%m/%d/%Y %I:%M:%S %p"
-    ## Earth-to-body distances are in astronomical units; convert to the
+    ## Earth-to-body distances are raw astronomical units; convert to the
     ## report's distance unit.
     #set $distance_label = str($unit.label.windrun)
     ## Kilometers/miles per IAU astronomical unit; a test ties these to the
     ## javascript include's copies.  (windrun stands in for group_distance --
-    ## this extension no longer registers distance observation types.)
+    ## this extension registers no observation types.)
     #if $unit.unit_type.windrun == 'km'
       #set $per_au = 1.4959787e8    ## kilometers per astronomical unit
     #else
       #set $per_au = 9.2955807e7    ## miles per astronomical unit
     #end if
-    ## Anchor tomorrow/yesterday at local noon plus/minus one day: a flat
-    ## 86400 seconds from "now" can land on the wrong calendar day across
-    ## DST transitions (rise/set are computed for the day containing the
-    ## almanac time, and noon +/- 24h is always inside the right day).
-    #set $noon_today = time.mktime(time.localtime($current.dateTime.raw)[0:3] + (12, 0, 0, 0, 0, -1))
-    #set $tomorrow = $almanac(almanac_time=$noon_today + 86400)
-    #set $yesterday = $almanac(almanac_time=$noon_today - 86400)
-    ## Total daylight, and its change since yesterday (same arithmetic as the
-    ## javascript's daylightString).  $almanac.sun.visible needs WeeWX 5.2;
-    ## on older WeeWX the cell is left for the javascript.
-    #set $daylight_html = ''
-    #if $extras
-    #try
-    #set $today_secs = $almanac.sun.visible.raw
-    #set $yesterday_secs = $yesterday.sun.visible.raw
-    #set $dl_hours = int($today_secs // 3600)
-    #set $dl_minutes = int(($today_secs % 3600) // 60)
-    #set $dl_seconds = int(round($today_secs % 60))
-    #set $dl_delta = abs(int(round($yesterday_secs - $today_secs)))
-    #set $dl_delta_minutes = int(($dl_delta % 3600) // 60)
-    #set $dl_delta_seconds = int($dl_delta % 60)
-    #if $today_secs < $yesterday_secs
-      #set $dl_more_less = 'less'
-    #elif $today_secs > $yesterday_secs
-      #set $dl_more_less = 'more'
-    #else
-      #set $dl_more_less = 'same'
-    #end if
-    #set $daylight_html = "%d hours, %d minutes, %d seconds<br>%d minutes, %d seconds %s than yesterday" % ($dl_hours, $dl_minutes, $dl_seconds, $dl_delta_minutes, $dl_delta_seconds, $dl_more_less)
-    #except
-    #pass
-    #end try
-    #end if
-    ## Distance to Proxima Centauri, in light years (needs the star catalog,
-    ## i.e., stars = true; the cell is left for the javascript otherwise).
-    #set $proxima_html = ''
-    #if $extras
-    #try
-    #set $proxima_html = "%.2f light years" % ($almanac.proxima_centauri.earth_distance / 63241.077)
-    #except
-    #pass
-    #end try
-    #end if
-    ## Constellations and eclipses (almanac tags added in weewx-skyfield
-    ## 1.9).  Both are day-scale facts with no loop-data counterpart, so
-    ## they render at report generation time only; every use is guarded,
-    ## and an almanac without the tags simply omits each cell.
-    #set $sun_constellation = ''
-    #set $moon_constellation = ''
-    #set $constellations = {}
-    #set $eclipse_chip_html = ''
-    #set $solar_eclipse_html = ''
-    #set $lunar_eclipse_html = ''
-    #if $extras
-    #try
-    #set $sun_constellation = str($almanac.sun.constellation)
-    #except
-    #pass
-    #end try
-    #try
-    #set $moon_constellation = str($almanac.moon.constellation)
-    #except
-    #pass
-    #end try
-    #for $planet_name in ('mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto')
-    #try
-    #silent $constellations.update({$planet_name: str(getattr($almanac, $planet_name).constellation)})
-    #except
-    #pass
-    #end try
-    #end for
-    ## The next eclipse visible from this station, whichever kind comes
-    ## sooner -- always the combined next_eclipse tags, never re-selected
-    ## here.  An eclipse can be years out, so the chip's date carries the
-    ## year and the countdown counts calendar days.
-    #try
-    #set $eclipse_ts = $almanac.next_eclipse.raw
-    #set $eclipse_days = max(0, (datetime.date.fromtimestamp($eclipse_ts) - datetime.date.fromtimestamp($current.dateTime.raw)).days)
-    #if $eclipse_days == 0
-    #set $eclipse_when = 'today'
-    #elif $eclipse_days == 1
-    #set $eclipse_when = 'in 1 day'
-    #else
-    #set $eclipse_when = 'in %d days' % $eclipse_days
-    #end if
-    #set $eclipse_chip_html = '<span class="k">%s eclipse</span><span class="v mono">%s</span><span class="d">%s &middot; %s</span>' % (str($almanac.next_eclipse_kind), time.strftime('%b %-d %Y', time.localtime($eclipse_ts)), str($almanac.next_eclipse_type), $eclipse_when)
-    #except
-    #pass
-    #end try
-    ## Per-kind rows for the sun and moon cards (the type shown is the
-    ## type as seen from this station).
-    #try
-    #set $solar_eclipse_html = '%s (%s)' % ($almanac.next_solar_eclipse.format($time_full), str($almanac.next_solar_eclipse_type))
-    #except
-    #pass
-    #end try
-    #try
-    #set $lunar_eclipse_html = '%s (%s)' % ($almanac.next_lunar_eclipse.format($time_full), str($almanac.next_lunar_eclipse_type))
-    #except
-    #pass
-    #end try
-    #end if
-    ## Station coordinates: hemisphere-lettered for the header, and the
+    ## Station coordinates, hemisphere-lettered for the header; the
     ## latitude also feeds the javascript moon disc (lit-side flip).
     #set $lat_f = $station.stn_info.latitude_f
     #set $lon_f = $station.stn_info.longitude_f
     #set $lat_letter = 'N' if $lat_f >= 0 else 'S'
     #set $lon_letter = 'E' if $lon_f >= 0 else 'W'
+    ## The roster bodies, nearest-tier first: moon and sun, the planets in
+    ## orbital order, Proxima Centauri last.  Every cell of every row is
+    ## individually guarded: an almanac that cannot serve one body (PyEphem
+    ## has no Proxima; the built-in almanac has no extras at all) leaves
+    ## that row's cells empty for the javascript, never breaks the page.
+    #set $geo_bodies = ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri')
     <div class="page">
       <header>
         <div>
@@ -171,423 +78,73 @@
             &middot; <span id="live-clock"></span>
             &middot; updated <span id="last-update"></span> <span id="live-label"></span>
           </div>
-          <div class="countdown" id="countdowns">
-            <div class="count" id="count-fullmoon"><span class="k">full moon</span><span class="v mono"></span><span class="d"></span></div>
-            <div class="count" id="count-newmoon"><span class="k">new moon</span><span class="v mono"></span><span class="d"></span></div>
-            <div class="count" id="count-equinox"><span class="k">equinox</span><span class="v mono"></span><span class="d"></span></div>
-            <div class="count" id="count-solstice"><span class="k">solstice</span><span class="v mono"></span><span class="d"></span></div>
-            ## Unlike the four chips above, the eclipse chip is report-time
-            ## static (no loop field; no id, so renderCountdowns never
-            ## touches it) and appears only when the almanac serves the
-            ## weewx-skyfield 1.9 eclipse tags.
-            #if $eclipse_chip_html
-            <div class="count">$eclipse_chip_html</div>
-            #end if
-          </div>
-        </div>
-        <div class="moonbox">
-          <div class="mlabel">
-            <div class="mname"><span id="almanac.moon_phase">#if $extras#$($almanac.moon_phase)#end if#</span></div>
-            <div class="mpct mono"><span id="almanac.moon.phase">#if $extras#$(('%s%% full' % $almanac.moon_fullness))#end if#</span></div>
-          </div>
-          <div id="moon-disc"></div>
         </div>
       </header>
 
-      ## The seven sky-chart panels below are drawn by the weewx-skyfield
-      ## extension ($sky_page comes from the CelestialSkyPage search-list
-      ## shim; None when weewx-skyfield is not installed, and then each
-      ## panel shows an install hint instead).  Unlike the javascript-live
-      ## components, they are redrawn at report generation time.  The sun
-      ## path, solar year and lunar month panels need weewx-skyfield 1.7;
-      ## with an older weewx-skyfield ($sky_17 false) they show an upgrade
-      ## hint while the original four panels keep drawing.
-      #set $sky_17 = hasattr($sky_page, 'sunpath_svg') and hasattr($sky_page, 'daylength_svg') and hasattr($sky_page, 'lunation_svg')
-      <section id="planets-card">
-        <h2 class="eyebrow">Planets &middot; now</h2>
-        ## The chipline and first chipsub of each chip are javascript-filled
-        ## from loop data.  The constellation line is report-time static
-        ## (weewx-skyfield 1.9 tag; constellations change over weeks) and
-        ## must stay AFTER the javascript-filled chipsub -- renderPlanets
-        ## targets the chip's first '.chipsub'.
-        <div class="chips" id="planet-chips">
-          <div class="chip" id="planet-mercury"><span class="dot dot-mercury"></span><div><div class="chipname">Mercury</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('mercury')#<div class="chipsub mono">in $constellations.mercury</div>#end if#</div></div>
-          <div class="chip" id="planet-venus"><span class="dot dot-venus"></span><div><div class="chipname">Venus</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('venus')#<div class="chipsub mono">in $constellations.venus</div>#end if#</div></div>
-          <div class="chip" id="planet-mars"><span class="dot dot-mars"></span><div><div class="chipname">Mars</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('mars')#<div class="chipsub mono">in $constellations.mars</div>#end if#</div></div>
-          <div class="chip" id="planet-jupiter"><span class="dot dot-jupiter"></span><div><div class="chipname">Jupiter</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('jupiter')#<div class="chipsub mono">in $constellations.jupiter</div>#end if#</div></div>
-          <div class="chip" id="planet-saturn"><span class="dot dot-saturn"></span><div><div class="chipname">Saturn</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('saturn')#<div class="chipsub mono">in $constellations.saturn</div>#end if#</div></div>
-          <div class="chip" id="planet-uranus"><span class="dot dot-uranus"></span><div><div class="chipname">Uranus</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('uranus')#<div class="chipsub mono">in $constellations.uranus</div>#end if#</div></div>
-          <div class="chip" id="planet-neptune"><span class="dot dot-neptune"></span><div><div class="chipname">Neptune</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('neptune')#<div class="chipsub mono">in $constellations.neptune</div>#end if#</div></div>
-          <div class="chip" id="planet-pluto"><span class="dot dot-pluto"></span><div><div class="chipname">Pluto</div><div class="chipline mono"></div><div class="chipsub mono"></div>#if $constellations.get('pluto')#<div class="chipsub mono">in $constellations.pluto</div>#end if#</div></div>
+      <section>
+        <h2 class="eyebrow">The geocentric &middot; live</h2>
+        #if not $extras
+        <p class="skyhint">Install
+        <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
+        (strongly recommended, and required for Proxima Centauri) or PyEphem
+        so the almanac can serve this panel's positions and distances.</p>
+        #end if
+        <div class="geo-body">
+          <div>
+            <svg id="dial" viewBox="0 0 660 660" role="img"
+                 aria-label="Geocentric chart: bodies placed by compass azimuth and log distance from Earth"></svg>
+            <p class="caption dialcaption">plan view &mdash; compass bearing, east to the
+            right &middot; rings step &times;10 in distance &middot;
+            solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below &middot;
+            trails show the last hour of motion</p>
+          </div>
+          <div class="roster mono">
+            #for $body_name in $geo_bodies
+            #set $display_name = 'proxima' if $body_name == 'proxima_centauri' else $body_name
+            #set $dist_html = ''
+            #set $au_html = ''
+            #set $alt_html = ''
+            #set $below_cls = ''
+            #if $extras
+            #try
+            #set $body_obj = getattr($almanac, $body_name)
+            #set $au_val = $body_obj.earth_distance
+            #set $alt_val = $body_obj.alt
+            #set $dist_html = "{:,.0f}".format($au_val * $per_au)
+            #set $au_html = ("%.1f au" % $au_val) if $au_val >= 1000 else ("%.6f au" % $au_val)
+            #set $alt_html = 'below horizon' if $alt_val < 0 else ("alt %.1f&deg;" % $alt_val)
+            #set $below_cls = ' below' if $alt_val < 0 else ''
+            #except
+            #pass
+            #end try
+            #end if
+            <div class="row$below_cls" id="geo-row-$body_name">
+              <span class="bname"><span class="chip chip-$body_name"></span>$display_name</span>
+              <span class="odo"><span id="almanac.${body_name}.earth_distance">$dist_html</span><span class="unit">$distance_label</span></span>
+              <span class="rsub"><span id="geo-rate-$body_name"></span><span id="geo-au-$body_name">$au_html</span><span id="geo-alt-$body_name">$alt_html</span></span>
+            </div>
+            #end for
+          </div>
         </div>
       </section>
 
-      ## Two columns, balanced like weewx-skyfield's own Sky page: the wide
-      ## panels (dome, solar year, lunar month) fill the left column while
-      ## the square panels (sun path, orrery, analemma) fill the rail, so
-      ## the columns come out nearly the same height.  Below the breakpoint
-      ## celestial.css dissolves both columns (display:contents) and
-      ## reorders the six sections into one sensible column.
-      <div class="skymain">
-        <div class="skyprim">
-        <section class="sec-dome">
-          <h2 class="eyebrow">The sky &middot; report time</h2>
-          #if $sky_page
-          <figure class="skyfig">$sky_page.dome_svg($almanac)</figure>
-          <p class="caption">Everything above the horizon at report time: the
-          sun, the moon at its true phase, the planets, and the brightest
-          named stars sized by magnitude (dimmed while the sun is up).
-          North at top, east at left, as sky charts are drawn.  Hover any
-          mark for altitude, azimuth and magnitude.</p>
-          #else
-          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-          to chart the current sky here: sun, true-phase moon, planets and
-          the brightest named stars.</p>
-          #end if
-        </section>
-        <section class="sec-daylength">
-          <h2 class="eyebrow">The solar year &middot; week by week</h2>
-          #if $sky_17
-          <figure class="skyfig">$sky_page.daylength_svg($almanac)</figure>
-          <p class="caption">Sunrise, sunset and solar noon (dashed) for every
-          week of the year, over the civil, nautical and astronomical twilight
-          bands; the brass line is today.  Times are local clock time, so the
-          daylight-saving steps in spring and fall are real, and the dashed
-          noon curve carries the equation of time.</p>
-          #elif $sky_page
-          <p class="skyhint">Upgrade <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-          to 1.7 or later to chart sunrise, sunset and solar noon for every
-          week of the year here.</p>
-          #else
-          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-          to chart sunrise, sunset and solar noon for every week of the year
-          here.</p>
-          #end if
-        </section>
-        <section class="sec-lunation">
-          <h2 class="eyebrow">The lunar month &middot; new moon to new moon</h2>
-          #if $sky_17
-          <figure class="skyfig">$sky_page.lunation_svg($almanac)</figure>
-          <p class="caption">The current lunation as a month of phase discs,
-          the principal phases dated and today's disc ringed in brass.  Hover
-          a disc for its date and illumination.</p>
-          #elif $sky_page
-          <p class="skyhint">Upgrade <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-          to 1.7 or later to draw the current lunation here as a month of
-          moon-phase discs.</p>
-          #else
-          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-          to draw the current lunation here as a month of moon-phase discs.</p>
-          #end if
-        </section>
-        </div>
-        <div class="skyrail">
-          <section class="sec-sunpath">
-            <h2 class="eyebrow">The sun's path &middot; today</h2>
-            #if $sky_17
-            <figure class="skyfig">$sky_page.sunpath_svg($almanac)</figure>
-            <p class="caption">Today's sun, midnight to midnight, as altitude
-            against azimuth, with a dot every hour.  The dashed curve is the
-            moon's path, drawn at its true phase; the bands below the horizon
-            line are twilight depth.  The azimuth axis is the fixed full
-            compass, so the arc's seasonal swing between the solstices reads
-            at a glance.</p>
-            #elif $sky_page
-            <p class="skyhint">Upgrade <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-            to 1.7 or later to draw the sun's altitude-and-azimuth arc for
-            today here, with the moon's path dashed alongside.</p>
-            #else
-            <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-            to draw the sun's altitude-and-azimuth arc for today here, with
-            the moon's path dashed alongside.</p>
-            #end if
-          </section>
-          <section class="sec-orrery">
-            <h2 class="eyebrow">Solar system &middot; plan view</h2>
-            #if $sky_page
-            <figure class="skyfig">$sky_page.orrery_svg($almanac)</figure>
-            <p class="caption">From above the north ecliptic pole: the planets
-            at their true heliocentric longitudes today, on logarithmically
-            spaced orbits.  The dashed ray points to the vernal equinox.</p>
-            #else
-            <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-            to draw the solar system from above, planets at their true
-            positions.</p>
-            #end if
-          </section>
-          <section class="sec-analemma">
-            <h2 class="eyebrow">Analemma &middot; the year of the sun</h2>
-            #if $sky_page
-            <figure class="skyfig">$sky_page.analemma_svg($almanac)</figure>
-            <p class="caption">Where the sun stands at clock noon, one point
-            per week for the whole year: the figure eight of the equation of
-            time.  The brass point is this week.</p>
-            #else
-            <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-            to draw the analemma, the figure eight the noon sun traces over a
-            year.</p>
-            #end if
-          </section>
-        </div>
-      </div>
-
-      <div class="cards">
-        <section>
-          <h2 class="eyebrow">Sun</h2>
-          <table class="celestial">
-          <tr>
-            <td class="label">Start astronomical twilight</td>
-            <td class="data" id="almanac(horizon=-18).sun(use_center=1).rise.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).rise.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Start nautical twilight</td>
-            <td class="data" id="almanac(horizon=-12).sun(use_center=1).rise.raw">#if $extras#$($almanac(horizon=-12).sun(use_center=1).rise.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Start civil twilight</td>
-            <td class="data" id="almanac(horizon=-6).sun(use_center=1).rise.raw">#if $extras#$($almanac(horizon=-6).sun(use_center=1).rise.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Sunrise</td>
-            <td class="data" id="almanac.sunrise.raw">#if $extras#$($almanac.sunrise.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Transit</td>
-            <td class="data" id="almanac.sun.transit.raw">#if $extras#$($almanac.sun.transit.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Sunset</td>
-            <td class="data" id="almanac.sunset.raw">#if $extras#$($almanac.sunset.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">End civil twilight</td>
-            <td class="data" id="almanac(horizon=-6).sun(use_center=1).set.raw">#if $extras#$($almanac(horizon=-6).sun(use_center=1).set.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">End nautical twilight</td>
-            <td class="data" id="almanac(horizon=-12).sun(use_center=1).set.raw">#if $extras#$($almanac(horizon=-12).sun(use_center=1).set.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">End astronomical twilight</td>
-            <td class="data" id="almanac(horizon=-18).sun(use_center=1).set.raw">#if $extras#$($almanac(horizon=-18).sun(use_center=1).set.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Azimuth</td>
-            <td class="data" id="almanac.sun.az">#if $extras#$(("%.1f&deg;" % $almanac.sun.az))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Altitude</td>
-            <td class="data" id="almanac.sun.alt">#if $extras#$(("%.1f&deg;" % $almanac.sun.alt))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Right ascension</td>
-            <td class="data" id="almanac.sun.ra">#if $extras#$(("%.1f&deg;" % $almanac.sun.ra))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Declination</td>
-            <td class="data" id="almanac.sun.dec">#if $extras#$(("%.1f&deg;" % $almanac.sun.dec))#end if#</td>
-          </tr>
-          ## Report-time only (weewx-skyfield 1.9); the row is omitted, not
-          ## left empty, when the almanac does not serve the tag.
-          #if $sun_constellation
-          <tr>
-            <td class="label">Constellation</td>
-            <td class="data">$sun_constellation</td>
-          </tr>
-          #end if
-          #if $extras and $almanac.next_equinox.raw < $almanac.next_solstice.raw
-            ## The equinox is before the solstice. Display them in order.
-            <tr>
-              <td class="label">Equinox</td>
-              <td class="data" id="almanac.next_equinox">$almanac.next_equinox.format($time_full)</td>
-            </tr>
-            <tr>
-              <td class="label">Solstice</td>
-              <td class="data" id="almanac.next_solstice">$almanac.next_solstice.format($time_full)</td>
-            </tr>
-          #else
-            ## The solstice is before the equinox (or there is no extended
-            ## almanac and the javascript will fill the cells in).
-            <tr>
-              <td class="label">Solstice</td>
-              <td class="data" id="almanac.next_solstice">#if $extras#$($almanac.next_solstice.format($time_full))#end if#</td>
-            </tr>
-            <tr>
-              <td class="label">Equinox</td>
-              <td class="data" id="almanac.next_equinox">#if $extras#$($almanac.next_equinox.format($time_full))#end if#</td>
-            </tr>
-          #end if
-          ## The next solar eclipse VISIBLE from this station, with the
-          ## type as locally seen (weewx-skyfield 1.9; report-time only).
-          #if $solar_eclipse_html
-          <tr>
-            <td class="label">Solar eclipse</td>
-            <td class="data">$solar_eclipse_html</td>
-          </tr>
-          #end if
-          <tr>
-            <td class="label">Total daylight</td>
-            <td class="data" id="daylight">$daylight_html</td>
-          </tr>
-          <tr><th>Tomorrow</th><th></th></tr>
-          <tr>
-            <td class="label">Sunrise</td>
-            <td class="data" id="almanac(days=1).sunrise.raw">#if $extras#$($tomorrow.sunrise.format($time_hms))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Sunset</td>
-            <td class="data" id="almanac(days=1).sunset.raw">#if $extras#$($tomorrow.sunset.format($time_hms))#end if#</td>
-          </tr>
-          </table>
-        </section>
-        ## The right two-thirds of the cards band: the moon and distance
-        ## cards side by side, with the day strip and the rise/set timeline
-        ## tucked beneath them -- they fill the space beside the taller sun
-        ## card, so the band closes the page as one solid rectangle.
-        <div class="cardsband">
-        <div class="cardspair">
-        <section>
-          <h2 class="eyebrow">Moon</h2>
-          <table class="celestial">
-          <tr>
-            <td class="label">Moonrise</td>
-            <td class="data" id="almanac.moon.rise">#if $extras#$($almanac.moon.rise.format($time_full))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Transit</td>
-            <td class="data" id="almanac.moon.transit">#if $extras#$($almanac.moon.transit.format($time_full))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Moonset</td>
-            <td class="data" id="almanac.moon.set">#if $extras#$($almanac.moon.set.format($time_full))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Azimuth</td>
-            <td class="data" id="almanac.moon.az">#if $extras#$(("%.1f&deg;" % $almanac.moon.az))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Altitude</td>
-            <td class="data" id="almanac.moon.alt">#if $extras#$(("%.1f&deg;" % $almanac.moon.alt))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Right ascension</td>
-            <td class="data" id="almanac.moon.ra">#if $extras#$(("%.1f&deg;" % $almanac.moon.ra))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Declination</td>
-            <td class="data" id="almanac.moon.dec">#if $extras#$(("%.1f&deg;" % $almanac.moon.dec))#end if#</td>
-          </tr>
-          ## Report-time only (weewx-skyfield 1.9); the row is omitted, not
-          ## left empty, when the almanac does not serve the tag.
-          #if $moon_constellation
-          <tr>
-            <td class="label">Constellation</td>
-            <td class="data">$moon_constellation</td>
-          </tr>
-          #end if
-          #if $extras and $almanac.next_full_moon.raw < $almanac.next_new_moon.raw
-            <tr>
-              <td class="label">Full moon</td>
-              <td class="data" id="almanac.next_full_moon">$almanac.next_full_moon.format($time_full)</td>
-            </tr>
-            <tr>
-              <td class="label">New moon</td>
-              <td class="data" id="almanac.next_new_moon">$almanac.next_new_moon.format($time_full)</td>
-            </tr>
-          #else
-            <tr>
-              <td class="label">New moon</td>
-              <td class="data" id="almanac.next_new_moon">#if $extras#$($almanac.next_new_moon.format($time_full))#end if#</td>
-            </tr>
-            <tr>
-              <td class="label">Full moon</td>
-              <td class="data" id="almanac.next_full_moon">#if $extras#$($almanac.next_full_moon.format($time_full))#end if#</td>
-            </tr>
-          #end if
-          ## The next lunar eclipse VISIBLE from this station, with the
-          ## type as locally seen (weewx-skyfield 1.9; report-time only).
-          #if $lunar_eclipse_html
-          <tr>
-            <td class="label">Lunar eclipse</td>
-            <td class="data">$lunar_eclipse_html</td>
-          </tr>
-          #end if
-          </table>
-        </section>
-        <section>
-          <h2 class="eyebrow">Earth to heavenly bodies</h2>
-          <table class="celestial">
-          <tr>
-            <td class="label">Moon</td>
-            <td class="data" id="almanac.moon.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.moon.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Sun</td>
-            <td class="data" id="almanac.sun.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.sun.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Mercury</td>
-            <td class="data" id="almanac.mercury.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mercury.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Venus</td>
-            <td class="data" id="almanac.venus.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.venus.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Mars</td>
-            <td class="data" id="almanac.mars.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.mars.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Jupiter</td>
-            <td class="data" id="almanac.jupiter.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.jupiter.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Saturn</td>
-            <td class="data" id="almanac.saturn.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.saturn.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Uranus</td>
-            <td class="data" id="almanac.uranus.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.uranus.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Neptune</td>
-            <td class="data" id="almanac.neptune.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.neptune.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Pluto</td>
-            <td class="data" id="almanac.pluto.earth_distance" style="text-align:right">#if $extras#$(("{:,.1f}".format($almanac.pluto.earth_distance * $per_au) + $distance_label))#end if#</td>
-          </tr>
-          <tr>
-            <td class="label">Proxima Centauri</td>
-            <td class="data" id="almanac.proxima_centauri.earth_distance" style="text-align:right">$proxima_html</td>
-          </tr>
-          </table>
-        </section>
-        </div>
-        <section id="day-strip-card">
-          <h2 class="eyebrow">Today &middot; light &amp; dark</h2>
-          <div id="day-strip"></div>
-          <p class="caption">Twilight bands (USNO geometric definitions), sun and moon
-          rise/set ticks, and the brass line is now.</p>
-        </section>
-        <section id="ribbons-card">
-          <h2 class="eyebrow">Rise &amp; set &middot; today</h2>
-          #if $sky_page
-          <figure class="skyfig">$sky_page.ribbons_svg($almanac)</figure>
-          <p class="caption">When each body is above the horizon, midnight to
-          midnight over the twilight bands, with ivory transit ticks.  Hover a
-          bar for the visible duration.  Redrawn each report cycle, so the
-          "now" mark is the last report time.</p>
-          #else
-          <p class="skyhint">Install <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-          to draw the rise-and-set timeline of the sun, moon and planets here.</p>
-          #end if
-        </section>
-        </div>
-      </div>
-
       <footer>
-        Calculated with Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA) &middot; live via weewx-loopdata.
+        ## The credit must be true for whatever almanac actually serves the
+        ## page, probed by capability: Proxima Centauri needs weewx-skyfield
+        ## with its star catalog (the full credit); any other extended
+        ## almanac gets the generic credit; the built-in almanac serves no
+        ## live fields at all.
+        #set $footer_credit = "Calculated with WeeWX's built-in almanac"
+        #if $extras
+        #set $footer_credit = "Calculated with the station's extended almanac (weewx-skyfield or PyEphem)"
+        #try
+        #silent $almanac.proxima_centauri.earth_distance
+        #set $footer_credit = "Calculated with Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)"
+        #except
+        #pass
+        #end try
+        #end if
+        $footer_credit &middot; live via weewx-loopdata.
       </footer>
     </div>
   </body>

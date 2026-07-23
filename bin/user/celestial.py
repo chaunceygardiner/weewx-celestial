@@ -4,20 +4,21 @@ celestial.py
 Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 Distributed under the terms of the GNU Public License (GPLv3)
 
-weewx-celestial ships a live celestial report (the bundled Celestial skin)
-whose values are computed by weewx-loopdata 5.0 almanac fields and the
-weewx-skyfield report almanac.  This module provides the CelestialSkyPage
-search-list shim (which serves weewx-skyfield's $sky_page sky charts to the
-skin without making weewx-skyfield a hard dependency) and a command-line
-utility that migrates a pre-6.0 [LoopData] [[Include]] fields line to the
-almanac grammar.
+weewx-celestial ships a live celestial report (the bundled Celestial skin):
+a single Geocentric panel -- Earth at the center, every body placed by
+compass bearing and log distance, with odometer distance readouts that tick
+between loop refreshes -- whose values are weewx-loopdata 5.0 almanac
+fields evaluated against the registered almanac (weewx-skyfield strongly
+recommended).  This module provides the command-line utility that migrates
+a pre-6.0 [LoopData] [[Include]] fields line to the almanac grammar.
 
-Through 5.x this extension also ran a StdService that computed celestial
-observations with Skyfield and inserted them into every LOOP packet.  6.0
-removed it: weewx-loopdata 5.0 evaluates almanac fields (the report-tag
-grammar with the $ removed) directly against the registered almanac, so the
-loop packet no longer needs celestial fields at all.  Report tags
-(e.g. $almanac.sunrise) come from the weewx-skyfield extension.
+Through 5.x this extension ran a StdService that computed celestial
+observations with Skyfield and inserted them into every LOOP packet; 6.0
+removed it (weewx-loopdata 5.0 evaluates almanac fields -- the report-tag
+grammar with the $ removed -- directly against the registered almanac).
+6.x also embedded weewx-skyfield's $sky_page SVG panels via the
+CelestialSkyPage search-list shim; 7.0 removed the panels (they duplicate
+weewx-skyfield's own Sky page), the shim, and the 6.x service stub.
 """
 
 import logging
@@ -28,12 +29,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import weewx
 
-from weewx.engine import StdService
-
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '6.0'
+CELESTIAL_VERSION = '7.0'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -61,83 +60,6 @@ _weewx_version = parse_weewx_version(weewx.__version__)
 if _weewx_version is not None and _weewx_version < (5, 2):
     raise weewx.UnsupportedFeature(
         "weewx-celestial requires WeeWX 5.2 or later, found %s" % weewx.__version__)
-
-
-try:
-    from weewx.cheetahgenerator import SearchList
-except ImportError:  # pragma: no cover - Cheetah is a WeeWX dependency
-    class SearchList:  # type: ignore[no-redef]
-        """Stand-in so this module still imports without Cheetah."""
-        def __init__(self, generator: Any) -> None:
-            self.generator = generator
-
-
-class Celestial(StdService):
-    """Through 5.x, the loop-field service.  6.0 computes nothing -- this
-    stub exists so a weewx.conf that still lists user.celestial.Celestial
-    in data_services (a `weectl extension install` over the top of 5.x,
-    which overlays files but never reverses the old version's service
-    registration) starts cleanly instead of crashing weewxd with
-    AttributeError.  It binds no events and only logs how to finish the
-    cleanup.  Keep through 6.x; remove no earlier than 7.0."""
-
-    def __init__(self, engine: Any, config_dict: Any) -> None:
-        super().__init__(engine, config_dict)
-        log.warning('weewx-celestial %s no longer runs a service: celestial values '
-                    'now come from weewx-loopdata almanac fields.  Remove '
-                    'user.celestial.Celestial from data_services in '
-                    '[Engine] [[Services]] of weewx.conf to silence this message.'
-                    % CELESTIAL_VERSION)
-
-
-def _import_wxskyfield_sky() -> Any:
-    """The weewx-skyfield sky-page module.  In an installed WeeWX, bin/user
-    modules are importable only as the user package (user.wxskyfield_sky);
-    the test suite imports an oracle checkout top-level."""
-    try:
-        import user.wxskyfield_sky
-        return user.wxskyfield_sky
-    except ImportError:
-        import wxskyfield_sky
-        return wxskyfield_sky
-
-
-class CelestialSkyPage(SearchList):
-    """$sky_page for the bundled Celestial skin.
-
-    The sample report's sky-chart panels (sky dome, rise/set timeline,
-    orrery, analemma) are drawn by the independent weewx-skyfield
-    extension's SkyPage.  This search list delegates to it when that
-    extension is installed, and serves sky_page = None when it is not, so
-    the skin renders an install hint in each panel instead of failing:
-    WeeWX aborts a whole report whose search_list_extensions fail to
-    import, so the skin must never name user.wxskyfield_sky directly."""
-
-    def __init__(self, generator: Any) -> None:
-        SearchList.__init__(self, generator)
-        self.delegate: Optional[Any] = None
-        try:
-            mod = _import_wxskyfield_sky()
-        except ImportError:
-            log.info('weewx-skyfield is not installed; the sample skin will '
-                     'show install hints in place of its sky-chart panels.')
-            return
-        try:
-            self.delegate = mod.SkyfieldSky(generator)
-        except Exception as e:
-            log.error('Could not initialize the weewx-skyfield sky page '
-                      '(%s: %s); showing install hints instead.'
-                      % (type(e).__name__, e))
-
-    def get_extension_list(self, timespan: Any, db_lookup: Any) -> List[Dict[str, Any]]:
-        if self.delegate is not None:
-            try:
-                return self.delegate.get_extension_list(timespan, db_lookup)
-            except Exception as e:
-                log.error('The weewx-skyfield sky page failed (%s: %s); '
-                          'showing install hints instead.'
-                          % (type(e).__name__, e))
-        return [{'sky_page': None}]
 
 
 # ===============================================================================
@@ -254,27 +176,19 @@ for _planet in _MIGRATION_PLANETS:
     _ALMANAC_FIELD_MAP['earth%sDistance' % _cap] = (
         'almanac.%s.earth_distance' % _planet, 'almanac.%s.earth_distance' % _planet)
 
-# The fields the 6.0 sample report reads; the migrator appends the missing
-# ones.  All are almanac entries except loopdata's own current.dateTime.raw
-# (the live-age indicator).
+# The fields the sample report (the 7.0 Geocentric panel) reads; the
+# migrator appends the missing ones.  Per body: az places the dial dot,
+# alt decides above/below-horizon rendering, earth_distance (raw AU)
+# drives the odometer; the moon adds its phase percent and the next
+# full/new moon instants (waxing = full before new) for the phase disc.
+# current.dateTime.raw is loopdata's own field, the live-age indicator
+# and the extrapolation anchor.
 _MIGRATION_NEW_FIELDS: List[str] = [
     'current.dateTime.raw',
-    'almanac.sunrise.raw', 'almanac.sunset.raw', 'almanac.sun.transit.raw',
-    'almanac(days=1).sunrise.raw', 'almanac(days=1).sunset.raw',
-    'almanac.sun.visible.raw', 'almanac(days=-1).sun.visible.raw',
-    'almanac(horizon=-6).sun(use_center=1).rise.raw',
-    'almanac(horizon=-6).sun(use_center=1).set.raw',
-    'almanac(horizon=-12).sun(use_center=1).rise.raw',
-    'almanac(horizon=-12).sun(use_center=1).set.raw',
-    'almanac(horizon=-18).sun(use_center=1).rise.raw',
-    'almanac(horizon=-18).sun(use_center=1).set.raw',
-    'almanac.sun.az', 'almanac.sun.alt', 'almanac.sun.ra', 'almanac.sun.dec',
-    'almanac.moon.rise.raw', 'almanac.moon.transit.raw', 'almanac.moon.set.raw',
-    'almanac.moon.az', 'almanac.moon.alt', 'almanac.moon.ra', 'almanac.moon.dec',
-    'almanac.moon_phase', 'almanac.moon_index', 'almanac.moon.phase',
-    'almanac.next_equinox.raw', 'almanac.next_solstice.raw',
+    'almanac.sun.az', 'almanac.sun.alt', 'almanac.sun.earth_distance',
+    'almanac.moon.az', 'almanac.moon.alt', 'almanac.moon.earth_distance',
+    'almanac.moon.phase',
     'almanac.next_full_moon.raw', 'almanac.next_new_moon.raw',
-    'almanac.sun.earth_distance', 'almanac.moon.earth_distance',
     'almanac.mercury.az', 'almanac.mercury.alt', 'almanac.mercury.earth_distance',
     'almanac.venus.az', 'almanac.venus.alt', 'almanac.venus.earth_distance',
     'almanac.mars.az', 'almanac.mars.alt', 'almanac.mars.earth_distance',
@@ -283,6 +197,7 @@ _MIGRATION_NEW_FIELDS: List[str] = [
     'almanac.uranus.az', 'almanac.uranus.alt', 'almanac.uranus.earth_distance',
     'almanac.neptune.az', 'almanac.neptune.alt', 'almanac.neptune.earth_distance',
     'almanac.pluto.az', 'almanac.pluto.alt', 'almanac.pluto.earth_distance',
+    'almanac.proxima_centauri.az', 'almanac.proxima_centauri.alt',
     'almanac.proxima_centauri.earth_distance',
 ]
 
@@ -316,12 +231,12 @@ def _migrate_one_field(field: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def migrate_loopdata_fields(fields: List[str]) -> Tuple[List[str], Dict[str, Any]]:
-    """Rewrite a [LoopData] [[Include]] fields list for 6.0: rewrite every
+    """Rewrite a pre-6.0 [LoopData] [[Include]] fields list: rewrite every
     celestial loop-field entry (including pre-3.0 PascalCase names) to its
     weewx-loopdata almanac equivalent in place (preserving the list's
     order), drop moonWaxing (no equivalent; the sample report derives it)
     and the duplicates the rewrites create (keeping the first occurrence),
-    and append the fields the 6.0 sample report needs.  Entries that are not
+    and append the fields the current sample report needs.  Entries that are not
     celestial loop fields are never touched.  Returns (new_fields, report)
     where report maps 'renamed' to (old, new) pairs, 'dropped'/'added' to
     field names, and 'notes' to human-readable caveats."""
@@ -360,7 +275,7 @@ def migrate_loopdata_fields(fields: List[str]) -> Tuple[List[str], Dict[str, Any
     if any_distance:
         notes.append('Distances now arrive as raw astronomical units (the value '
                      'reports show), no longer miles/km; pages must convert '
-                     '(the 6.0 sample report shows how).  Proxima Centauri is '
+                     '(the sample report shows how).  Proxima Centauri is '
                      'AU as well, no longer light years.')
     if any_fullness:
         notes.append('almanac.moon.phase is a raw percent (e.g. 33.6), no '
@@ -370,7 +285,7 @@ def migrate_loopdata_fields(fields: List[str]) -> Tuple[List[str], Dict[str, Any
 
 
 def migrate_loopdata_conf(config_path: str, output_path: str) -> Dict[str, Any]:
-    """Rewrite config_path's [LoopData] [[Include]] fields entry for 6.0
+    """Rewrite config_path's [LoopData] [[Include]] fields entry
     (see migrate_loopdata_fields) and write the complete configuration to
     output_path atomically (temp file, fsync, rename -- a crash cannot
     leave a truncated file).  config_path itself is only written when
@@ -440,11 +355,11 @@ if __name__ == '__main__':
     parser.add_option('--config', dest='config_file', type=str, metavar="FILE",
                       help='weewx.conf file to migrate.  Default is /home/weewx/weewx.conf')
     parser.add_option('--migrate-loopdata-fields', dest='migrate', action='store_true',
-                      help='Rewrite the [LoopData] [[Include]] fields line for 6.0: rewrite '
+                      help='Rewrite a pre-6.0 [LoopData] [[Include]] fields line: rewrite '
                            'every celestial loop field (including pre-3.0 PascalCase names) '
                            'to its weewx-loopdata almanac equivalent (keeping the line\'s '
                            'order), drop moonWaxing and the duplicates the rewrites create, '
-                           'and append the fields the 6.0 sample report needs.  '
+                           'and append the fields the current sample report needs.  '
                            'Non-celestial fields are never touched.  Use with --config and '
                            'exactly one of --output, --in-place or --print-fields-value.')
     parser.add_option('--output', dest='output_file', type=str, metavar='FILE',
@@ -453,7 +368,7 @@ if __name__ == '__main__':
                            'FILE into place).')
     parser.add_option('--in-place', dest='in_place', action='store_true',
                       help='With --migrate-loopdata-fields: rewrite the --config file itself '
-                           '(a .bak-celestial-6.0 backup is made first).')
+                           '(a .bak-celestial-7.0 backup is made first).')
     parser.add_option('--print-fields-value', dest='print_fields', action='store_true',
                       help='With --migrate-loopdata-fields: print the migrated fields value as '
                            'a bare comma-separated list, ready to paste into weewx.conf (do '
@@ -479,7 +394,7 @@ if __name__ == '__main__':
             print(', '.join(new_fields))
         else:
             if options.in_place:
-                backup = migrate_config + '.bak-celestial-6.0'
+                backup = migrate_config + '.bak-celestial-7.0'
                 if os.path.exists(backup):
                     log.error('Backup %s already exists; move it aside first.' % backup)
                     exit(1)

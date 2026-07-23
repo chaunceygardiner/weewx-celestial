@@ -1,6 +1,46 @@
 weewx-celestial change history
 ------------------------------
 
+7.0 2026/07/23
+--------------
+ACTION REQUIRED when upgrading: (1) `weectl extension uninstall celestial`
+before installing 7.0, as always.  (2) If `user.celestial.Celestial` still
+appears under data_services in [Engine] [[Services]] (a 2.x leftover that
+6.x tolerated with a stub), REMOVE it -- 7.0 deletes the stub and a stale
+entry will keep weewxd from starting.  (3) Add
+`almanac.proxima_centauri.az` and `almanac.proxima_centauri.alt` to the
+[LoopData] [[Include]] fields line (the other 7.0 fields are already in
+any 6.0 line; the no-longer-read 6.0 entries -- rise/sets, twilights,
+ra/dec, equinox/solstice, moon_phase, moon_index, sun visible-time -- may
+be kept for your own pages or trimmed).  The rewritten stylesheet needs no
+action: CopyGenerator re-copies copy_once files on every report first-run
+(the restart covers it), and the page now version-tags the celestial.css
+URL so browsers refetch it after an upgrade instead of serving a stale
+cached copy (which would bury the dial under unstyled ring discs).
+- The sample skin is rebuilt around a single live panel, the Geocentric:
+  Earth at the center, every body (sun, moon, planets, Proxima Centauri)
+  placed by compass bearing (plan view, east right) and log distance,
+  the moon at its true phase with a silver rim, below-horizon bodies
+  dimmed and dashed, an hour of motion trail behind every dot, and a
+  roster whose distance odometers tick between loop refreshes at each
+  body's true radial rate (derived from consecutive loop packets,
+  re-anchored on every refresh, frozen if the feed goes stale).
+- Removed: the seven embedded weewx-skyfield SVG panels (sky dome, solar
+  year, lunation, sun path, orrery, analemma, rise/set ribbons) and every
+  almanac-table card -- they duplicated weewx-skyfield's own Sky page and
+  plain almanac data any skin can render.  weewx-skyfield is the atlas;
+  this page is the live instrument.  Also removed: the CelestialSkyPage
+  search-list shim (nothing embeds $sky_page now) and the 6.x Celestial
+  service stub.
+- The footer credit is now generated truthfully for whatever almanac
+  serves the page (full Skyfield/DE421/Hipparcos credit only when Proxima
+  is served; generic extended-almanac and built-in-almanac renditions
+  otherwise).
+- The sample-report field set shrinks from 58 entries to 37 (az/alt/
+  earth_distance per body, the moon-phase fields, current.dateTime.raw);
+  the migrator appends the new set, including the two new Proxima
+  position fields.  --in-place backups are named .bak-celestial-7.0.
+
 6.0.1 2026/07/23
 ----------------
 - Sample skin: the Celestial page's card titles (<p class="eyebrow">) are

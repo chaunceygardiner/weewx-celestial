@@ -1,9 +1,11 @@
-## Copyright (C)2022-2025 by John A Kline (john@johnkline.com)
+## Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 ## See LICENSE.txt for your rights
 ## NOTE: Cheetah owns '#' and '$' in this file: no hex color literals (all
-## colors come from classes in celestial.css) and no javascript template
-## literals.  Guard every loop-data key: a missing field must skip its own
-## cell, never abort the whole update.
+## colors come from classes in celestial.css, the SVG marks through the
+## fill-*/stroke-* classes) and no javascript template literals.  Guard
+## every loop-data key: a missing field must skip its own cell, never
+## abort the whole update.  Non-ASCII glyphs in javascript strings use
+## \u escapes so the generator's html_entities encoding cannot touch them.
 #errorCatcher Echo
 #encoding UTF-8
 #import os
@@ -67,7 +69,7 @@
   STATION_LAT = $station.stn_info.latitude_f;
   ## Distances arrive as raw AU (weewx-loopdata almanac fields); convert to
   ## the report's distance units here.  windrun stands in for group_distance
-  ## (this extension no longer registers distance observation types).
+  ## (this extension registers no observation types).
   #set $dist_label = str($unit.label.windrun)
   #if $unit.unit_type.windrun == 'km'
   #set $per_au = 1.4959787e8
@@ -145,338 +147,336 @@
     return new Date(ts * 1000).toLocaleString("en-US",
       tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit'}));
   }
-  function fmtHM(ts) {
-    return new Date(ts * 1000).toLocaleString("en-US",
-      tzOptions({hour: '2-digit', minute: '2-digit'}));
-  }
-  function fmtHour(ts) {
-    return new Date(ts * 1000).toLocaleString("en-US",
-      tzOptions({hour: 'numeric'}));
-  }
-  function fmtDateShort(ts) {
-    return new Date(ts * 1000).toLocaleDateString("en-US",
-      tzOptions({month: 'short', day: 'numeric'}));
-  }
-  function fmtDateTime(ts) {
-    // Matches the template's server-side %m/%d/%Y %I:%M:%S %p format.
-    return new Date(ts * 1000).toLocaleString("en-US",
-      tzOptions({month: '2-digit', day: '2-digit', year: 'numeric',
-                 hour: '2-digit', minute: '2-digit', second: '2-digit'})).replace(',', '');
-  }
   function numberWithCommas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
-  function compass16(az) {
-    var PTS = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
-               'S','SSW','SW','WSW','W','WNW','NW','NNW'];
-    return PTS[Math.round(az / 22.5) % 16];
-  }
-  function daylightString(yesterday_daylight_secs, today_daylight_secs) {
-    // 	9 hours, 35 minutes, 56 seconds
-    //  0 minutes, 2 seconds less than yesterday
-    var hours = Math.floor(today_daylight_secs / 3600);
-    var minutes = Math.floor((today_daylight_secs % 3600) / 60);
-    var seconds = Math.round(today_daylight_secs % 60);
-    delta = Math.abs(Math.round(yesterday_daylight_secs - today_daylight_secs));
-    var deltaMinutes = Math.floor((delta % 3600) / 60);
-    var deltaSeconds = delta % 60;
-    var moreLess = "same"
-    if (today_daylight_secs < yesterday_daylight_secs) {
-      moreLess = "less";
-    } else if (today_daylight_secs > yesterday_daylight_secs) {
-      moreLess = "more";
-    }
-    return hours + ' hours, ' + minutes + ' minutes, ' + seconds + " seconds<br>" + deltaMinutes + " minutes, " + deltaSeconds + " seconds " + moreLess + " than yesterday";
-  }
-
-  // ---- per-field setters: a missing key skips its cell, never throws -----
   function setHtml(id, html) {
     var el = document.getElementById(id);
     if (el && html !== undefined && html !== null) {
       el.innerHTML = html;
     }
   }
-  function setTime(r, key) {
-    if (typeof r[key] === 'number') {
-      setHtml(key, fmtHMS(r[key]));
-    }
-  }
-  function setDeg(r, key) {
-    if (typeof r[key] === 'number') {
-      setHtml(key, r[key].toFixed(1) + "&deg;");
-    }
-  }
-  function setStr(r, key) {
-    if (r[key] !== undefined) {
-      setHtml(key, r[key]);
-    }
-  }
-  function setDist(r, key) {
-    // Distances arrive as raw AU; format to match the template's
-    // "{:,.1f}" + label first paint.
-    if (typeof r[key] === 'number') {
-      setHtml(key, numberWithCommas((r[key] * PER_AU).toFixed(1)) + DIST_LABEL);
-    }
-  }
-  function setFullTime(r, key) {
-    // Format date+time cells from the raw epoch so they honor time_zone;
-    // fall back to loop-data's pre-formatted (station-timezone) string
-    // when the .raw rendition is not in the user's fields list.
-    if (typeof r[key + '.raw'] === 'number') {
-      setHtml(key, fmtDateTime(r[key + '.raw']));
-    } else if (r[key] !== undefined) {
-      setHtml(key, r[key]);
-    }
+  function num(r, key) {
+    // The guarded read: a missing or non-numeric field skips its own cell.
+    return (typeof r[key] === 'number') ? r[key] : null;
   }
 
-  // ---- timezone day math (DST-correct) ------------------------------------
-  // Offset of the display timezone from UTC at ts, in milliseconds.
-  function tzOffsetMs(ts) {
-    var d = new Date(ts * 1000);
-    if (time_zone === '') {
-      return -d.getTimezoneOffset() * 60000;
-    }
-    var parts = new Intl.DateTimeFormat('en-US', {timeZone: time_zone, hour12: false,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit'}).formatToParts(d);
-    var v = {};
-    parts.forEach(function(p) { v[p.type] = p.value; });
-    return Date.UTC(v.year, v.month - 1, v.day, v.hour % 24, v.minute, v.second) - d.getTime();
+  // ---- the Geocentric -----------------------------------------------------
+  // Bodies in roster order; the second element is the dial label.  Proxima
+  // Centauri is served only by the weewx-skyfield almanac (with stars on);
+  // its row and dot simply stay empty on any other almanac.
+  var GEO_BODIES = [
+    ['moon', 'Moon'], ['sun', 'Sun'],
+    ['mercury', 'Mercury'], ['venus', 'Venus'], ['mars', 'Mars'],
+    ['jupiter', 'Jupiter'], ['saturn', 'Saturn'], ['uranus', 'Uranus'],
+    ['neptune', 'Neptune'], ['pluto', 'Pluto'],
+    ['proxima_centauri', 'Proxima']
+  ];
+  var AU_PER_LY = 63241.077;          // au per light year, for Proxima's label
+  // Dial geometry: azimuth is the compass bearing (plan view, east right);
+  // radius is log10 of the distance in au, one ring per decade from
+  // 0.01 au (inside the moon's orbit) to 100,000 au (Proxima at the rim).
+  var CX = 330, CY = 330, R_IN = 56, R_OUT = 292;
+  var LOG_MIN = -2.6, LOG_MAX = 5.45;
+  var TRAIL_N = 24, TRAIL_SEC = 3600;  // the last hour, in 150 s segments
+  var EXTRAP_MAX = 120;                // stop extrapolating stale data (s)
+  function rOfAu(au) {
+    var lg = Math.log(au) / Math.LN10;
+    return R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
   }
-  // Start of the display-timezone day containing ts (seconds).
-  function midnightTs(ts) {
-    var guess = Math.floor((ts * 1000 + tzOffsetMs(ts)) / 86400000) * 86400000;
-    // Refine with the offset in effect just before that midnight, so DST
-    // days (23/25 hours) land on the true wall-clock midnight.
-    return (guess - tzOffsetMs((guess - 43200000) / 1000)) / 1000;
+  function dialXY(az, r) {
+    var a = az * Math.PI / 180;
+    return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
   }
-
-  // ---- live components -----------------------------------------------------
-  var latest = null;      // last parsed loop-data object
-
-  // True-phase moon disc (geometry ported from the weewx-skyfield Sky page).
-  function renderMoonDisc(r) {
-    var el = document.getElementById('moon-disc');
-    var fullness = r["almanac.moon.phase"];
-    var index = r["almanac.moon_index"];
-    if (!el || typeof fullness !== 'number' || typeof index !== 'number') {
-      return;   // fields not in the loop-data list: leave the container empty
+  var svgNS = 'http://www.w3.org/2000/svg';
+  function svgEl(name, attrs, parent, text) {
+    var e = document.createElementNS(svgNS, name);
+    for (var k in attrs) {
+      e.setAttribute(k, attrs[k]);
     }
-    var frac = fullness / 100.0;
-    // Waxing iff the next full moon precedes the next new moon (exact);
-    // the phase index is a coarse fallback (index 0 also covers the last
-    // ~1.5 days of waning crescent, which would draw the lit side mirrored).
-    var nextFull = r["almanac.next_full_moon.raw"], nextNew = r["almanac.next_new_moon.raw"];
-    var waxing = (typeof nextFull === 'number' && typeof nextNew === 'number')
-        ? (nextFull < nextNew) : (index <= 3);
-    var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
-    var c = 38, R = 34;
+    if (text) {
+      e.textContent = text;
+    }
+    parent.appendChild(e);
+    return e;
+  }
+  var dialMarks = null;   // per-body dial elements, built on first render
+  function buildDial() {
+    var dial = document.getElementById('dial');
+    if (!dial) {
+      return null;
+    }
+    // Distance rings, one per decade, labeled down the SSE radial (the
+    // evening sky crowds the west and the label radial must not sit in
+    // it; nothing guarantees a clear lane, but SSE collides least).
+    var ringLabels = ['0.01 au', '0.1', '1 au', '10', '100',
+                      '10\u00B3 au', '10\u2074', '10\u2075'];
+    // fill='none' is structural, not color, so it rides as an attribute:
+    // a stale cached stylesheet must never turn the rings into solid
+    // discs that bury the dial.
+    for (var lg = -2; lg <= 5; lg++) {
+      var rr = R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
+      svgEl('circle', {cx: CX, cy: CY, r: rr, 'class': 'geo-ring', fill: 'none',
+                       'stroke-opacity': lg <= 1 ? 0.9 : 0.55}, dial);
+      var rp = dialXY(157.5, rr);
+      svgEl('text', {x: rp[0], y: rp[1] - 3, 'class': 'gridlab',
+                     'text-anchor': 'middle'}, dial, ringLabels[lg + 2]);
+    }
+    svgEl('circle', {cx: CX, cy: CY, r: 296, 'class': 'geo-rim', fill: 'none'}, dial);
+    for (var d = 0; d < 360; d += 45) {
+      var p1 = dialXY(d, 290), p2 = dialXY(d, 296);
+      svgEl('line', {x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1],
+                     'class': d % 90 === 0 ? 'geo-tick geo-tick-major' : 'geo-tick'}, dial);
+    }
+    var cardinals = [[0, 'N'], [90, 'E'], [180, 'S'], [270, 'W']];
+    for (var c = 0; c < cardinals.length; c++) {
+      var pc = dialXY(cardinals[c][0], 310);
+      svgEl('text', {x: pc[0], y: pc[1] + 4.5, 'class': 'cardinal',
+                     'text-anchor': 'middle'}, dial, cardinals[c][1]);
+    }
+    svgEl('circle', {cx: CX, cy: CY, r: 9, 'class': 'fill-earth geo-earth'}, dial);
+    svgEl('text', {x: CX, y: CY + 24, 'class': 'earthlab'}, dial, 'earth');
+    var trailsG = svgEl('g', {}, dial);
+    var marks = {};
+    GEO_BODIES.forEach(function(pair) {
+      var key = pair[0];
+      var segs = [];
+      for (var i = 0; i < TRAIL_N; i++) {
+        segs.push(svgEl('line', {'class': 'trail stroke-' + key,
+                                 display: 'none'}, trailsG));
+      }
+      var g = svgEl('g', {display: 'none'}, dial);
+      var m = {label: pair[1], g: g, segs: segs,
+               glow: null, dot: null, lit: null, rim: null};
+      if (key === 'sun') {
+        m.glow = svgEl('circle', {r: 13, 'class': 'sunglow fill-sun'}, g);
+        m.dot = svgEl('circle', {r: 8, 'class': 'geodot fill-sun'}, g);
+      } else if (key === 'moon') {
+        // True-phase disc: dark disc, lit limb/terminator path, silver rim
+        // (the rim keeps a new moon visible against the card).
+        m.dot = svgEl('circle', {r: 8, 'class': 'moon-dark'}, g);
+        m.lit = svgEl('path', {'class': 'moon-lit'}, g);
+        m.rim = svgEl('circle', {r: 8, 'class': 'moon-rim', fill: 'none'}, g);
+      } else {
+        m.dot = svgEl('circle', {r: 6.5, 'class': 'geodot fill-' + key}, g);
+      }
+      m.lab = svgEl('text', {'class': 'bodylab'}, dial, pair[1]);
+      marks[key] = m;
+    });
+    return marks;
+  }
+  // The moon disc's limb/terminator geometry (same construction as the
+  // weewx-skyfield Sky page): frac is the illuminated fraction, and the
+  // lit side faces the sun -- toward the east while waxing as seen from
+  // the northern hemisphere, mirrored in the southern.
+  function moonPath(cx, cy, R, frac, litLeft) {
     var rx = Math.abs(2 * frac - 1) * R;
     var limbSweep = litLeft ? 0 : 1;
     var termSweep = (frac >= 0.5) ? (litLeft ? 0 : 1) : (litLeft ? 1 : 0);
-    var path = 'M ' + c + ',' + (c - R) +
-               ' A ' + R + ',' + R + ' 0 0 ' + limbSweep + ' ' + c + ',' + (c + R) +
-               ' A ' + rx + ',' + R + ' 0 0 ' + termSweep + ' ' + c + ',' + (c - R) + ' Z';
-    document.getElementById('moon-disc').innerHTML =
-      '<svg viewBox="0 0 76 76" role="img" aria-label="Moon phase">' +
-      '<circle class="moon-dark" cx="' + c + '" cy="' + c + '" r="' + R + '"/>' +
-      '<path class="moon-lit" d="' + path + '"/>' +
-      '<circle class="moon-ring" cx="' + c + '" cy="' + c + '" r="' + R + '"/>' +
-      '</svg>';
+    return 'M ' + cx + ',' + (cy - R) +
+           ' A ' + R + ',' + R + ' 0 0 ' + limbSweep + ' ' + cx + ',' + (cy + R) +
+           ' A ' + rx + ',' + R + ' 0 0 ' + termSweep + ' ' + cx + ',' + (cy - R) + ' Z';
+  }
+  function placeBodyLabel(lab, az, r) {
+    // Radially outward from Earth (inward for Proxima at the rim), the
+    // anchor following the azimuth so the text leads away from the dot.
+    var outward = (r <= 250);
+    var rr = outward ? r + 17 : r - 17;
+    var a = az * Math.PI / 180;
+    var sx = Math.sin(a) * (outward ? 1 : -1);
+    var anchor = 'middle';
+    if (sx > 0.35) {
+      anchor = 'start';
+    } else if (sx < -0.35) {
+      anchor = 'end';
+    }
+    lab.setAttribute('x', CX + rr * Math.sin(a));
+    lab.setAttribute('y', CY - rr * Math.cos(a) + 4);
+    lab.setAttribute('text-anchor', anchor);
   }
 
-  // Countdown chips: next full/new moon, equinox, solstice.
-  function renderCountdowns(r, nowTs) {
-    var chips = [['count-fullmoon', 'almanac.next_full_moon.raw'],
-                 ['count-newmoon', 'almanac.next_new_moon.raw'],
-                 ['count-equinox', 'almanac.next_equinox.raw'],
-                 ['count-solstice', 'almanac.next_solstice.raw']];
-    chips.forEach(function(chip) {
-      var el = document.getElementById(chip[0]);
-      var ts = r[chip[1]];
-      if (!el || typeof ts !== 'number') {
-        return;
-      }
-      // Count calendar days in the display timezone, not 86400-second
-      // buckets: an event later tonight is 'today', not 'in 1 day'.
-      var n = Math.max(0, Math.round((midnightTs(ts) - midnightTs(nowTs)) / 86400));
-      var when = (n === 0) ? 'today' : (n === 1 ? 'in 1 day' : 'in ' + n + ' days');
-      el.querySelector('.v').innerHTML = fmtDateShort(ts);
-      el.querySelector('.d').innerHTML = when;
-    });
+  // ---- loop-data history and derived motion -------------------------------
+  // This script runs at global (window) scope, so its top-level names must
+  // never collide with window's built-ins: `history` in particular is the
+  // browser's read-only History object -- a `var history` here silently
+  // fails to bind and every use of it throws or reads navigation state.
+  var latest = null;      // last parsed loop-data object
+  var latestTs = 0;       // its current.dateTime.raw (or receipt time)
+  var packets = [];       // [{t, r}] oldest first, pruned to 10 minutes
+  var HISTORY_SEC = 600;
+  function pushHistory(t, r) {
+    if (packets.length > 0 && t <= packets[packets.length - 1].t) {
+      return;             // the same (or an older) packet again
+    }
+    packets.push({t: t, r: r});
+    while (packets.length > 0 && t - packets[0].t > HISTORY_SEC) {
+      packets.shift();
+    }
+  }
+  function rateOf(key, wrap) {
+    // Per-second rate of a numeric field over the retained history --
+    // the oldest surviving packet against the newest, so short-window
+    // jitter averages out.  null until two usable packets exist.
+    if (packets.length < 2) {
+      return null;
+    }
+    var a = packets[0], b = packets[packets.length - 1];
+    var dt = b.t - a.t;
+    var va = num(a.r, key), vb = num(b.r, key);
+    if (dt < 1 || va === null || vb === null) {
+      return null;
+    }
+    var dv = vb - va;
+    if (wrap) {
+      dv = ((dv + 540) % 360) - 180;   // azimuth crosses north
+    }
+    return dv / dt;
   }
 
-  // The day strip: twilight bands, rise/set ticks and the moving now-line.
-  var STRIP_X0 = 8, STRIP_X1 = 992, STRIP_W = 1000, STRIP_H = 96;
-  var stripSod = 0, stripEod = 1;
-  function stripX(ts) {
-    var t = Math.min(Math.max(ts, stripSod), stripEod);
-    return STRIP_X0 + (STRIP_X1 - STRIP_X0) * (t - stripSod) / (stripEod - stripSod);
-  }
-  function renderDayStrip(r, nowTs) {
-    var el = document.getElementById('day-strip');
-    if (!el) {
+  // ---- rendering ----------------------------------------------------------
+  var prevOdometer = {};
+  function setOdometer(id, text) {
+    // Rewrite the km/miles readout, wrapping the changed digits in a span
+    // the stylesheet flashes brass -- the odometer effect.
+    var el = document.getElementById(id);
+    if (!el || text === prevOdometer[id]) {
       return;
     }
-    stripSod = midnightTs(nowTs);
-    stripEod = midnightTs(stripSod + 26 * 3600 + 1);
-    var bandTop = 18, bandBot = 66;
-    // Sky-state transitions across the day; each edge carries the band it
-    // transitions TO and the band it transitions FROM.  Missing edges
-    // (polar day/night, sun up at midnight) drop out, and the band before
-    // the first surviving edge is that edge's FROM state -- so a day that
-    // starts with the sun up starts with the day band, not night.
-    var edges = [[r["almanac(horizon=-18).sun(use_center=1).rise.raw"], 'band-astro', 'band-night'],
-                 [r["almanac(horizon=-12).sun(use_center=1).rise.raw"], 'band-naut', 'band-astro'],
-                 [r["almanac(horizon=-6).sun(use_center=1).rise.raw"], 'band-civil', 'band-naut'],
-                 [r["almanac.sunrise.raw"], 'band-day', 'band-civil'],
-                 [r["almanac.sunset.raw"], 'band-civil', 'band-day'],
-                 [r["almanac(horizon=-6).sun(use_center=1).set.raw"], 'band-naut', 'band-civil'],
-                 [r["almanac(horizon=-12).sun(use_center=1).set.raw"], 'band-astro', 'band-naut'],
-                 [r["almanac(horizon=-18).sun(use_center=1).set.raw"], 'band-night', 'band-astro']]
-      .filter(function(e) { return typeof e[0] === 'number'; })
-      .sort(function(a, b) { return a[0] - b[0]; });
-    var firstBand;
-    if (edges.length > 0) {
-      firstBand = edges[0][2];
-    } else {
-      // No transitions at all today: polar day or polar night.
-      var daylight = r["almanac.sun.visible.raw"];
-      firstBand = (typeof daylight === 'number' && daylight >= 43200) ? 'band-day' : 'band-night';
+    var prev = prevOdometer[id] || '';
+    var i = 0, n = Math.min(text.length, prev.length);
+    while (i < n && text.charAt(i) === prev.charAt(i)) {
+      i++;
     }
-    edges.unshift([stripSod, firstBand, firstBand]);
-    var svg = '<svg viewBox="0 0 ' + STRIP_W + ' ' + STRIP_H + '" preserveAspectRatio="none" role="img" aria-label="Light and dark today">';
-    var i;
-    for (i = 0; i < edges.length; i++) {
-      var x0 = stripX(edges[i][0]);
-      var x1 = (i + 1 < edges.length) ? stripX(edges[i + 1][0]) : STRIP_X1;
-      svg += '<rect class="' + edges[i][1] + '" x="' + x0 + '" y="' + bandTop +
-             '" width="' + Math.max(0, x1 - x0) + '" height="' + (bandBot - bandTop) + '"/>';
+    if (text.length !== prev.length) {
+      i = 0;
     }
-    // Hour gridlines and labels every three hours.
-    var t;
-    for (t = stripSod; t <= stripEod + 1; t += 3 * 3600) {
-      var gx = stripX(t);
-      // Anchor the edge labels inward so midnight's text is not clipped.
-      var anchor = (t === stripSod) ? 'start' : (t + 3 * 3600 > stripEod + 1 ? 'end' : 'middle');
-      svg += '<line class="gridline" x1="' + gx + '" y1="' + bandBot + '" x2="' + gx + '" y2="' + (bandBot + 5) + '"/>';
-      svg += '<text class="mono gridlab" x="' + gx + '" y="' + (bandBot + 18) + '" text-anchor="' + anchor + '">' + fmtHour(t) + '</text>';
-    }
-    // Sun and moon ticks (each may be absent today).
-    var ticks = [['almanac.sunrise.raw', 'tick-sun'],
-                 ['almanac.sun.transit.raw', 'tick-sun'],
-                 ['almanac.sunset.raw', 'tick-sun'],
-                 ['almanac.moon.rise.raw', 'tick-moon'],
-                 ['almanac.moon.set.raw', 'tick-moon']];
-    ticks.forEach(function(tick) {
-      var ts2 = r[tick[0]];
-      if (typeof ts2 === 'number' && ts2 >= stripSod && ts2 <= stripEod) {
-        var tx = stripX(ts2);
-        svg += '<line class="' + tick[1] + '" x1="' + tx + '" y1="' + (bandTop - 4) + '" x2="' + tx + '" y2="' + (bandBot + 4) + '"/>';
-      }
-    });
-    // The now-line; localTick() repositions it between polls.
-    var nx = stripX(nowTs);
-    svg += '<line class="nowline nowpulse" id="strip-now" x1="' + nx + '" y1="10" x2="' + nx + '" y2="' + (bandBot + 6) + '"/>';
-    svg += '<text class="mono nowlab" id="strip-now-label" x="' + nx + '" y="8" text-anchor="middle">now ' + fmtHM(nowTs) + '</text>';
-    svg += '</svg>';
-    el.innerHTML = svg;
+    el.innerHTML = text.slice(0, i) + '<span class="chg">' + text.slice(i) + '</span>';
+    prevOdometer[id] = text;
   }
-  function moveNowLine(nowTs) {
-    var line = document.getElementById('strip-now');
-    var label = document.getElementById('strip-now-label');
-    if (!line || !label) {
+  function setRowBelow(key, below) {
+    var row = document.getElementById('geo-row-' + key);
+    if (row) {
+      row.className = below ? 'row below' : 'row';
+    }
+  }
+  function renderGeo(nowTs) {
+    if (latest === null) {
       return;
     }
-    var nx = stripX(nowTs);
-    line.setAttribute('x1', nx);
-    line.setAttribute('x2', nx);
-    label.setAttribute('x', nx);
-    label.textContent = 'now ' + fmtHM(nowTs);
-  }
-
-  // Planets-now chips: up/down, altitude, compass direction, distance.
-  var PLANETS = ['mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
-  function renderPlanets(r) {
-    PLANETS.forEach(function(planet) {
-      var chip = document.getElementById('planet-' + planet);
-      if (!chip) {
+    if (dialMarks === null) {
+      dialMarks = buildDial();
+    }
+    // Extrapolate at the derived rates between loop refreshes, re-anchoring
+    // to truth on every packet; stale data stops advancing after
+    // EXTRAP_MAX seconds so a dead feed cannot drift the page into fiction.
+    var dt = Math.min(Math.max(nowTs - latestTs, 0), EXTRAP_MAX);
+    // The moon's phase, for its dial disc: percent full plus waxing
+    // (the next full moon precedes the next new moon).
+    var moonFrac = num(latest, 'almanac.moon.phase');
+    var nextFull = num(latest, 'almanac.next_full_moon.raw');
+    var nextNew = num(latest, 'almanac.next_new_moon.raw');
+    var waxing = (nextFull !== null && nextNew !== null) ? (nextFull < nextNew) : true;
+    var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
+    GEO_BODIES.forEach(function(pair) {
+      var key = pair[0];
+      var azKey = 'almanac.' + key + '.az';
+      var altKey = 'almanac.' + key + '.alt';
+      var distKey = 'almanac.' + key + '.earth_distance';
+      var az = num(latest, azKey), alt = num(latest, altKey);
+      var au = num(latest, distKey);
+      var azRate = rateOf(azKey, true);
+      var altRate = rateOf(altKey, false);
+      var auRate = rateOf(distKey, false);
+      var azNow = (az === null) ? null : (az + (azRate || 0) * dt + 360) % 360;
+      var altNow = (alt === null) ? null : Math.max(-90, Math.min(90, alt + (altRate || 0) * dt));
+      var auNow = (au === null) ? null : au + (auRate || 0) * dt;
+      // The roster row: odometer, rate, au and altitude cells, each on its
+      // own guard.
+      if (auNow !== null) {
+        setOdometer(distKey, numberWithCommas(Math.round(auNow * PER_AU)));
+        setHtml('geo-au-' + key,
+                (auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)) + ' au');
+      }
+      if (auRate !== null) {
+        var perSec = Math.abs(auRate) * PER_AU;
+        setHtml('geo-rate-' + key,
+                '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
+                (auRate >= 0 ? 'receding' : 'approaching') + ' ' +
+                perSec.toFixed(2) + DIST_LABEL + '/s');
+      }
+      if (altNow !== null) {
+        setHtml('geo-alt-' + key,
+                altNow < 0 ? 'below horizon' : 'alt ' + altNow.toFixed(1) + '&deg;');
+        setRowBelow(key, altNow < 0);
+      }
+      // The dial: dot, phase, label and trail need the full position.
+      var m = dialMarks === null ? null : dialMarks[key];
+      if (!m) {
         return;
       }
-      var alt = r['almanac.' + planet + '.alt'];
-      var az = r['almanac.' + planet + '.az'];
-      var dist = r['almanac.' + planet + '.earth_distance'];
-      if (typeof alt === 'number' && typeof az === 'number') {
-        var line;
-        if (alt >= 0) {
-          line = 'up &middot; ' + alt.toFixed(0) + "&deg; &middot; " + compass16(az);
-        } else {
-          line = 'down &middot; ' + compass16(az);
+      if (azNow === null || altNow === null || auNow === null) {
+        m.g.setAttribute('display', 'none');
+        m.lab.setAttribute('display', 'none');
+        return;
+      }
+      m.g.removeAttribute('display');
+      m.lab.removeAttribute('display');
+      var below = altNow < 0;
+      var r = rOfAu(auNow);
+      var p = dialXY(azNow, r);
+      m.dot.setAttribute('cx', p[0]);
+      m.dot.setAttribute('cy', p[1]);
+      if (key === 'moon') {
+        if (moonFrac !== null && m.lit !== null) {
+          m.lit.setAttribute('d', moonPath(p[0], p[1], 8, moonFrac / 100.0, litLeft));
         }
-        chip.querySelector('.chipline').innerHTML = line;
+        m.rim.setAttribute('cx', p[0]);
+        m.rim.setAttribute('cy', p[1]);
+        m.g.setAttribute('class', below ? 'geomoon below' : 'geomoon');
+      } else {
+        var cls = 'geodot fill-' + key + (below ? ' below stroke-' + key : ' ring');
+        m.dot.setAttribute('class', cls);
       }
-      if (typeof dist === 'number') {
-        chip.querySelector('.chipsub').innerHTML =
-            numberWithCommas(Math.round(dist * PER_AU)) + DIST_LABEL;
+      if (m.glow !== null) {
+        m.glow.setAttribute('cx', p[0]);
+        m.glow.setAttribute('cy', p[1]);
+        m.glow.setAttribute('display', below ? 'none' : '');
+      }
+      m.lab.setAttribute('class', below ? 'bodylab dim' : 'bodylab');
+      if (key === 'proxima_centauri') {
+        m.lab.textContent = m.label + ' \u00B7 ' +
+                            (auNow / AU_PER_LY).toFixed(2) + ' ly';
+      }
+      placeBodyLabel(m.lab, azNow, r);
+      // The trail: the last hour of motion at the derived rates, drawn
+      // backward from now (real observed positions replace nothing here --
+      // the rates ARE observed, so the wake is the true recent path to
+      // first order).  Hidden until motion can be derived.
+      var haveRates = (azRate !== null && auRate !== null && altRate !== null);
+      var step = TRAIL_SEC / TRAIL_N;
+      for (var i = 0; i < TRAIL_N; i++) {
+        var seg = m.segs[i];
+        if (!haveRates) {
+          seg.setAttribute('display', 'none');
+          continue;
+        }
+        var backA = TRAIL_SEC - i * step;        // seconds before now
+        var backB = backA - step;
+        var azA = (azNow - azRate * backA + 720) % 360;
+        var azB = (azNow - azRate * backB + 720) % 360;
+        var rA = rOfAu(auNow - auRate * backA);
+        var rB = rOfAu(auNow - auRate * backB);
+        var altB = altNow - altRate * backB;
+        var pA = dialXY(azA, rA), pB = dialXY(azB, rB);
+        seg.removeAttribute('display');
+        seg.setAttribute('x1', pA[0]);
+        seg.setAttribute('y1', pA[1]);
+        seg.setAttribute('x2', pB[0]);
+        seg.setAttribute('y2', pB[1]);
+        seg.setAttribute('stroke-opacity',
+                         (i + 1) / TRAIL_N * (altB < 0 ? 0.28 : 0.6));
       }
     });
-  }
-
-  // The 41 data cells (dual-source: first-painted by the report almanac,
-  // kept live from loop data here).
-  function renderDataCells(r) {
-    setTime(r, "almanac.sunrise.raw");
-    setTime(r, "almanac.sun.transit.raw");
-    setTime(r, "almanac.sunset.raw");
-    setTime(r, "almanac(days=1).sunrise.raw");
-    setTime(r, "almanac(days=1).sunset.raw");
-    setTime(r, "almanac(horizon=-18).sun(use_center=1).rise.raw");
-    setTime(r, "almanac(horizon=-12).sun(use_center=1).rise.raw");
-    setTime(r, "almanac(horizon=-6).sun(use_center=1).rise.raw");
-    setTime(r, "almanac(horizon=-6).sun(use_center=1).set.raw");
-    setTime(r, "almanac(horizon=-12).sun(use_center=1).set.raw");
-    setTime(r, "almanac(horizon=-18).sun(use_center=1).set.raw");
-    if (typeof r["almanac(days=-1).sun.visible.raw"] === 'number' &&
-        typeof r["almanac.sun.visible.raw"] === 'number') {
-      setHtml("daylight", daylightString(r["almanac(days=-1).sun.visible.raw"],
-                                         r["almanac.sun.visible.raw"]));
-    }
-    setDeg(r, "almanac.sun.az");
-    setDeg(r, "almanac.sun.alt");
-    setDeg(r, "almanac.sun.ra");
-    setDeg(r, "almanac.sun.dec");
-    setFullTime(r, "almanac.next_equinox");
-    setFullTime(r, "almanac.next_solstice");
-    setFullTime(r, "almanac.moon.rise");
-    setFullTime(r, "almanac.moon.transit");
-    setFullTime(r, "almanac.moon.set");
-    setDeg(r, "almanac.moon.az");
-    setDeg(r, "almanac.moon.alt");
-    setDeg(r, "almanac.moon.ra");
-    setDeg(r, "almanac.moon.dec");
-    setStr(r, "almanac.moon_phase");
-    if (typeof r["almanac.moon.phase"] === 'number') {
-      setHtml("almanac.moon.phase", Math.round(r["almanac.moon.phase"]) + "% full");
-    }
-    setFullTime(r, "almanac.next_new_moon");
-    setFullTime(r, "almanac.next_full_moon");
-    setDist(r, "almanac.moon.earth_distance");
-    setDist(r, "almanac.sun.earth_distance");
-    setDist(r, "almanac.mercury.earth_distance");
-    setDist(r, "almanac.venus.earth_distance");
-    setDist(r, "almanac.mars.earth_distance");
-    setDist(r, "almanac.jupiter.earth_distance");
-    setDist(r, "almanac.saturn.earth_distance");
-    setDist(r, "almanac.uranus.earth_distance");
-    setDist(r, "almanac.neptune.earth_distance");
-    setDist(r, "almanac.pluto.earth_distance");
-    // Raw AU converted to light years; present when weewx-skyfield's star
-    // catalog is enabled and the field is in the [LoopData] fields list.
-    var proximaAU = r["almanac.proxima_centauri.earth_distance"];
-    if (typeof proximaAU === 'number') {
-      setHtml("almanac.proxima_centauri.earth_distance",
-              (proximaAU / 63241.077).toFixed(2) + " light years");
-    }
   }
 
   // ---- poll + local tick ---------------------------------------------------
@@ -484,8 +484,7 @@
     var nowTs = Date.now() / 1000;
     setHtml('live-clock', fmtHMS(nowTs));
     if (latest !== null) {
-      moveNowLine(nowTs);
-      renderCountdowns(latest, nowTs);
+      renderGeo(nowTs);
     }
   }
   function updateCurrent() {
@@ -510,11 +509,9 @@
         }
 
         latest = result;
-        renderDataCells(result);
-        renderMoonDisc(result);
-        renderCountdowns(result, nowTs);
-        renderDayStrip(result, nowTs);
-        renderPlanets(result);
+        latestTs = (typeof lastTs === 'number') ? lastTs : nowTs;
+        pushHistory(latestTs, result);
+        renderGeo(nowTs);
       } catch (e) {
         console.log(e);
       }
