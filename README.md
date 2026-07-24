@@ -1,4 +1,4 @@
-# weewx-celestial
+# weewx-celestial – Watch the sky move
 Open source plugin for WeeWX software.
 
 Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
