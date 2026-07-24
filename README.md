@@ -217,10 +217,14 @@ almanac-field grammar (any report almanac tag with the `$` removed, plus
 the `almanac(days=±N)` tomorrow/yesterday extension) is documented in
 [weewx-loopdata's README](https://github.com/chaunceygardiner/weewx-loopdata#almanac-fields).
 
-## See it in action at PaloAltoWeather.com
+## The Geocentric Live on PaloAltoWeather.com
 
-[PaloAltoWeather.com's celestial pages](https://www.paloaltoweather.com/celestial.html)
-are built on the same almanac fields (with their own styling).
+[PaloAltoWeather.com's Celestial Today page](https://www.paloaltoweather.com/celestial.html)
+contains a Geocentric Live panel built with the same technologies as used here
+([weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) and
+[weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)).
+
+![PaloAltoWeather.com Celestial Today page](PAW_Celestial_Today.png)
 
 ## Testing
 
