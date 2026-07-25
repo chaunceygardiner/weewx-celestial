@@ -405,6 +405,66 @@ class TestSampleSkinRenders:
         assert out['trails'] > 200         # 24 segments x 11 bodies, visible
         assert served['n'] >= 2            # the page really polled repeatedly
 
+    def test_page_reports_fetch_failure_in_badge(self, wxskyfield_almanac, tmp_path):
+        """The 404 case a misconfigured loop_data_file produces (loopdata
+        writing outside HTML_ROOT -- say /dev/shm -- with nothing on the
+        web server serving it): the poll gets the server's HTML error page,
+        and the badge must say so.  Through 7.0 the only trace was a
+        JSON.parse error in the console and a silently dead page.  Skips
+        when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
+        (tmp_path / 'celestial.css').write_bytes(
+            open(os.path.join(SKIN_DIR, 'celestial.css'), 'rb').read())
+
+        # No special-casing of /gauge-data/loop-data.txt: the poll gets the
+        # stock HTML 404 page, exactly what a misconfigured server serves.
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    page.wait_for_timeout(1500)\n'
+            "    out = {'errors': errors, 'badge': page.inner_text('#live-label')}\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert 'NO DATA (HTTP 404)' in out['badge']
+        assert 'check loop_data_file' in out['badge']
+
     def test_no_hex_colors_in_cheetah_files(self):
         """Cheetah owns '#': hex color literals in the template or the
         javascript include would be eaten as directives/comments.  All

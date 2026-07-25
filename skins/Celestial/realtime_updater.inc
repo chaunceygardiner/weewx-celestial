@@ -494,8 +494,29 @@
     }
     var xhttp = new XMLHttpRequest();
     xhttp.onload = function() {
+      // A response arrived, but only HTTP 200 carries the file (status 0
+      // covers a page opened from file:).  Anything else is almost always
+      // loop_data_file not resolving to where weewx-loopdata writes -- the
+      // classic being a 404 page because the file lives outside HTML_ROOT
+      // (say /dev/shm) with nothing on the web server serving it.  Say so
+      // in the badge: the old behavior (a console error only a debugging
+      // user ever finds) left the page silently dead.
+      if (this.status !== 200 && this.status !== 0) {
+        setHtml("live-label",
+                "NO DATA (HTTP " + this.status + ") \u2014 check loop_data_file");
+        return;
+      }
+      var result;
       try {
-        var result = JSON.parse(this.responseText);
+        result = JSON.parse(this.responseText);
+      } catch (e) {
+        // A 200 with a non-JSON body: loop_data_file points at something,
+        // but not at weewx-loopdata's output.
+        setHtml("live-label", "BAD DATA \u2014 check loop_data_file");
+        console.log(e);
+        return;
+      }
+      try {
         var nowTs = Date.now() / 1000;
 
         // Check the date
@@ -517,15 +538,12 @@
       }
     }
     xhttp.onerror = function() {
-      try {
-        // Status not OK (!= 200).
-        var element = document.getElementById("live-label");
-        element.innerHTML = "";
-        console.log('status: ' + this.status);
-      } catch (e) {
-        console.log(e);
-      }
+      // A network-level failure (server unreachable, request blocked):
+      // unlike the HTTP case there is no status to show.  A later
+      // successful poll rewrites the badge to LIVE.
+      setHtml("live-label", "OFFLINE");
     }
+    xhttp.ontimeout = xhttp.onerror;
     try {
       xhttp.timeout = 1800;
       xhttp.open("GET", "$Extras.loop_data_file", true);
