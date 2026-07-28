@@ -43,10 +43,9 @@ description: Installing weewx-celestial 7.x, and upgrading from 6.x or from 5.x 
 
 ## Upgrading from 7.x
 
-Drop-in: uninstall, install, restart —
+Drop-in: install right over the existing version, then restart WeeWX —
 
 ```
-weectl extension uninstall celestial
 weectl extension install weewx-celestial.zip
 ```
 
