@@ -1,6 +1,19 @@
 weewx-celestial change history
 ------------------------------
 
+7.3 2026/07/28
+--------------
+- FIX: 7.2's page failed to generate under weewxd -- every cycle logged
+  "cannot find 'Labels'" and the page went stale at whatever 7.1 had
+  last written.  The header's hemisphere letters were read from a
+  $Labels tag that does not exist in WeeWX's Cheetah search list (the
+  render tests build their own search list, and it supplied a Labels
+  entry core WeeWX never provides); they now come from
+  $station.latitude[2]/$station.longitude[2], which core WeeWX computes
+  from the same [Labels] hemispheres setting, lang-file aware, so the
+  German letters are unchanged.  Install right over 7.2 and restart
+  weewx; no configuration changes.
+
 7.2 2026/07/28
 --------------
 The page is now translatable through WeeWX's own mechanisms (lang files,

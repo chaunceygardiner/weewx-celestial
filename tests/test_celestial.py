@@ -192,10 +192,18 @@ class TestSampleSkinRenders:
 
         # The i18n channels, defaulted the way an untranslated report sees
         # them: $gettext is the [Texts] lookup with per-string identity
-        # fallback (exactly weewx.cheetahgenerator.Gettext), $Labels the
-        # core-default hemisphere letters, $lang the skin.conf default.
+        # fallback (exactly weewx.cheetahgenerator.Gettext), $lang the
+        # skin.conf default.  Every searchList entry MUST mirror a tag
+        # core weewx really provides -- 7.2 shipped a $Labels reference
+        # because this searchList supplied a 'Labels' entry core weewx
+        # never provides, and every production page died with
+        # "cannot find 'Labels'".  Hemisphere
+        # letters therefore flow the core way: weewx.station.Station
+        # builds latitude/longitude 3-tuples (degrees, minutes, letter)
+        # from [Labels] hemispheres; the stub does the same.
         texts = texts or {}
         labels = labels or {'hemispheres': ['N', 'S', 'E', 'W']}
+        hemis = labels['hemispheres']
         source = open(os.path.join(SKIN_DIR, 'index.html.tmpl')).read()
         # Inline the include so its directives and placeholders are also
         # exercised through the errorCatcher render path.
@@ -215,10 +223,13 @@ class TestSampleSkinRenders:
             'unit': Obj(label=Obj(windrun=' miles'),
                         unit_type=Obj(windrun='mile')),
             'station': Obj(location='Test Station',
+                           latitude=('37', '26.55',
+                                     hemis[0] if LATITUDE >= 0 else hemis[1]),
+                           longitude=('122', '08.45',
+                                      hemis[2] if LONGITUDE >= 0 else hemis[3]),
                            stn_info=Obj(latitude_f=LATITUDE, longitude_f=LONGITUDE)),
             'Extras': extras,
             'lang': lang,
-            'Labels': labels,
             'gettext': lambda key: texts.get(key, key),
         }])
         return str(template)

@@ -58,13 +58,14 @@
     #end if
     ## Station coordinates, hemisphere-lettered for the header; the
     ## latitude also feeds the javascript moon disc (lit-side flip).  The
-    ## letters come from the report's [Labels] hemispheres (a lang-file
-    ## entry with a core default), the same source Seasons uses.
+    ## letters are $station.latitude/longitude[2]: core WeeWX computes
+    ## them from the report's [Labels] hemispheres (lang-file aware).
+    ## There is NO $Labels tag in the core search list -- 7.2 referenced
+    ## one and every production page died with "cannot find 'Labels'".
     #set $lat_f = $station.stn_info.latitude_f
     #set $lon_f = $station.stn_info.longitude_f
-    #set $hemispheres = $Labels.hemispheres
-    #set $lat_letter = $hemispheres[0] if $lat_f >= 0 else $hemispheres[1]
-    #set $lon_letter = $hemispheres[2] if $lon_f >= 0 else $hemispheres[3]
+    #set $lat_letter = $station.latitude[2]
+    #set $lon_letter = $station.longitude[2]
     ## The roster bodies, nearest-tier first: moon and sun, the planets in
     ## orbital order, Proxima Centauri last.  Every cell of every row is
     ## individually guarded: an almanac that cannot serve one body (PyEphem
