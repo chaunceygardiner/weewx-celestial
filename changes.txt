@@ -1,6 +1,43 @@
 weewx-celestial change history
 ------------------------------
 
+7.2 2026/07/28
+--------------
+The page is now translatable through WeeWX's own mechanisms (lang files,
+[Texts]/$gettext, the [Almanac] section), and German ships with the skin.
+No action required when upgrading: an untranslated report renders exactly
+as before (English is the per-string fallback), and the loop-data field
+set is unchanged.
+- New skins/Celestial/lang/en.conf (the reference dictionary: every string
+  the page renders, and nothing else -- a test keeps it exact in both
+  directions) and lang/de.conf (complete German, native-speaker reviewed;
+  body names, moon phases, hemispheres, compass ordinates and all 88
+  constellation names are shared verbatim with weewx-skyfield's de.conf
+  and a test keeps the two repos in step).  Select with lang = de in the
+  report's section of weewx.conf (or [StdReport] [[Defaults]] to switch
+  every German-shipping skin at once).
+- The live javascript is translated too: body names (from the report's
+  [Almanac] section, the same source as $almanac.<body>.label), compass
+  cardinals (from the report formatter's ordinates) and every composed
+  string (badge states, "receding"/"approaching", altitude and au cells,
+  Proxima's light-year label) are resolved at report-generation time and
+  fed to the script json-escaped, so the dial, roster and badge stay in
+  the report's language between loop refreshes.
+- The clock and last-update stamp now format per the report's lang
+  (previously hardcoded en-US), and <html lang> reports it.
+- The roster's body names now come from the almanac texts (capitalized --
+  "Moon" where 7.1 showed "moon"; German nouns need the capital and the
+  small-caps styling is unchanged).
+- de.conf ships [Almanac] [[Constellations]] (all 88, keyed by IAU
+  abbreviation) so constellation loopdata fields
+  (almanac.<body>.constellation.label) and report tags arrive in German
+  when this report is the loopdata target, even though the page itself
+  does not currently render constellations.
+- New user manual at https://chaunceygardiner.github.io/weewx-celestial/
+  (the docs/ directory): home, installation/upgrading, configuration,
+  building the Geocentric into your own skin, and translating.  The
+  README and the manual link to each other.
+
 7.1 2026/07/24
 --------------
 A failed loop-data fetch now says so on the page.  When the poll for

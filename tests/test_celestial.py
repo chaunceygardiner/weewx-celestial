@@ -179,7 +179,7 @@ class TestSampleSkinRenders:
     its else-value and dies with SyntaxError only at render time)."""
 
     @staticmethod
-    def render(almanac_obj, with_time_zone=True):
+    def render(almanac_obj, with_time_zone=True, lang='en', texts=None, labels=None):
         from Cheetah.Template import Template
 
         class Obj:
@@ -190,6 +190,12 @@ class TestSampleSkinRenders:
             def has_key(self, key):
                 return key in self
 
+        # The i18n channels, defaulted the way an untranslated report sees
+        # them: $gettext is the [Texts] lookup with per-string identity
+        # fallback (exactly weewx.cheetahgenerator.Gettext), $Labels the
+        # core-default hemisphere letters, $lang the skin.conf default.
+        texts = texts or {}
+        labels = labels or {'hemispheres': ['N', 'S', 'E', 'W']}
         source = open(os.path.join(SKIN_DIR, 'index.html.tmpl')).read()
         # Inline the include so its directives and placeholders are also
         # exercised through the errorCatcher render path.
@@ -211,6 +217,9 @@ class TestSampleSkinRenders:
             'station': Obj(location='Test Station',
                            stn_info=Obj(latitude_f=LATITUDE, longitude_f=LONGITUDE)),
             'Extras': extras,
+            'lang': lang,
+            'Labels': labels,
+            'gettext': lambda key: texts.get(key, key),
         }])
         return str(template)
 
@@ -261,7 +270,9 @@ class TestSampleSkinRenders:
         _MIGRATION_NEW_FIELDS exactly -- the skin consumes the whole
         migrated field set and nothing else."""
         include = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
-        bodies = re.findall(r"\['([a-z_]+)',\s*'[A-Za-z]+'\]", include)
+        m = re.search(r'var GEO_BODIES = \[(.*?)\];', include, re.DOTALL)
+        assert m is not None
+        bodies = re.findall(r"'([a-z_]+)'", m.group(1))
         assert len(bodies) == 11
         keys = set()
         for body in bodies:
@@ -542,6 +553,173 @@ class TestSampleSkinRenders:
             except OSError:
                 pass
         assert "time_zone = '%s'" % auto_tz in html
+
+
+class TestI18n:
+    """The page's translation plumbing (7.2) -- the same machinery
+    weewx-skyfield 1.12/1.13 ships: [Texts] is gettext-style (the English
+    string IS the key; a report falls back to it one string at a time),
+    body names ride the report's [Almanac] section (the same source as
+    $almanac.<body>.label -- every almanac tier has .texts), compass
+    cardinals the formatter's [Units] [[Ordinates]] directions, hemisphere
+    letters [Labels] hemispheres.  The live javascript composes strings
+    too, so the template feeds it the translated values (BODY_LABELS,
+    CARDINALS, T) through json.dumps."""
+
+    LANG_DIR = os.path.join(SKIN_DIR, 'lang')
+    BODIES = ['sun', 'moon', 'mercury', 'venus', 'earth', 'mars', 'jupiter',
+              'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+
+    @staticmethod
+    def lang_conf(dirname, name):
+        configobj = pytest.importorskip('configobj')
+        return configobj.ConfigObj(os.path.join(dirname, name),
+                                   encoding='utf-8', file_error=True)
+
+    @staticmethod
+    def rendered_keys():
+        """Every translation key the page can render, read from the
+        $gettext("...")/$gettext('...') literals in the template and the
+        include (keys are single-line literals by convention)."""
+        keys = set()
+        for name in ('index.html.tmpl', 'realtime_updater.inc'):
+            with open(os.path.join(SKIN_DIR, name), encoding='utf-8') as f:
+                found = re.findall(r'\$gettext\(\s*(?:"([^"]+)"|\'([^\']+)\')\s*\)',
+                                   f.read())
+            assert found, name
+            keys |= {a or b for a, b in found}
+        return keys
+
+    def test_en_conf_ships_exactly_what_renders(self):
+        """Both directions: a rendered key missing from lang/en.conf fails,
+        and an en.conf key nothing renders fails -- the English file is the
+        reference dictionary for translators, and it must grow and shrink
+        with the features that render it."""
+        conf = self.lang_conf(self.LANG_DIR, 'en.conf')
+        shipped = dict(conf['Texts'])
+        rendered = self.rendered_keys()
+        assert sorted(rendered - set(shipped)) == [], 'rendered but not in en.conf'
+        assert sorted(set(shipped) - rendered) == [], 'in en.conf but never rendered'
+        # English is the identity translation: every value equals its key
+        # (so the file doubles as the untranslated reference).
+        assert [k for k, v in shipped.items() if v != k] == []
+        # Every English format string must itself format cleanly: the
+        # javascript's fmt and the template fall back to it.
+        for k in rendered:
+            k.format(**{name: 'x' for name in set(re.findall(r'\{(\w+)\}', k))})
+
+    def test_en_conf_core_sections(self):
+        """The lang file is self-contained: the core-standard sections the
+        page reads (hemispheres, ordinates, moon phases), a display name
+        for every body the page draws, and the full constellation set for
+        reports and loopdata targets in this language."""
+        conf = self.lang_conf(self.LANG_DIR, 'en.conf')
+        assert list(conf['Labels']['hemispheres']) == ['N', 'S', 'E', 'W']
+        assert len(conf['Units']['Ordinates']['directions']) == 17
+        assert len(conf['Almanac']['moon_phases']) == 8
+        for body in self.BODIES:
+            expected = ('Proxima Centauri' if body == 'proxima_centauri'
+                        else body.title())
+            assert conf['Almanac'][body] == expected
+        assert len(conf['Almanac']['Constellations']) == 88
+
+    def test_shipped_lang_files_are_consistent(self):
+        """Every shipped lang file must parse, translate only keys en.conf
+        ships (a stale key would silently never render), keep each value's
+        placeholders exactly its key's set (a renamed one knocks the string
+        back to English at run time), and carry the core sections."""
+        rendered = self.rendered_keys()
+        abbrs = set(self.lang_conf(self.LANG_DIR, 'en.conf')['Almanac']['Constellations'])
+        names = sorted(os.listdir(self.LANG_DIR))
+        assert 'en.conf' in names and 'de.conf' in names
+        for name in names:
+            conf = self.lang_conf(self.LANG_DIR, name)
+            for key, val in dict(conf['Texts']).items():
+                assert key in rendered, (name, key)
+                assert isinstance(val, str), (name, key)
+                assert (set(re.findall(r'\{(\w+)\}', val))
+                        == set(re.findall(r'\{(\w+)\}', key))), (name, key)
+            assert len(conf['Labels']['hemispheres']) == 4, name
+            assert len(conf['Units']['Ordinates']['directions']) == 17, name
+            assert len(conf['Almanac']['moon_phases']) == 8, name
+            for body in self.BODIES:
+                assert conf['Almanac'][body], (name, body)
+            # Constellation keys are the IAU abbreviations; a key outside
+            # the set would silently never be looked up.
+            assert set(conf['Almanac']['Constellations']) == abbrs, name
+
+    def test_de_conf_is_complete(self):
+        """German is a full translation: every rendered key is covered, so
+        a new feature's strings fail here until de.conf learns them."""
+        conf = self.lang_conf(self.LANG_DIR, 'de.conf')
+        assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
+
+    def test_german_in_step_with_skyfield(self):
+        """The shared vocabulary is copied verbatim from weewx-skyfield's
+        lang files (the native-speaker-reviewed German): body names, moon
+        phases, hemispheres, ordinates, all 88 constellation names, and
+        every [Texts] key both pages render -- the same cross-repo rule as
+        celestial.css staying in step with sky.css.  Skips when no
+        weewx-skyfield lang directory is available."""
+        candidates = [
+            os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                         'skins', 'Skyfield', 'lang'),
+            '/home/weewx/weewx-data/skins/Skyfield/lang',
+        ]
+        sky_lang = next((d for d in candidates
+                         if os.path.exists(os.path.join(d, 'de.conf'))), None)
+        if sky_lang is None:
+            pytest.skip('the weewx-skyfield lang directory is not available')
+        for name in ('en.conf', 'de.conf'):
+            sky = self.lang_conf(sky_lang, name)
+            cel = self.lang_conf(self.LANG_DIR, name)
+            assert (dict(cel['Almanac']['Constellations'])
+                    == dict(sky['Almanac']['Constellations'])), name
+            for body in ['sun', 'moon', 'earth', 'mercury', 'venus', 'mars',
+                         'jupiter', 'saturn', 'uranus', 'neptune']:
+                assert cel['Almanac'][body] == sky['Almanac'][body], (name, body)
+            assert (list(cel['Almanac']['moon_phases'])
+                    == list(sky['Almanac']['moon_phases'])), name
+            assert (list(cel['Labels']['hemispheres'])
+                    == list(sky['Labels']['hemispheres'])), name
+            assert (list(cel['Units']['Ordinates']['directions'])
+                    == list(sky['Units']['Ordinates']['directions'])), name
+            for key in set(cel['Texts']) & set(sky['Texts']):
+                assert cel['Texts'][key] == sky['Texts'][key], (name, key)
+
+    def test_shipped_german_renders(self, wxskyfield_sky):
+        """The shipped de.conf, fed through the same channels the report
+        engine uses (gettext from [Texts], almanac texts from [Almanac],
+        formatter ordinates, [Labels] hemispheres), renders a German page
+        -- the template's static strings and the json feeds the javascript
+        composes from alike."""
+        mod, _ = load_wxskyfield()
+        conf = self.lang_conf(self.LANG_DIR, 'de.conf')
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sky)
+            alm = weewx.almanac.Almanac(
+                TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                formatter=weewx.units.Formatter(
+                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                texts=dict(conf['Almanac']))
+            html = TestSampleSkinRenders.render(
+                alm, lang='de', texts=dict(conf['Texts']),
+                labels={'hemispheres': list(conf['Labels']['hemispheres'])})
+        assert '<html lang="de">' in html
+        assert 'Die geozentrische Ansicht' in html
+        # The roster first-paints German: the sun is up at the solstice
+        # noon, and the distance cells carry the German au unit.
+        assert 'Höhe ' in html
+        assert ' AE<' in html
+        # The javascript feeds: German body names and cardinals (json,
+        # non-ASCII \u-escaped), and the composed-string dictionary.
+        assert '"moon": "Mond"' in html
+        assert '"neptune": "Neptun"' in html
+        assert '["N", "O", "S", "W"]' in html
+        assert '"below horizon": "unter dem Horizont"' in html
+        assert '"approaching": "n\\u00e4hert sich"' in html
+        # The footer carries the full German Skyfield credit.
+        assert 'Berechnet mit Skyfield' in html
 
 
 class TestMigrateLoopdataFields:

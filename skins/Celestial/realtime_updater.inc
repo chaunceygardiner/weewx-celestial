@@ -78,6 +78,64 @@
   #end if
   PER_AU = $per_au;
   DIST_LABEL = '$dist_label';
+  // The report's language drives toLocaleString (clock and last-update
+  // formats); an unknown tag must not break every render.
+  LOCALE = '$lang';
+  try {
+    new Date().toLocaleString(LOCALE);
+  } catch (e) {
+    console.log('bad lang "' + LOCALE + '", using en-US');
+    LOCALE = 'en-US';
+  }
+  ## Everything this script composes is translated at generation time and
+  ## fed here: body names from the report's [Almanac] section (the same
+  ## source as $almanac.<body>.label -- any almanac tier has .texts),
+  ## cardinals from the report formatter's compass ordinates, and the
+  ## badge/roster strings from [Texts] via $gettext (each key spelled out
+  ## literally so the tests can tie the include to lang/en.conf).  All
+  ## three ride through json.dumps, which \u-escapes every non-ASCII
+  ## character -- html_entities encoding can never touch them, and dial
+  ## labels land via textContent where entities would show literally.
+  #import json
+  #set $names = {}
+  #for $b in ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'earth')
+  #silent $names.update({$b: str($almanac.texts.get($b, $b.capitalize()))})
+  #end for
+  BODY_LABELS = $json.dumps($names);
+  #set $ords = $almanac.formatter.ordinate_names
+  CARDINALS = $json.dumps([str($ords[0]), str($ords[4]), str($ords[8]), str($ords[12])]);
+  #set $t = {}
+  #silent $t.update({'alt {alt}°': $gettext('alt {alt}°')})
+  #silent $t.update({'below horizon': $gettext('below horizon')})
+  #silent $t.update({'{dist} au': $gettext('{dist} au')})
+  #silent $t.update({'receding': $gettext('receding')})
+  #silent $t.update({'approaching': $gettext('approaching')})
+  #silent $t.update({'LIVE': $gettext('LIVE')})
+  #silent $t.update({'{age}s ago': $gettext('{age}s ago')})
+  #silent $t.update({'NO DATA (HTTP {status}) — check loop_data_file': $gettext('NO DATA (HTTP {status}) — check loop_data_file')})
+  #silent $t.update({'BAD DATA — check loop_data_file': $gettext('BAD DATA — check loop_data_file')})
+  #silent $t.update({'OFFLINE': $gettext('OFFLINE')})
+  #silent $t.update({'CLICK-ME': $gettext('CLICK-ME')})
+  #silent $t.update({'{ly} ly': $gettext('{ly} ly')})
+  #silent $t.update({'Proxima': $gettext('Proxima')})
+  T = $json.dumps($t);
+  // Composed translations: look the English key up in T (falling back to
+  // the key, so a missing entry renders English) and fill the {named}
+  // placeholders.  Javascript key literals must spell non-ASCII with \u
+  // escapes to match json.dumps' escaping of the generated object.
+  function fmt(key, params) {
+    var s = T[key] || key;
+    for (var k in params) {
+      s = s.replace('{' + k + '}', params[k]);
+    }
+    return s;
+  }
+  function bodyLabel(key) {
+    if (key === 'proxima_centauri') {
+      return T['Proxima'] || 'Proxima';
+    }
+    return BODY_LABELS[key] || key;
+  }
   function addLoadEvent(func) {
     var oldonload = window.onload;
     if (typeof window.onload != 'function') {
@@ -109,8 +167,8 @@
   }
   function setUpExpiredClickListener() {
     var liveLabel = document.getElementById("live-label");
-    if (liveLabel.innerHTML != "CLICK-ME") {
-      liveLabel.innerHTML = "CLICK-ME";
+    if (liveLabel.innerHTML != T['CLICK-ME']) {
+      liveLabel.innerHTML = T['CLICK-ME'];
       // set an onclick event on live-label to restart everything
       liveLabel.addEventListener("click", clickListener);
     }
@@ -144,7 +202,7 @@
     return opts;
   }
   function fmtHMS(ts) {
-    return new Date(ts * 1000).toLocaleString("en-US",
+    return new Date(ts * 1000).toLocaleString(LOCALE,
       tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit'}));
   }
   function numberWithCommas(x) {
@@ -162,15 +220,13 @@
   }
 
   // ---- the Geocentric -----------------------------------------------------
-  // Bodies in roster order; the second element is the dial label.  Proxima
-  // Centauri is served only by the weewx-skyfield almanac (with stars on);
-  // its row and dot simply stay empty on any other almanac.
+  // Bodies in roster order; display names come from BODY_LABELS/T via
+  // bodyLabel.  Proxima Centauri is served only by the weewx-skyfield
+  // almanac (with stars on); its row and dot simply stay empty on any
+  // other almanac.
   var GEO_BODIES = [
-    ['moon', 'Moon'], ['sun', 'Sun'],
-    ['mercury', 'Mercury'], ['venus', 'Venus'], ['mars', 'Mars'],
-    ['jupiter', 'Jupiter'], ['saturn', 'Saturn'], ['uranus', 'Uranus'],
-    ['neptune', 'Neptune'], ['pluto', 'Pluto'],
-    ['proxima_centauri', 'Proxima']
+    'moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter',
+    'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri'
   ];
   var AU_PER_LY = 63241.077;          // au per light year, for Proxima's label
   // Dial geometry: azimuth is the compass bearing (plan view, east right);
@@ -209,8 +265,9 @@
     // Distance rings, one per decade, labeled down the SSE radial (the
     // evening sky crowds the west and the label radial must not sit in
     // it; nothing guarantees a clear lane, but SSE collides least).
-    var ringLabels = ['0.01 au', '0.1', '1 au', '10', '100',
-                      '10\u00B3 au', '10\u2074', '10\u2075'];
+    var au = function(d) { return fmt('{dist} au', {dist: d}); };
+    var ringLabels = [au('0.01'), '0.1', au('1'), '10', '100',
+                      au('10\u00B3'), '10\u2074', '10\u2075'];
     // fill='none' is structural, not color, so it rides as an attribute:
     // a stale cached stylesheet must never turn the rings into solid
     // discs that bury the dial.
@@ -228,25 +285,26 @@
       svgEl('line', {x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1],
                      'class': d % 90 === 0 ? 'geo-tick geo-tick-major' : 'geo-tick'}, dial);
     }
-    var cardinals = [[0, 'N'], [90, 'E'], [180, 'S'], [270, 'W']];
+    var cardinals = [[0, CARDINALS[0]], [90, CARDINALS[1]],
+                     [180, CARDINALS[2]], [270, CARDINALS[3]]];
     for (var c = 0; c < cardinals.length; c++) {
       var pc = dialXY(cardinals[c][0], 310);
       svgEl('text', {x: pc[0], y: pc[1] + 4.5, 'class': 'cardinal',
                      'text-anchor': 'middle'}, dial, cardinals[c][1]);
     }
     svgEl('circle', {cx: CX, cy: CY, r: 9, 'class': 'fill-earth geo-earth'}, dial);
-    svgEl('text', {x: CX, y: CY + 24, 'class': 'earthlab'}, dial, 'earth');
+    svgEl('text', {x: CX, y: CY + 24, 'class': 'earthlab'}, dial,
+          BODY_LABELS['earth'] || 'Earth');
     var trailsG = svgEl('g', {}, dial);
     var marks = {};
-    GEO_BODIES.forEach(function(pair) {
-      var key = pair[0];
+    GEO_BODIES.forEach(function(key) {
       var segs = [];
       for (var i = 0; i < TRAIL_N; i++) {
         segs.push(svgEl('line', {'class': 'trail stroke-' + key,
                                  display: 'none'}, trailsG));
       }
       var g = svgEl('g', {display: 'none'}, dial);
-      var m = {label: pair[1], g: g, segs: segs,
+      var m = {label: bodyLabel(key), g: g, segs: segs,
                glow: null, dot: null, lit: null, rim: null};
       if (key === 'sun') {
         m.glow = svgEl('circle', {r: 13, 'class': 'sunglow fill-sun'}, g);
@@ -260,7 +318,7 @@
       } else {
         m.dot = svgEl('circle', {r: 6.5, 'class': 'geodot fill-' + key}, g);
       }
-      m.lab = svgEl('text', {'class': 'bodylab'}, dial, pair[1]);
+      m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
       marks[key] = m;
     });
     return marks;
@@ -377,8 +435,7 @@
     var nextNew = num(latest, 'almanac.next_new_moon.raw');
     var waxing = (nextFull !== null && nextNew !== null) ? (nextFull < nextNew) : true;
     var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
-    GEO_BODIES.forEach(function(pair) {
-      var key = pair[0];
+    GEO_BODIES.forEach(function(key) {
       var azKey = 'almanac.' + key + '.az';
       var altKey = 'almanac.' + key + '.alt';
       var distKey = 'almanac.' + key + '.earth_distance';
@@ -395,18 +452,20 @@
       if (auNow !== null) {
         setOdometer(distKey, numberWithCommas(Math.round(auNow * PER_AU)));
         setHtml('geo-au-' + key,
-                (auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)) + ' au');
+                fmt('{dist} au',
+                    {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)}));
       }
       if (auRate !== null) {
         var perSec = Math.abs(auRate) * PER_AU;
         setHtml('geo-rate-' + key,
                 '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
-                (auRate >= 0 ? 'receding' : 'approaching') + ' ' +
+                T[auRate >= 0 ? 'receding' : 'approaching'] + ' ' +
                 perSec.toFixed(2) + DIST_LABEL + '/s');
       }
       if (altNow !== null) {
         setHtml('geo-alt-' + key,
-                altNow < 0 ? 'below horizon' : 'alt ' + altNow.toFixed(1) + '&deg;');
+                altNow < 0 ? T['below horizon']
+                           : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)}));
         setRowBelow(key, altNow < 0);
       }
       // The dial: dot, phase, label and trail need the full position.
@@ -445,7 +504,7 @@
       m.lab.setAttribute('class', below ? 'bodylab dim' : 'bodylab');
       if (key === 'proxima_centauri') {
         m.lab.textContent = m.label + ' \u00B7 ' +
-                            (auNow / AU_PER_LY).toFixed(2) + ' ly';
+                            fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)});
       }
       placeBodyLabel(m.lab, azNow, r);
       // The trail: the last hour of motion at the derived rates, drawn
@@ -503,7 +562,8 @@
       // user ever finds) left the page silently dead.
       if (this.status !== 200 && this.status !== 0) {
         setHtml("live-label",
-                "NO DATA (HTTP " + this.status + ") \u2014 check loop_data_file");
+                fmt('NO DATA (HTTP {status}) \u2014 check loop_data_file',
+                    {status: this.status}));
         return;
       }
       var result;
@@ -512,7 +572,7 @@
       } catch (e) {
         // A 200 with a non-JSON body: loop_data_file points at something,
         // but not at weewx-loopdata's output.
-        setHtml("live-label", "BAD DATA \u2014 check loop_data_file");
+        setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
         console.log(e);
         return;
       }
@@ -524,7 +584,7 @@
         var lastTs = result["current.dateTime.raw"];
         if (typeof lastTs === 'number') {
           var age = Math.round(Math.abs(Date.now() - lastTs * 1000) / 1000);
-          setHtml("live-label", age <= 6 ? "LIVE" : age + "s ago");
+          setHtml("live-label", age <= 6 ? T['LIVE'] : fmt('{age}s ago', {age: age}));
           // Display the time of the last update, in the page's timezone.
           setHtml("last-update", fmtHMS(lastTs));
         }
@@ -541,7 +601,7 @@
       // A network-level failure (server unreachable, request blocked):
       // unlike the HTTP case there is no status to show.  A later
       // successful poll rewrites the badge to LIVE.
-      setHtml("live-label", "OFFLINE");
+      setHtml("live-label", T['OFFLINE']);
     }
     xhttp.ontimeout = xhttp.onerror;
     try {

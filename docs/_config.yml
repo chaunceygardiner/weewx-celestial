@@ -1,0 +1,6 @@
+# GitHub Pages configuration for https://chaunceygardiner.github.io/weewx-celestial/
+theme: jekyll-theme-primer
+title: weewx-celestial
+description: "Watch the sky move -- a live Geocentric panel for WeeWX, driven by weewx-loopdata almanac fields"
+plugins:
+  - jekyll-sitemap

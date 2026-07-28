@@ -5,8 +5,13 @@
 ## See LICENSE for your rights.
 #errorCatcher Echo
 #encoding UTF-8
+## Every English string is a $gettext key (the key IS the English text, so
+## a missing [Texts] entry falls back to it); the report's lang file
+## translates the page.  tests/test_celestial.py reads these keys from
+## this file and the include and enforces that lang/en.conf ships exactly
+## the keys that render.
 <!DOCTYPE html>
-<html lang="en">
+<html lang="$lang">
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,7 +20,7 @@
     #else
       <title>$station.location</title>
     #end if
-    <meta name="description" content="The live sky over $station.location.">
+    <meta name="description" content="$gettext('The live sky over {location}.').format(location=$station.location)">
     ## All styling lives in celestial.css: Cheetah owns '#', so hex colors
     ## must never appear in this template or the javascript include.  The
     ## skin version tags the URL so browsers refetch the stylesheet after
@@ -52,11 +57,14 @@
       #set $per_au = 9.2955807e7    ## miles per astronomical unit
     #end if
     ## Station coordinates, hemisphere-lettered for the header; the
-    ## latitude also feeds the javascript moon disc (lit-side flip).
+    ## latitude also feeds the javascript moon disc (lit-side flip).  The
+    ## letters come from the report's [Labels] hemispheres (a lang-file
+    ## entry with a core default), the same source Seasons uses.
     #set $lat_f = $station.stn_info.latitude_f
     #set $lon_f = $station.stn_info.longitude_f
-    #set $lat_letter = 'N' if $lat_f >= 0 else 'S'
-    #set $lon_letter = 'E' if $lon_f >= 0 else 'W'
+    #set $hemispheres = $Labels.hemispheres
+    #set $lat_letter = $hemispheres[0] if $lat_f >= 0 else $hemispheres[1]
+    #set $lon_letter = $hemispheres[2] if $lon_f >= 0 else $hemispheres[3]
     ## The roster bodies, nearest-tier first: moon and sun, the planets in
     ## orbital order, Proxima Centauri last.  Every cell of every row is
     ## individually guarded: an almanac that cannot serve one body (PyEphem
@@ -70,37 +78,37 @@
             #if $Extras.has_key('title')
               $Extras.title
             #else
-              Celestial <span class="over">over</span> $station.location
+              $gettext('Celestial <span class="over">over</span> {location}').format(location=$station.location)
             #end if
           </h1>
           <div class="sub mono">
             $("%.2f&deg; %s &middot; %.2f&deg; %s" % (abs($lat_f), $lat_letter, abs($lon_f), $lon_letter))
             &middot; <span id="live-clock"></span>
-            &middot; updated <span id="last-update"></span> <span id="live-label"></span>
+            &middot; $gettext("updated") <span id="last-update"></span> <span id="live-label"></span>
           </div>
         </div>
       </header>
 
       <section>
-        <h2 class="eyebrow">The geocentric &middot; live</h2>
+        <h2 class="eyebrow">$gettext("The geocentric · live")</h2>
         #if not $extras
-        <p class="skyhint">Install
-        <a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>
-        (strongly recommended, and required for Proxima Centauri) or PyEphem
-        so the almanac can serve this panel's positions and distances.</p>
+        <p class="skyhint">$gettext("Install {skyfield} (strongly recommended, and required for Proxima Centauri) or PyEphem so the almanac can serve this panel's positions and distances.").format(skyfield='<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>')</p>
         #end if
         <div class="geo-body">
           <div>
             <svg id="dial" viewBox="0 0 660 660" role="img"
-                 aria-label="Geocentric chart: bodies placed by compass azimuth and log distance from Earth"></svg>
-            <p class="caption dialcaption">plan view &mdash; compass bearing, east to the
-            right &middot; rings step &times;10 in distance &middot;
-            solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below &middot;
-            trails show the last hour of motion</p>
+                 aria-label="$gettext('Geocentric chart: bodies placed by compass azimuth and log distance from Earth')"></svg>
+            <p class="caption dialcaption">$gettext("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion")</p>
           </div>
           <div class="roster mono">
+            ## Display names come from the report's [Almanac] section (the
+            ## same source as $almanac.<body>.label), falling back to the
+            ## capitalized tag name; Proxima Centauri uses the short
+            ## [Texts] label so the row never overflows.  The value cells
+            ## share their [Texts] keys with the javascript, so first
+            ## paint and live updates always agree.
             #for $body_name in $geo_bodies
-            #set $display_name = 'proxima' if $body_name == 'proxima_centauri' else $body_name
+            #set $display_name = $gettext('Proxima') if $body_name == 'proxima_centauri' else str($almanac.texts.get($body_name, $body_name.capitalize()))
             #set $dist_html = ''
             #set $au_html = ''
             #set $alt_html = ''
@@ -111,8 +119,9 @@
             #set $au_val = $body_obj.earth_distance
             #set $alt_val = $body_obj.alt
             #set $dist_html = "{:,.0f}".format($au_val * $per_au)
-            #set $au_html = ("%.1f au" % $au_val) if $au_val >= 1000 else ("%.6f au" % $au_val)
-            #set $alt_html = 'below horizon' if $alt_val < 0 else ("alt %.1f&deg;" % $alt_val)
+            #set $au_str = ("%.1f" % $au_val) if $au_val >= 1000 else ("%.6f" % $au_val)
+            #set $au_html = $gettext('{dist} au').format(dist=$au_str)
+            #set $alt_html = $gettext('below horizon') if $alt_val < 0 else $gettext('alt {alt}°').format(alt=("%.1f" % $alt_val))
             #set $below_cls = ' below' if $alt_val < 0 else ''
             #except
             #pass
@@ -134,17 +143,17 @@
         ## with its star catalog (the full credit); any other extended
         ## almanac gets the generic credit; the built-in almanac serves no
         ## live fields at all.
-        #set $footer_credit = "Calculated with WeeWX's built-in almanac"
+        #set $footer_credit = $gettext("Calculated with WeeWX's built-in almanac")
         #if $extras
-        #set $footer_credit = "Calculated with the station's extended almanac (weewx-skyfield or PyEphem)"
+        #set $footer_credit = $gettext("Calculated with the station's extended almanac (weewx-skyfield or PyEphem)")
         #try
         #silent $almanac.proxima_centauri.earth_distance
-        #set $footer_credit = "Calculated with Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)"
+        #set $footer_credit = $gettext("Calculated with Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)")
         #except
         #pass
         #end try
         #end if
-        $footer_credit &middot; live via weewx-loopdata.
+        $footer_credit &middot; $gettext("live via weewx-loopdata").
       </footer>
     </div>
   </body>

@@ -3,6 +3,9 @@ Open source plugin for WeeWX software.
 
 Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 
+[User manual](https://chaunceygardiner.github.io/weewx-celestial/) ·
+[GitHub project](https://github.com/chaunceygardiner/weewx-celestial)
+
 **This extension requires Python 3.9 or later, WeeWX 5.2 or later,
 [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 5.0 or
 later, and (strongly recommended)
@@ -202,6 +205,52 @@ and has its own ephemeris and star catalog).
 - The skin's `time_zone` Extras option (see `skin.conf`) controls the
   timezone of displayed times; by default the station's zone is
   auto-detected at report time.
+
+## Translations
+
+As of 7.2 the page is translatable, entirely through WeeWX's own
+mechanisms — lang files, `[Texts]`/`$gettext`, and the `[Almanac]`
+section — the same machinery as
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)'s Sky
+page.  Every string is keyed by its English text and falls back to English
+one string at a time, so a partial translation is fine.  The live values
+the javascript writes (badge, roster, dial labels) are translated at
+report-generation time and fed to the script, so the page stays in one
+language end to end.
+
+**German ships with the skin** (`lang/de.conf`, native-speaker reviewed,
+kept complete by a test — body names, moon phases and all 88 constellation
+names shared verbatim with weewx-skyfield's German).  To use it:
+
+```
+[StdReport]
+    [[CelestialReport]]
+        lang = de
+```
+
+For any other language, copy `skins/Celestial/lang/en.conf` (the reference
+dictionary — every string the page renders, and nothing else) to
+`<code>.conf` beside it and translate the values; the keys stay English,
+and `{named}` placeholders may be reordered but not renamed.  Or set
+`lang = de` once under `[StdReport] [[Defaults]]` and every skin that
+ships German switches together.  Further languages are welcome as
+contributions — a lang file is a self-contained, no-code contribution.
+
+Two notes:
+
+- Times (the clock and the last-update stamp) format per the report's
+  `lang` via the browser's own locale rules; no dictionary entries needed.
+- Loop-data **values** already localize with no work here: weewx-loopdata
+  5.0+ evaluates almanac fields with its *target report's* `[Almanac]`
+  texts, so fields like `almanac.moon.label` or
+  `almanac.mars.constellation.label` arrive in the target report's
+  language — one language per loopdata instance.
+
+The manual's
+[Translating the Celestial page](https://chaunceygardiner.github.io/weewx-celestial/i18n.html)
+covers all of this in full — the translation channels, the station-wide
+`[[Defaults]]` route, surviving upgrades, and the complete reference
+dictionary.
 
 ## Adding the Geocentric (or your own live panel) to your own skin
 
