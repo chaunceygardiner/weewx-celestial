@@ -140,3 +140,5 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 
 footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
        padding-top:16px; text-align:center; font-style:italic}
+footer a{color:inherit; text-underline-offset:3px; text-decoration-color:var(--brass)}
+footer a:hover{color:var(--brass)}

@@ -1,6 +1,14 @@
 weewx-celestial change history
 ------------------------------
 
+7.4 2026/07/29
+--------------
+- A complete French translation ships with the sample skin (Beta,
+  awaiting native-speaker review -- corrections welcome): lang/fr.conf,
+  its shared vocabulary -- body names, moon phases, compass points and
+  all 88 constellations -- in step with weewx-skyfield's fr.conf (a test
+  pins this, as for the German).  Select it with lang = fr in the report.
+
 7.3 2026/07/28
 --------------
 - FIX: 7.2's page failed to generate under weewxd -- every cycle logged

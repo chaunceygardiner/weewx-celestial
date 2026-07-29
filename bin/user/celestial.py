@@ -32,7 +32,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '7.3'
+CELESTIAL_VERSION = '7.4'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(

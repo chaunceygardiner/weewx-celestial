@@ -10,6 +10,8 @@
 ## translates the page.  tests/test_celestial.py reads these keys from
 ## this file and the include and enforces that lang/en.conf ships exactly
 ## the keys that render.
+## weewx.almanac feeds the footer's identity check (see there).
+#import weewx.almanac
 <!DOCTYPE html>
 <html lang="$lang">
   <head>
@@ -140,19 +142,37 @@
 
       <footer>
         ## The credit must be true for whatever almanac actually serves the
-        ## page, probed by capability: Proxima Centauri needs weewx-skyfield
-        ## with its star catalog (the full credit); any other extended
+        ## page, probed by capability: Proxima Centauri needs a Skyfield
+        ## almanac with a star catalog (the full credit); any other extended
         ## almanac gets the generic credit; the built-in almanac serves no
-        ## live fields at all.
+        ## live fields at all.  On top of the capability probe, an IDENTITY
+        ## check -- the same class-name-plus-module match weewx-skyfield's
+        ## own register_almanac uses -- decides whether the credit may name
+        ## weewx-skyfield and link its manual: the independent
+        ## weewx-skyfield-almanac extension also names its class
+        ## SkyfieldAlmanacType and could pass the Proxima probe, and must
+        ## not be credited as ours.
+        #set $wxsf = any([type(a).__name__ == 'SkyfieldAlmanacType' and type(a).__module__.split('.')[-1] == 'wxskyfield' for a in getattr(weewx.almanac, 'almanacs', [])])
         #set $footer_credit = $gettext("Calculated with WeeWX's built-in almanac")
         #if $extras
         #set $footer_credit = $gettext("Calculated with the station's extended almanac (weewx-skyfield or PyEphem)")
         #try
         #silent $almanac.proxima_centauri.earth_distance
+        #if $wxsf
+        #set $footer_credit = $gettext("Calculated with weewx-skyfield: Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)")
+        #else
         #set $footer_credit = $gettext("Calculated with Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)")
+        #end if
         #except
         #pass
         #end try
+        #end if
+        ## The name becomes a project-page link only when the check above
+        ## proved it is truly this extension serving the page; substituted
+        ## after translation, so it survives any language that keeps the
+        ## proper noun verbatim.
+        #if $wxsf
+        #set $footer_credit = $footer_credit.replace('weewx-skyfield', '<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>')
         #end if
         $footer_credit &middot; $gettext("live via weewx-loopdata").
       </footer>

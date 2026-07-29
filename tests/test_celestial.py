@@ -47,6 +47,13 @@ LONGITUDE   = -122.143
 ALTITUDE_M  = 9.0
 TIME_TS     = 1750532400      # 2025-06-21 12:00:00 PDT
 
+# When the identity check proves weewx-skyfield itself serves the page, the
+# footer credit names it and links its project page -- in every language.
+# (The skyhint's install pointer uses the same anchor, so footer-linkage
+# assertions must key on the credit phrasing, not this string alone.)
+LINKED_NAME = ('<a href="https://github.com/chaunceygardiner/weewx-skyfield">'
+               'weewx-skyfield</a>')
+
 # Where the independent weewx-skyfield extension may be found: the installed
 # copy on this machine, or a sibling checkout of its repo.
 WXSKYFIELD_DIRS = [
@@ -270,9 +277,29 @@ class TestSampleSkinRenders:
         assert '37.44' in html
         # A capable almanac serves the page: no install hint, and the
         # footer carries the full Skyfield credit (Proxima proves the star
-        # catalog).
+        # catalog) -- naming weewx-skyfield with its manual linked, since
+        # the identity check proves it is truly ours.
         assert 'skyhint' not in html
         assert 'Hipparcos' in html
+        assert 'Calculated with %s: Skyfield' % LINKED_NAME in html
+
+    def test_foreign_skyfield_almanac_not_credited(self, wxskyfield_sky):
+        """The independent weewx-skyfield-almanac extension also names its
+        class SkyfieldAlmanacType and can pass the Proxima capability probe;
+        the footer must then keep the unnamed full credit -- no manual link,
+        no claim that weewx-skyfield served the page."""
+        mod, _ = load_wxskyfield()
+        Foreign = type('SkyfieldAlmanacType', (mod.SkyfieldAlmanacType,),
+                       {'__module__': 'skyfieldalmanac'})
+        with saved_almanacs():
+            weewx.almanac.almanacs[:] = [Foreign(wxskyfield_sky)]
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
+                                        altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            html = self.render(alm)
+        assert 'Hipparcos' in html                       # probe passed...
+        assert 'Calculated with <a' not in html          # ...identity did not
+        assert 'Calculated with weewx-skyfield' not in html
 
     def test_javascript_reads_only_the_field_set(self):
         """The javascript's loop-data keys, expanded the way the include
@@ -529,10 +556,13 @@ class TestSampleSkinRenders:
         assert self.cell(html, 'geo-au-proxima_centauri') == ''
         assert 'id="geo-row-proxima_centauri"' in html
         # An extended almanac serves the page: no install hint; the footer
-        # must NOT claim Skyfield or the star catalog.
+        # must NOT claim Skyfield or the star catalog, and the generic
+        # credit's mention of weewx-skyfield stays unlinked -- PyEphem may
+        # be the engine serving the page.
         assert 'skyhint' not in html
         assert 'Hipparcos' not in html
         assert "extended almanac" in html
+        assert 'Calculated with <a' not in html
 
     def test_renders_without_extended_almanac(self):
         """With only the weeutil almanac (no PyEphem, no Skyfield), the page
@@ -555,6 +585,7 @@ class TestSampleSkinRenders:
         assert 'https://github.com/chaunceygardiner/weewx-skyfield' in html
         assert "built-in almanac" in html
         assert 'Hipparcos' not in html
+        assert 'Calculated with <a' not in html
         auto_tz = ''
         try:
             auto_tz = os.readlink('/etc/localtime').split('zoneinfo/')[-1]
@@ -665,13 +696,18 @@ class TestI18n:
         conf = self.lang_conf(self.LANG_DIR, 'de.conf')
         assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
 
-    def test_german_in_step_with_skyfield(self):
+    def test_fr_conf_is_complete(self):
+        """French likewise ships complete."""
+        conf = self.lang_conf(self.LANG_DIR, 'fr.conf')
+        assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
+
+    def test_lang_files_in_step_with_skyfield(self):
         """The shared vocabulary is copied verbatim from weewx-skyfield's
-        lang files (the native-speaker-reviewed German): body names, moon
-        phases, hemispheres, ordinates, all 88 constellation names, and
-        every [Texts] key both pages render -- the same cross-repo rule as
-        celestial.css staying in step with sky.css.  Skips when no
-        weewx-skyfield lang directory is available."""
+        lang files (German native-speaker reviewed; French Beta): body
+        names, moon phases, hemispheres, ordinates, all 88 constellation
+        names, and every [Texts] key both pages render -- the same
+        cross-repo rule as celestial.css staying in step with sky.css.
+        Skips when no weewx-skyfield lang directory is available."""
         candidates = [
             os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
                          'skins', 'Skyfield', 'lang'),
@@ -681,7 +717,7 @@ class TestI18n:
                          if os.path.exists(os.path.join(d, 'de.conf'))), None)
         if sky_lang is None:
             pytest.skip('the weewx-skyfield lang directory is not available')
-        for name in ('en.conf', 'de.conf'):
+        for name in ('en.conf', 'de.conf', 'fr.conf'):
             sky = self.lang_conf(sky_lang, name)
             cel = self.lang_conf(self.LANG_DIR, name)
             assert (dict(cel['Almanac']['Constellations'])
@@ -729,8 +765,43 @@ class TestI18n:
         assert '["N", "O", "S", "W"]' in html
         assert '"below horizon": "unter dem Horizont"' in html
         assert '"approaching": "n\\u00e4hert sich"' in html
-        # The footer carries the full German Skyfield credit.
-        assert 'Berechnet mit Skyfield' in html
+        # The footer carries the full German Skyfield credit, naming
+        # weewx-skyfield with the project link (ours truly serves this
+        # render; the substitution survives translation).
+        assert 'Berechnet mit %s: Skyfield' % LINKED_NAME in html
+
+    def test_shipped_french_renders(self, wxskyfield_sky):
+        """The shipped fr.conf, fed through the same channels the report
+        engine uses, renders a French page -- the template's static strings
+        and the json feeds the javascript composes from alike."""
+        mod, _ = load_wxskyfield()
+        conf = self.lang_conf(self.LANG_DIR, 'fr.conf')
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sky)
+            alm = weewx.almanac.Almanac(
+                TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                formatter=weewx.units.Formatter(
+                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                texts=dict(conf['Almanac']))
+            html = TestSampleSkinRenders.render(
+                alm, lang='fr', texts=dict(conf['Texts']),
+                labels={'hemispheres': list(conf['Labels']['hemispheres'])})
+        assert '<html lang="fr">' in html
+        assert 'La vue géocentrique' in html
+        # The roster first-paints French: the sun is up at the solstice
+        # noon, and the distance cells carry the French au unit.
+        assert 'hauteur ' in html
+        assert ' ua<' in html
+        # The javascript feeds: French body names and cardinals (json),
+        # and the composed-string dictionary.
+        assert '"moon": "Lune"' in html
+        assert '"mercury": "Mercure"' in html
+        assert '["N", "E", "S", "O"]' in html
+        assert '"below horizon": "sous l\'horizon"' in html
+        assert '"approaching": "se rapproche"' in html
+        # The footer carries the full French Skyfield credit, naming
+        # weewx-skyfield with the project link.
+        assert 'Calculé avec %s : Skyfield' % LINKED_NAME in html
 
 
 class TestMigrateLoopdataFields:
