@@ -318,10 +318,16 @@ class TestSampleSkinRenders:
                 keys.add('almanac.%s%s' % (body, suffix))
         # The literal (non-constructed) keys the include reads.
         for literal in ('current.dateTime.raw', 'almanac.moon.phase',
-                        'almanac.next_full_moon.raw', 'almanac.next_new_moon.raw'):
+                        'almanac.next_full_moon.unix_epoch.raw',
+                        'almanac.next_new_moon.unix_epoch.raw'):
             assert "'%s'" % literal in include or '"%s"' % literal in include, literal
             keys.add(literal)
         assert keys == set(celestial._MIGRATION_NEW_FIELDS)
+        # The pre-7.6 unpinned moon keys survive as read fallbacks, so a
+        # fields line migrated under <= 7.5 keeps working across the
+        # upgrade with no weewx.conf change.
+        for legacy in ('almanac.next_full_moon.raw', 'almanac.next_new_moon.raw'):
+            assert "'%s'" % legacy in include or '"%s"' % legacy in include, legacy
 
     def test_no_window_global_collisions(self):
         """The include's script runs at window scope, so its top-level
@@ -381,8 +387,8 @@ class TestSampleSkinRenders:
                                         formatter=weewx.units.get_default_formatter())
             r = {'current.dateTime.raw': ts,
                  'almanac.moon.phase': alm.moon.phase,
-                 'almanac.next_full_moon.raw': alm.next_full_moon.raw,
-                 'almanac.next_new_moon.raw': alm.next_new_moon.raw}
+                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
+                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
             for b in bodies:
                 obj = getattr(alm, b)
                 r['almanac.%s.az' % b] = obj.az
@@ -889,6 +895,21 @@ class TestMigrateLoopdataFields:
         new, _ = celestial.migrate_loopdata_fields(fields)
         assert new[:4] == ['almanac.sun.az', 'almanac.sun.azimuth',
                            'almanac.moon.dec', 'almanac.mars.alt']
+
+    def test_pre_76_moon_keys_upgrade_to_pinned(self):
+        """A fields line migrated under <= 7.5 carries the moon-phase keys
+        unpinned; a re-run upgrades them to the pinned spellings the 7.6
+        sample page reads, and a second run is a no-op."""
+        fields = ['almanac.next_full_moon.raw', 'almanac.next_new_moon.raw',
+                  'current.outTemp']
+        new, report = celestial.migrate_loopdata_fields(fields)
+        assert 'almanac.next_full_moon.unix_epoch.raw' in new
+        assert 'almanac.next_new_moon.unix_epoch.raw' in new
+        assert not any(f.endswith('_moon.raw') for f in new)
+        assert ('almanac.next_full_moon.raw',
+                'almanac.next_full_moon.unix_epoch.raw') in report['renamed']
+        twice, report2 = celestial.migrate_loopdata_fields(new)
+        assert twice == new and report2['renamed'] == []
 
     def test_moonwaxing_dropped_with_note(self):
         fields = ['current.moonWaxing.raw', 'current.outTemp']

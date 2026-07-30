@@ -431,8 +431,16 @@
     // The moon's phase, for its dial disc: percent full plus waxing
     // (the next full moon precedes the next new moon).
     var moonFrac = num(latest, 'almanac.moon.phase');
-    var nextFull = num(latest, 'almanac.next_full_moon.raw');
-    var nextNew = num(latest, 'almanac.next_new_moon.raw');
+    // Pinned spellings since 7.6; the pre-7.6 unpinned keys remain as
+    // fallbacks so a fields line migrated earlier keeps working unchanged.
+    var nextFull = num(latest, 'almanac.next_full_moon.unix_epoch.raw');
+    if (nextFull === null) {
+      nextFull = num(latest, 'almanac.next_full_moon.raw');
+    }
+    var nextNew = num(latest, 'almanac.next_new_moon.unix_epoch.raw');
+    if (nextNew === null) {
+      nextNew = num(latest, 'almanac.next_new_moon.raw');
+    }
     var waxing = (nextFull !== null && nextNew !== null) ? (nextFull < nextNew) : true;
     var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
     GEO_BODIES.forEach(function(key) {

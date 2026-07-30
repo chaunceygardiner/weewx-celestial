@@ -32,7 +32,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '7.5'
+CELESTIAL_VERSION = '7.6'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -186,7 +186,10 @@ for _planet in _MIGRATION_PLANETS:
 # migrator appends the missing ones.  Per body: az places the dial dot,
 # alt decides above/below-horizon rendering, earth_distance (raw AU)
 # drives the odometer; the moon adds its phase percent and the next
-# full/new moon instants (waxing = full before new) for the phase disc.
+# full/new moon instants (waxing = full before new) for the phase disc --
+# pinned to epoch seconds (.unix_epoch) because the page does date math
+# on them, so a [Units] [[Groups]] group_time override on loopdata's
+# target report must not change their meaning.
 # current.dateTime.raw is loopdata's own field, the live-age indicator
 # and the extrapolation anchor.
 _MIGRATION_NEW_FIELDS: List[str] = [
@@ -194,7 +197,7 @@ _MIGRATION_NEW_FIELDS: List[str] = [
     'almanac.sun.az', 'almanac.sun.alt', 'almanac.sun.earth_distance',
     'almanac.moon.az', 'almanac.moon.alt', 'almanac.moon.earth_distance',
     'almanac.moon.phase',
-    'almanac.next_full_moon.raw', 'almanac.next_new_moon.raw',
+    'almanac.next_full_moon.unix_epoch.raw', 'almanac.next_new_moon.unix_epoch.raw',
     'almanac.mercury.az', 'almanac.mercury.alt', 'almanac.mercury.earth_distance',
     'almanac.venus.az', 'almanac.venus.alt', 'almanac.venus.earth_distance',
     'almanac.mars.az', 'almanac.mars.alt', 'almanac.mars.earth_distance',
@@ -208,18 +211,28 @@ _MIGRATION_NEW_FIELDS: List[str] = [
 ]
 
 
+# Entries this migrator itself appended unpinned through 7.5; a re-run
+# upgrades them to the pinned spellings the sample page reads since 7.6.
+_MIGRATION_UPGRADED_FIELDS: Dict[str, str] = {
+    'almanac.next_full_moon.raw': 'almanac.next_full_moon.unix_epoch.raw',
+    'almanac.next_new_moon.raw': 'almanac.next_new_moon.unix_epoch.raw',
+}
+
+
 def _migrate_one_field(field: str) -> Tuple[Optional[str], Optional[str]]:
     """One fields-line entry rewritten to its almanac equivalent.  Returns
     (new_entry, note): (field, None) for entries that are not celestial loop
     fields; (None, note) for moonWaxing, which has no almanac equivalent."""
+    if field in _MIGRATION_UPGRADED_FIELDS:
+        return _MIGRATION_UPGRADED_FIELDS[field], None
     parts = field.split('.')
     if len(parts) < 2 or parts[0] != 'current':
         return field, None
     name = _MIGRATION_FIELD_MAP.get(parts[1], parts[1])
     if name == 'moonWaxing':
         return None, ('%s dropped: derive waxing in the page instead -- the moon '
-                      'is waxing when almanac.next_full_moon.raw < '
-                      'almanac.next_new_moon.raw.' % field)
+                      'is waxing when almanac.next_full_moon.unix_epoch.raw < '
+                      'almanac.next_new_moon.unix_epoch.raw.' % field)
     if name not in _ALMANAC_FIELD_MAP:
         return field, None
     raw_entry, formatted_entry = _ALMANAC_FIELD_MAP[name]

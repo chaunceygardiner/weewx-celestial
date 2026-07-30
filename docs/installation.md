@@ -33,7 +33,7 @@ description: Installing weewx-celestial 7.x, and upgrading from 6.x or from 5.x 
    comma-separated list (no brackets or quotes).  Append:
 
    ```
-   current.dateTime.raw, almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance, almanac.moon.az, almanac.moon.alt, almanac.moon.earth_distance, almanac.moon.phase, almanac.next_full_moon.raw, almanac.next_new_moon.raw, almanac.mercury.az, almanac.mercury.alt, almanac.mercury.earth_distance, almanac.venus.az, almanac.venus.alt, almanac.venus.earth_distance, almanac.mars.az, almanac.mars.alt, almanac.mars.earth_distance, almanac.jupiter.az, almanac.jupiter.alt, almanac.jupiter.earth_distance, almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance, almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance, almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance, almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance, almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance
+   current.dateTime.raw, almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance, almanac.moon.az, almanac.moon.alt, almanac.moon.earth_distance, almanac.moon.phase, almanac.next_full_moon.unix_epoch.raw, almanac.next_new_moon.unix_epoch.raw, almanac.mercury.az, almanac.mercury.alt, almanac.mercury.earth_distance, almanac.venus.az, almanac.venus.alt, almanac.venus.earth_distance, almanac.mars.az, almanac.mars.alt, almanac.mars.earth_distance, almanac.jupiter.az, almanac.jupiter.alt, almanac.jupiter.earth_distance, almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance, almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance, almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance, almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance, almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance
    ```
 
    (Entries already present — e.g. `current.dateTime.raw` — need not be
@@ -143,8 +143,9 @@ If your own pages read the old fields, note the three changes with no
 - **`almanac.moon.phase`** (the `moonFullness` replacement) is a raw
   percent (e.g. `33.6`), no longer a formatted string.
 - **`moonWaxing` is gone**: the moon is waxing exactly when
-  `almanac.next_full_moon.raw < almanac.next_new_moon.raw` (the bundled
-  skin shows the derivation).
+  `almanac.next_full_moon.unix_epoch.raw <
+  almanac.next_new_moon.unix_epoch.raw` (the bundled skin shows the
+  derivation).
 
 The `[Celestial]` section of weewx.conf (`enable`, `update_rate_secs`,
 `stars`) is obsolete and can be deleted.  The Skyfield and NumPy libraries
