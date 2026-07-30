@@ -32,7 +32,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '7.4'
+CELESTIAL_VERSION = '7.5'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -131,35 +131,41 @@ def _body_angles(body: str) -> Dict[str, Tuple[str, str]]:
 _MIGRATION_PLANETS: List[str] = ['mercury', 'venus', 'mars', 'jupiter',
                                  'saturn', 'uranus', 'neptune', 'pluto']
 
-# 4.0 celestial loop-field names mapped to their weewx-loopdata 5.0 almanac
-# equivalents, as (raw-rendition entry, formatted-rendition entry).
+# 4.0 celestial loop-field names mapped to their weewx-loopdata almanac
+# equivalents, as (raw-rendition entry, formatted-rendition entry).  The raw
+# renditions of times and durations carry a pinned unit segment
+# (.unix_epoch, .second): the old loop fields always emitted epoch seconds
+# and seconds regardless of report settings, and an unpinned almanac .raw
+# follows the target report's converter -- under a report with [Units]
+# [[Groups]] overrides (e.g. group_deltatime = hour) it would change
+# meaning.  Unit segments evaluate on every loopdata >= 5.0.
 _ALMANAC_FIELD_MAP: Dict[str, Tuple[str, str]] = {
-    'sunrise'                  : ('almanac.sunrise.raw', 'almanac.sunrise'),
-    'sunset'                   : ('almanac.sunset.raw', 'almanac.sunset'),
-    'sunTransit'               : ('almanac.sun.transit.raw', 'almanac.sun.transit'),
-    'tomorrowSunrise'          : ('almanac(days=1).sunrise.raw', 'almanac(days=1).sunrise'),
-    'tomorrowSunset'           : ('almanac(days=1).sunset.raw', 'almanac(days=1).sunset'),
-    'daylightDur'              : ('almanac.sun.visible.raw', 'almanac.sun.visible'),
-    'yesterdayDaylightDur'     : ('almanac(days=-1).sun.visible.raw', 'almanac(days=-1).sun.visible'),
-    'astronomicalTwilightStart': ('almanac(horizon=-18).sun(use_center=1).rise.raw',
+    'sunrise'                  : ('almanac.sunrise.unix_epoch.raw', 'almanac.sunrise'),
+    'sunset'                   : ('almanac.sunset.unix_epoch.raw', 'almanac.sunset'),
+    'sunTransit'               : ('almanac.sun.transit.unix_epoch.raw', 'almanac.sun.transit'),
+    'tomorrowSunrise'          : ('almanac(days=1).sunrise.unix_epoch.raw', 'almanac(days=1).sunrise'),
+    'tomorrowSunset'           : ('almanac(days=1).sunset.unix_epoch.raw', 'almanac(days=1).sunset'),
+    'daylightDur'              : ('almanac.sun.visible.second.raw', 'almanac.sun.visible'),
+    'yesterdayDaylightDur'     : ('almanac(days=-1).sun.visible.second.raw', 'almanac(days=-1).sun.visible'),
+    'astronomicalTwilightStart': ('almanac(horizon=-18).sun(use_center=1).rise.unix_epoch.raw',
                                   'almanac(horizon=-18).sun(use_center=1).rise'),
-    'nauticalTwilightStart'    : ('almanac(horizon=-12).sun(use_center=1).rise.raw',
+    'nauticalTwilightStart'    : ('almanac(horizon=-12).sun(use_center=1).rise.unix_epoch.raw',
                                   'almanac(horizon=-12).sun(use_center=1).rise'),
-    'civilTwilightStart'       : ('almanac(horizon=-6).sun(use_center=1).rise.raw',
+    'civilTwilightStart'       : ('almanac(horizon=-6).sun(use_center=1).rise.unix_epoch.raw',
                                   'almanac(horizon=-6).sun(use_center=1).rise'),
-    'civilTwilightEnd'         : ('almanac(horizon=-6).sun(use_center=1).set.raw',
+    'civilTwilightEnd'         : ('almanac(horizon=-6).sun(use_center=1).set.unix_epoch.raw',
                                   'almanac(horizon=-6).sun(use_center=1).set'),
-    'nauticalTwilightEnd'      : ('almanac(horizon=-12).sun(use_center=1).set.raw',
+    'nauticalTwilightEnd'      : ('almanac(horizon=-12).sun(use_center=1).set.unix_epoch.raw',
                                   'almanac(horizon=-12).sun(use_center=1).set'),
-    'astronomicalTwilightEnd'  : ('almanac(horizon=-18).sun(use_center=1).set.raw',
+    'astronomicalTwilightEnd'  : ('almanac(horizon=-18).sun(use_center=1).set.unix_epoch.raw',
                                   'almanac(horizon=-18).sun(use_center=1).set'),
-    'moonrise'                 : ('almanac.moon.rise.raw', 'almanac.moon.rise'),
-    'moonset'                  : ('almanac.moon.set.raw', 'almanac.moon.set'),
-    'moonTransit'              : ('almanac.moon.transit.raw', 'almanac.moon.transit'),
-    'nextEquinox'              : ('almanac.next_equinox.raw', 'almanac.next_equinox'),
-    'nextSolstice'             : ('almanac.next_solstice.raw', 'almanac.next_solstice'),
-    'nextFullMoon'             : ('almanac.next_full_moon.raw', 'almanac.next_full_moon'),
-    'nextNewMoon'              : ('almanac.next_new_moon.raw', 'almanac.next_new_moon'),
+    'moonrise'                 : ('almanac.moon.rise.unix_epoch.raw', 'almanac.moon.rise'),
+    'moonset'                  : ('almanac.moon.set.unix_epoch.raw', 'almanac.moon.set'),
+    'moonTransit'              : ('almanac.moon.transit.unix_epoch.raw', 'almanac.moon.transit'),
+    'nextEquinox'              : ('almanac.next_equinox.unix_epoch.raw', 'almanac.next_equinox'),
+    'nextSolstice'             : ('almanac.next_solstice.unix_epoch.raw', 'almanac.next_solstice'),
+    'nextFullMoon'             : ('almanac.next_full_moon.unix_epoch.raw', 'almanac.next_full_moon'),
+    'nextNewMoon'              : ('almanac.next_new_moon.unix_epoch.raw', 'almanac.next_new_moon'),
     'moonPhase'                : ('almanac.moon_phase', 'almanac.moon_phase'),
     'moonPhaseIndex'           : ('almanac.moon_index', 'almanac.moon_index'),
     'moonFullness'             : ('almanac.moon.phase', 'almanac.moon.phase'),

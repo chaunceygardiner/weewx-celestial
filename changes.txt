@@ -1,6 +1,26 @@
 weewx-celestial change history
 ------------------------------
 
+7.5 2026/07/30
+--------------
+- A complete Dutch translation ships with the sample skin (Beta,
+  awaiting native-speaker review -- corrections welcome): lang/nl.conf,
+  its shared vocabulary -- body names, moon phases, compass points and
+  all 88 constellations -- in step with weewx-skyfield's nl.conf (a test
+  pins this, as for the German and French).  Select it with lang = nl
+  in the report.
+- The --migrate-loopdata-fields utility now emits pinned-unit almanac
+  entries for raw times and durations: almanac.sunrise.unix_epoch.raw,
+  almanac.sun.visible.second.raw, and so on (weewx-loopdata 6.6
+  documents the unit segment).  The old celestial loop fields always
+  emitted epoch seconds and seconds regardless of report settings; an
+  unpinned almanac .raw follows loopdata's target report converter, so
+  a report with [Units] [[Groups]] overrides (e.g. group_deltatime =
+  hour) would silently change a migrated field's meaning.  Pinned
+  entries evaluate on every loopdata >= 5.0; users who already migrated
+  need not re-run, but pages served by a unit-overriding target report
+  should adopt the pinned spellings.
+
 7.4 2026/07/29
 --------------
 - A complete French translation ships with the sample skin (Beta,

@@ -39,7 +39,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "7.4",
+            version = "7.5",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
@@ -73,5 +73,6 @@ class CelestialInstaller(ExtensionInstaller):
                     'skins/Celestial/lang/en.conf',
                     'skins/Celestial/lang/de.conf',
                     'skins/Celestial/lang/fr.conf',
+                    'skins/Celestial/lang/nl.conf',
                     ]),
             ])

@@ -114,7 +114,10 @@ this extension, so the new version must be installed before it can run:
    line — every celestial entry (including pre-3.0 PascalCase names)
    becomes its almanac equivalent, rendition suffixes are honored,
    non-celestial entries are never touched, and the fields the report
-   needs are appended:
+   needs are appended.  Raw times and durations arrive with pinned units
+   (`almanac.sunrise.unix_epoch.raw`, `almanac.sun.visible.second.raw`),
+   so they keep the old fields' fixed meanings — epoch seconds, seconds
+   of daylight — no matter how loopdata's target report units are set:
 
    ```
    source /home/weewx/weewx-venv/bin/activate

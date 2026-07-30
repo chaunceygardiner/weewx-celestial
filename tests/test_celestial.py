@@ -701,9 +701,15 @@ class TestI18n:
         conf = self.lang_conf(self.LANG_DIR, 'fr.conf')
         assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
 
+    def test_nl_conf_is_complete(self):
+        """Dutch likewise ships complete."""
+        conf = self.lang_conf(self.LANG_DIR, 'nl.conf')
+        assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
+
     def test_lang_files_in_step_with_skyfield(self):
         """The shared vocabulary is copied verbatim from weewx-skyfield's
-        lang files (German native-speaker reviewed; French Beta): body
+        lang files (German native-speaker reviewed; French and Dutch
+        Beta): body
         names, moon phases, hemispheres, ordinates, all 88 constellation
         names, and every [Texts] key both pages render -- the same
         cross-repo rule as celestial.css staying in step with sky.css.
@@ -717,7 +723,11 @@ class TestI18n:
                          if os.path.exists(os.path.join(d, 'de.conf'))), None)
         if sky_lang is None:
             pytest.skip('the weewx-skyfield lang directory is not available')
-        for name in ('en.conf', 'de.conf', 'fr.conf'):
+        for name in ('en.conf', 'de.conf', 'fr.conf', 'nl.conf'):
+            if not os.path.exists(os.path.join(sky_lang, name)):
+                # An installed skyfield older than the sibling checkout may
+                # not ship this language yet; the sibling checkout does.
+                continue
             sky = self.lang_conf(sky_lang, name)
             cel = self.lang_conf(self.LANG_DIR, name)
             assert (dict(cel['Almanac']['Constellations'])
@@ -803,6 +813,40 @@ class TestI18n:
         # weewx-skyfield with the project link.
         assert 'Calculé avec %s : Skyfield' % LINKED_NAME in html
 
+    def test_shipped_dutch_renders(self, wxskyfield_sky):
+        """The shipped nl.conf, fed through the same channels the report
+        engine uses, renders a Dutch page -- the template's static strings
+        and the json feeds the javascript composes from alike."""
+        mod, _ = load_wxskyfield()
+        conf = self.lang_conf(self.LANG_DIR, 'nl.conf')
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sky)
+            alm = weewx.almanac.Almanac(
+                TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                formatter=weewx.units.Formatter(
+                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                texts=dict(conf['Almanac']))
+            html = TestSampleSkinRenders.render(
+                alm, lang='nl', texts=dict(conf['Texts']),
+                labels={'hemispheres': list(conf['Labels']['hemispheres'])})
+        assert '<html lang="nl">' in html
+        assert 'De geocentrische weergave' in html
+        # The roster first-paints Dutch: the sun is up at the solstice
+        # noon, and the distance cells carry the Dutch au unit.
+        assert 'hoogte ' in html
+        assert ' AE<' in html
+        # The javascript feeds: Dutch body names and cardinals (json),
+        # and the composed-string dictionary.  Dutch east is O and south
+        # is Z, so the cardinal ring proves the ordinates flowed through.
+        assert '"moon": "Maan"' in html
+        assert '"mercury": "Mercurius"' in html
+        assert '["N", "O", "Z", "W"]' in html
+        assert '"below horizon": "onder de horizon"' in html
+        assert '"approaching": "nadert"' in html
+        # The footer carries the full Dutch Skyfield credit, naming
+        # weewx-skyfield with the project link.
+        assert 'Berekend met %s: Skyfield' % LINKED_NAME in html
+
 
 class TestMigrateLoopdataFields:
     """The --migrate-loopdata-fields utility: rewrites celestial loop-field
@@ -818,12 +862,15 @@ class TestMigrateLoopdataFields:
                   'day.rain.sum']
         new, report = celestial.migrate_loopdata_fields(fields)
         # Rewrites happen in place, order preserved, renditions honored.
-        assert new[:8] == ['current.outTemp', 'almanac.sunrise.raw', 'almanac.sunset',
-                           'almanac(horizon=-6).sun(use_center=1).rise.raw',
-                           'almanac(days=1).sunrise.raw',
-                           'almanac(days=-1).sun.visible.raw',
-                           'almanac.sun.transit.raw', 'day.rain.sum']
-        assert ('current.sunrise.raw', 'almanac.sunrise.raw') in report['renamed']
+        # Raw times and durations arrive with pinned units (.unix_epoch,
+        # .second): the old loop fields' fixed meanings survive any [Units]
+        # [[Groups]] overrides on loopdata's target report.
+        assert new[:8] == ['current.outTemp', 'almanac.sunrise.unix_epoch.raw', 'almanac.sunset',
+                           'almanac(horizon=-6).sun(use_center=1).rise.unix_epoch.raw',
+                           'almanac(days=1).sunrise.unix_epoch.raw',
+                           'almanac(days=-1).sun.visible.second.raw',
+                           'almanac.sun.transit.unix_epoch.raw', 'day.rain.sum']
+        assert ('current.sunrise.raw', 'almanac.sunrise.unix_epoch.raw') in report['renamed']
 
     def test_pascal_names_chain_through(self):
         """Pre-3.0 PascalCase entries collapse to camelCase first, then map
@@ -831,8 +878,8 @@ class TestMigrateLoopdataFields:
         fields = ['current.Sunrise.raw', 'current.EarthMoonDistance',
                   'current.daySunshineDur.raw']
         new, report = celestial.migrate_loopdata_fields(fields)
-        assert new[:3] == ['almanac.sunrise.raw', 'almanac.moon.earth_distance',
-                           'almanac.sun.visible.raw']
+        assert new[:3] == ['almanac.sunrise.unix_epoch.raw', 'almanac.moon.earth_distance',
+                           'almanac.sun.visible.second.raw']
 
     def test_angle_renditions(self):
         """.raw angles become the plain-degree tags; formatted angles become
@@ -913,11 +960,11 @@ class TestMigrateLoopdataFields:
         )
         out = tmp_path / 'weewx.conf.migrated'
         report = celestial.migrate_loopdata_conf(str(conf), str(out))
-        assert ('current.Sunrise.raw', 'almanac.sunrise.raw') in report['renamed']
+        assert ('current.Sunrise.raw', 'almanac.sunrise.unix_epoch.raw') in report['renamed']
         import configobj
         migrated = configobj.ConfigObj(str(out))
         fields = migrated['LoopData']['Include']['fields']
-        assert 'almanac.sunrise.raw' in fields
+        assert 'almanac.sunrise.unix_epoch.raw' in fields
         assert 'current.Sunrise.raw' not in fields
         assert 'current.outTemp' in fields          # non-celestial preserved
         assert 'almanac.mars.az' in fields          # sample-report fields appended

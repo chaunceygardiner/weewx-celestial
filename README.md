@@ -147,7 +147,10 @@ this extension, so 7.0 must be installed before it can run:
    line — every celestial entry (including pre-3.0 PascalCase names)
    becomes its almanac equivalent, rendition suffixes are honored,
    non-celestial entries are never touched, and the fields the report
-   needs are appended:
+   needs are appended.  Raw times and durations arrive with pinned units
+   (`almanac.sunrise.unix_epoch.raw`, `almanac.sun.visible.second.raw`),
+   so they keep the old fields' fixed meanings — epoch seconds, seconds
+   of daylight — no matter how loopdata's target report units are set:
 
    ```
    source /home/weewx/weewx-venv/bin/activate
@@ -218,15 +221,16 @@ the javascript writes (badge, roster, dial labels) are translated at
 report-generation time and fed to the script, so the page stays in one
 language end to end.
 
-**German and French ship with the skin** (`lang/de.conf` native-speaker
-reviewed, `lang/fr.conf` Beta awaiting its review; each kept complete by a
-test — body names, moon phases and all 88 constellation names shared
-verbatim with weewx-skyfield's own lang files).  To use one:
+**German, French and Dutch ship with the skin** (`lang/de.conf`
+native-speaker reviewed, `lang/fr.conf` and `lang/nl.conf` Beta awaiting
+their reviews; each kept complete by a test — body names, moon phases and
+all 88 constellation names shared verbatim with weewx-skyfield's own lang
+files).  To use one:
 
 ```
 [StdReport]
     [[CelestialReport]]
-        lang = de                # or fr
+        lang = de                # or fr, nl
 ```
 
 For any other language, copy `skins/Celestial/lang/en.conf` (the reference
