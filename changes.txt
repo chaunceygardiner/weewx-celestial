@@ -1,6 +1,18 @@
 weewx-celestial change history
 ------------------------------
 
+7.7 2026/07/31
+--------------
+- A complete Spanish translation ships with the sample skin (Beta,
+  awaiting native-speaker review -- corrections welcome): lang/es.conf,
+  its shared vocabulary -- body names, moon phases, compass points and
+  all 88 constellations -- in step with weewx-skyfield's es.conf (a test
+  pins this, as for the German, French and Dutch).  Select it with
+  lang = es in the report.
+- The French translation drops its Beta label: the native-speaker review
+  it was waiting for is complete (2026/07/30, with weewx-skyfield 1.15)
+  and confirmed the translation as shipped.
+
 7.6 2026/07/30
 --------------
 - The sample page now reads the next full/new moon instants through
