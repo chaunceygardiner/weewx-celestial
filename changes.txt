@@ -1,6 +1,15 @@
 weewx-celestial change history
 ------------------------------
 
+7.8 2026/08/02
+--------------
+- A complete Danish translation ships with the sample skin, contributed
+  by native speaker Gert Andersen: lang/da.conf, its
+  shared vocabulary -- body names, moon phases, compass points and all
+  88 constellations -- in step with weewx-skyfield's da.conf (a test
+  pins this, as for the other languages).  Select it with lang = da in
+  the report.
+
 7.7 2026/07/31
 --------------
 - A complete Spanish translation ships with the sample skin (Beta,

@@ -222,8 +222,9 @@ the javascript writes (badge, roster, dial labels) are translated at
 report-generation time and fed to the script, so the page stays in one
 language end to end.
 
-**German, French, Dutch and Spanish ship with the skin** (`lang/de.conf`
-and `lang/fr.conf` native-speaker reviewed, `lang/nl.conf` and
+**German, French, Danish, Dutch and Spanish ship with the skin**
+(`lang/de.conf` and `lang/fr.conf` native-speaker reviewed, `lang/da.conf`
+contributed by native speaker Gert Andersen, `lang/nl.conf` and
 `lang/es.conf` Beta awaiting their reviews; each kept complete by a test —
 body names, moon phases and all 88 constellation names shared verbatim
 with weewx-skyfield's own lang files).  To use one:
@@ -231,7 +232,7 @@ with weewx-skyfield's own lang files).  To use one:
 ```
 [StdReport]
     [[CelestialReport]]
-        lang = de                # or fr, nl, or es
+        lang = de                # or fr, da, nl, or es
 ```
 
 For any other language, copy `skins/Celestial/lang/en.conf` (the reference

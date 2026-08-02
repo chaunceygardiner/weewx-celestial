@@ -717,10 +717,15 @@ class TestI18n:
         conf = self.lang_conf(self.LANG_DIR, 'es.conf')
         assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
 
+    def test_da_conf_is_complete(self):
+        """Danish likewise ships complete."""
+        conf = self.lang_conf(self.LANG_DIR, 'da.conf')
+        assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
+
     def test_lang_files_in_step_with_skyfield(self):
         """The shared vocabulary is copied verbatim from weewx-skyfield's
-        lang files (German and French native-speaker reviewed; Dutch and
-        Spanish Beta): body
+        lang files (German and French native-speaker reviewed; Danish
+        contributed by a native speaker; Dutch and Spanish Beta): body
         names, moon phases, hemispheres, ordinates, all 88 constellation
         names, and every [Texts] key both pages render -- the same
         cross-repo rule as celestial.css staying in step with sky.css.
@@ -734,7 +739,8 @@ class TestI18n:
                          if os.path.exists(os.path.join(d, 'de.conf'))), None)
         if sky_lang is None:
             pytest.skip('the weewx-skyfield lang directory is not available')
-        for name in ('en.conf', 'de.conf', 'fr.conf', 'nl.conf', 'es.conf'):
+        for name in ('en.conf', 'de.conf', 'fr.conf', 'nl.conf', 'es.conf',
+                     'da.conf'):
             if not os.path.exists(os.path.join(sky_lang, name)):
                 # An installed skyfield older than the sibling checkout may
                 # not ship this language yet; the sibling checkout does.
