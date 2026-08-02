@@ -1,6 +1,12 @@
 weewx-celestial change history
 ------------------------------
 
+7.8.1 (in progress)
+-------------------
+- The Danish page title is now "Himlen over", Gert Andersen's original
+  translation: 7.8 shipped "Himmellegemer over", a misreading of his
+  message.
+
 7.8 2026/08/02
 --------------
 - A complete Danish translation ships with the sample skin, contributed
