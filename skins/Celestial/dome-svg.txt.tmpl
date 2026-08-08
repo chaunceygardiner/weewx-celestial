@@ -1,0 +1,12 @@
+## Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
+## Distributed under the terms of the GNU Public License (GPLv3)
+##
+## The dome fragment, slot 0 of the staggered set (the sky rotates 15
+## degrees/hour; a load-once page would otherwise drift visibly under the
+## live satellite marker).  The body -- and the why of the stagger --
+## lives in dome-svg-frag.inc; this file keeps its pre-stagger name so a
+## page opened before an upgrade keeps refetching successfully.  Named
+## .txt so the *.html validator cron never sees a bare SVG fragment.
+#encoding UTF-8
+#set global $frag_k = 0
+#include "dome-svg-frag.inc"

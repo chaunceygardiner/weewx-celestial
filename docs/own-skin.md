@@ -39,6 +39,27 @@ different:
   packet age, `OFFLINE` on network failure, and
   `NO DATA (HTTP 404) — check loop_data_file` when the web server is not
   serving the loop-data file where the page expects it.
+- **Self-describing refetch fragments** (8.0).  The dome backdrop is
+  regenerated as a staggered set of files whose wrapper carries its own
+  timestamp, spacing and count, so the fetch side adapts to any archive
+  interval without configuration — and degrades to the freshest fragment
+  it has when report cycles stall.
+- **Tap tooltips** (8.0).  Native SVG `<title>` tooltips are hover-only
+  — on a touch screen they are simply dead.  `sky.js` (copied verbatim
+  from weewx-skyfield) fixes that with one document-level click
+  listener: a tap on or near a mark shows the same text as a floating
+  chip, and because the listener binds to nothing inside the SVG, marks
+  swapped in by a fragment refetch need no rebinding.  Marks your own
+  javascript draws join for free: give the mark's group a `<title>`
+  child and keep its text current (the Geocentric dial does exactly
+  this — name, live altitude, live distance).  On a live page,
+  dismiss an open chip whenever a swap moves the sky under it — a chip
+  should be a transient answer, never a stale overlay.
+- **Absent versus null.**  weewx-loopdata omits null-valued keys from
+  `loop-data.txt`, so the satellite rows distinguish a field that is not
+  in the fields line (first paint stands) from one that is present but
+  honestly empty (no pass to report) — worth copying in any page that
+  renders optional facts.
 
 The full almanac-field grammar is documented in
 [weewx-loopdata's manual](https://chaunceygardiner.github.io/weewx-loopdata/almanac-fields.html);

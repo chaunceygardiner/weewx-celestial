@@ -1,0 +1,19 @@
+## Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
+## Distributed under the terms of the GNU Public License (GPLv3)
+##
+## The pass-chart fragment: the same pass_chart_html the page embeds,
+## regenerated each report cycle into pass-chart.txt so the open page's
+## javascript can refetch the panel (a pass completes and the chart moves
+## on to the next one; a pass sliding into the elements' validity window
+## unhides a panel that first-painted hidden).  Named .txt so the *.html
+## validator cron never sees a bare fragment.  Empty when no capable
+## $sky_page serves the report OR no configured satellite has a visible
+## pass -- the javascript hides the panel on a deliberate empty and keeps
+## the chart it has on a failed fetch.  Deliberately NO #errorCatcher: an
+## unexpected failure must fail this template (weewxd logs it and the old
+## fragment stays on disk), never write error text the javascript would
+## inject into the page.
+#encoding UTF-8
+#if $sky_page
+$sky_page.pass_chart_html($almanac)#slurp
+#end if

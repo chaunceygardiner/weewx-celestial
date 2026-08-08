@@ -1,11 +1,175 @@
 weewx-celestial change history
 ------------------------------
 
-7.8.1 (in progress)
--------------------
+8.0 2026/08/08
+-----------------
+- ACTION (only to light up the satellite layer): append the
+  almanac.iss.* and almanac.tiangong.* entries to the [LoopData]
+  [[Include]] fields line (the README has the full line;
+  --migrate-loopdata-fields appends them for you, following your
+  [Skyfield] [[Satellites]] so a customized set gets its own tags'
+  entries instead) and run
+  weewx-skyfield 2.0 with its default [[Satellites]].  Without them the
+  page simply has no satellites; nothing else changes -- the upgrade is
+  otherwise drop-in.
+- weewx-loopdata 6.9 or later is now required (was 5.0): 8.0 depends on
+  its almanac-field fixes, most visibly the event-cache expiry that
+  rolls a satellite's next pass forward the moment it ends -- earlier
+  loopdata serves the day's first pass until midnight, so the pass rows
+  would read "just set" for hours.
+- The installer tells you when that action is pending: weectl's
+  configure hook compares the fields line with what the page reads
+  (the bundled migrator run in memory as the oracle, so the check
+  follows [Skyfield] [[Satellites]] exactly like the migrator) and
+  prints the migration commands with concrete paths -- your weewx.conf,
+  your bin directory, the running python -- when entries are missing or
+  outdated spellings linger.  The review command it prints (and the
+  docs now show) is a word-diff, git diff --no-index --word-diff: the
+  fields line is one long comma-separated value, and a plain diff
+  shows only two unreadable lines.  A hint only: the installer still never
+  edits [LoopData] (weectl's conditional merge cannot append into
+  another extension's comma-list value), it stays silent when the line
+  is complete, and no failure in the check can fail the install.
+- The page gains its second panel: the live sky dome.  The backdrop is
+  weewx-skyfield's dome_svg -- the full Hipparcos star field, the
+  constellation figures, sun, moon and planets -- embedded each report
+  cycle through a new guard-only search list
+  (user.celestial_sky.CelestialSkyPage serves $sky_page when
+  weewx-skyfield is installed; any lesser almanac gets an install hint,
+  never a broken page).  The open page steps the backdrop smoothly:
+  each report cycle renders a staggered set of up to ten dome
+  fragments (dome-svg.txt plus dome-svg-1..9.txt), spaced
+  max(60 s, interval/10) across the archive interval, and the page
+  refetches the slot covering the current minute -- a quarter-degree
+  step instead of the whole cycle's rotation lurching at once (a
+  five-minute step is plainly visible; watching a live pass proved
+  it).  The fragments self-describe (timestamp, slot, spacing, count --
+  the timestamp is the slot's own depicted time, and the slot number is
+  what lets the walk recover the cycle base rather than stepping
+  relative to whichever slot is showing, which zigzagged), so
+  any archive interval gets full-cycle coverage unconfigured, and a
+  late report cycle degrades to the freshest fragment available.
+  Between steps the sun/moon/planet marks are nudged live at
+  loop-derived rates through dome_svg's data-body hooks (new in
+  skyfield 2.0; an older dome simply stands still between refetches).
+  The dome is sky-chart orientation -- north up, east LEFT, as if lying
+  on your back looking up -- deliberately opposite the Geocentric
+  dial's map-convention plan view.
+- Satellites, live.  With the new fields (above), the dome carries the
+  layer that genuinely moves: the satellite marker -- dot and name --
+  repositioned every second (wrap-aware azimuth extrapolation between
+  loop packets), drawn whenever the satellite is up, its styling two
+  composing signals: inside Earth's shadow the dot inverts to a hollow
+  ring (the same convention as weewx-skyfield's dome marker), and a
+  bright sky (sun at -6 degrees or above) dims dot and name -- so a
+  dark-sky shadow exit reads as the flare it is, the ring snapping
+  solid at full brightness, and solid-and-bright always means visible
+  now, go look; beside
+  it, a satellite roster -- each satellite's next pass of ANY kind,
+  with a live countdown that rolls into "overhead now" during the
+  show, the appears/peaks/disappears line, and a visible/not-visible
+  tag from next_pass.visible, so the dome's dimmed daytime crossings
+  are announced too -- with honest rows ("no pass in the coming
+  week", "no usable orbital elements -- see the weewxd log") when
+  that is the truth.  The satellite set follows
+  [Skyfield] [[Satellites]] (enumerated through skyfield 2.0's public
+  satellite_names()): every configured satellite gets its roster row
+  and live tracking, given its fields -- the migrator appends fields
+  for the [[Satellites]] set it finds in the weewx.conf it rewrites
+  (the installer defaults, iss and tiangong, only when there is no
+  [[Satellites]] section to follow; a present-but-empty section
+  appends none, so a deliberately emptied set is never resurrected)
+  and the README shows the per-satellite pattern for hand edits.  A loop feed without a satellite's
+  keys (older skyfield, no [[Satellites]], an unmigrated fields line)
+  hides that layer, never the page.  All new entries use pinned-unit
+  spellings (the 7.5/7.6 doctrine), with bare-.raw read fallbacks for
+  hand-written lines.  --in-place's backup suffix now carries the
+  running version (.bak-celestial-8.0), so an 8.0 migration can never
+  overwrite a preserved earlier backup.
+- The Next Visible Pass panel, the page's third: skyfield 2.0's
+  pass_chart_html embedded -- the whole sky as it will stand at the
+  culmination of the soonest upcoming visible pass, the pass's arc
+  dashed across it with rise and set times at the ends, under a dated
+  head line -- beside a second satellite roster, each satellite's next
+  VISIBLE pass, the ones worth stepping outside for.  One chart, one
+  epoch, so the arc crosses the stars it will actually cross; the dome
+  deliberately draws no arc (an undated
+  future track on the now-sky read as tonight's).  During the pass
+  itself the chart's moment is only minutes from now, and the page
+  sweeps the satellite's dot live along the drawn arc.  When no
+  visible pass is coming the chart area hides and the roster's honest
+  rows say why (the whole panel hides only when no satellites are
+  configured);
+  the open page refetches the chart (pass-chart.txt, a third template
+  in the report) every five minutes like the dome, so a completed
+  pass's chart rolls over to the next pass by itself.
+- Both rosters' head lines are composed at report time as date, time
+  and countdown ("Aug 7 01:53 · in 3 h" -- the same idiom as
+  weewx-skyfield's satellite chips and this page's own live layer),
+  never the bare almanac rendering: its time-of-day-only form left a
+  pass days away reading as today's whenever the live feed had nothing
+  fresher to say (a satellite added minutes ago, a stalled feed).  The
+  date's strftime format is a translatable [Texts] key ('%b %-d'),
+  added to all nine languages verbatim from weewx-skyfield's.
+- Tooltips work on touch screens.  Every mark on the dome and the pass
+  chart carries a native SVG <title> tooltip, and browsers show those
+  only on hover -- on an iPad they were simply dead.  The skin now
+  ships weewx-skyfield 2.0's sky.js (copied verbatim, that repo the
+  source of truth): a tap on or near a mark shows the same text as a
+  floating chip, a tap on empty sky, Escape, scrolling or resizing
+  dismisses it, and mouse users lose nothing -- the native hover
+  tooltips still work, a click just pins the chip too.  Because this
+  page is live, the updater dismisses an open chip whenever the dome
+  or the pass chart swaps in a fresh fragment: a chip is a transient
+  answer, never a stale overlay on a sky that has moved on.  The dome
+  caption now reads "Hover or tap any mark for its coordinates.", in
+  all nine languages, weewx-skyfield's translations verbatim.  The
+  Geocentric dial joins in: its marks now carry the same tooltips
+  (body name, live altitude or "below horizon", live distance -- the
+  roster's own translated vocabulary, kept current by the same
+  updater that moves the dots), served by the same tap machinery and
+  the same caption sentence.
+- New --add-satellite / --remove-satellite command-line utility.  A
+  satellite beyond the installer's two takes three separate weewx.conf
+  edits -- the [Skyfield] [[Satellites]] entry, its nineteen
+  fields-line entries, the [StdReport] [[Defaults]] [[[Almanac]]]
+  display name -- and --add-satellite TAG=NORAD (with an optional
+  --name 'Display Name') makes them all in one command, one satellite
+  per run; --remove-satellite TAG is the exact inverse.  Every edit is
+  independently idempotent, so any mixed starting state converges: a
+  satellite already configured per weewx-skyfield's manual keeps its
+  entry and gains the fields, and re-running with a different number
+  or --name updates that piece in place (the rename path).  Same write
+  modes as the migrator: --output FILE (review the diff, original
+  untouched) or --in-place (versioned backup first).  Removing an
+  installer default (iss, tiangong) warns that the next weewx-skyfield
+  upgrade re-adds its [[Satellites]] entry (weectl's conditional
+  merge; re-run the removal afterwards), and removal never deletes the
+  cached wxskyfield_sat_<norad>.tle element file.
+- Three new translations, matching weewx-skyfield 2.0's: lang/it.conf
+  (Italian), lang/no.conf (Norwegian Bokmål -- the file code is no,
+  WeeWX's own code for Norwegian) and lang/sv.conf (Swedish), each
+  complete (the completeness tests extend to them) and Beta until a
+  native speaker reviews it.  The shared vocabulary -- body names,
+  moon phases, compass points and all 88 constellation names -- is
+  copied verbatim from weewx-skyfield's lang files, with the in-step
+  test covering all three; lang = it (or no, or sv) on the report
+  stanza switches the whole page, labels and live values alike.
+- The dome, satellite and pass-chart strings are translated in all nine
+  shipped languages, the shared vocabulary mined verbatim from
+  weewx-skyfield's lang files, and the [Almanac] sections now carry the
+  well-known satellite display names (iss = ISS, tiangong = Tiangong,
+  hst = HST) so almanac.<sat>.label never falls back to title-case;
+  only the dome panel's eyebrow, its install hint and the any-pass
+  roster's four strings (its heading, its no-pass row, "visible",
+  "not visible") are celestial's own wording.
 - The Danish page title is now "Himlen over", Gert Andersen's original
   translation: 7.8 shipped "Himmellegemer over", a misreading of his
   message.
+- The page-expiration timer clamps its delay to the browser's 32-bit
+  ceiling (~24.8 days): an expiration_time over ~596 (the setting is
+  hours) used to overflow the delay, which can make the page expire
+  early -- even immediately -- instead of effectively never.
 
 7.8 2026/08/02
 --------------

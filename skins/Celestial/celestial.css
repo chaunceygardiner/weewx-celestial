@@ -133,6 +133,58 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .earthlab{font-size:11px; fill:var(--c-earth); font-variant-caps:small-caps;
           letter-spacing:.12em; text-anchor:middle}
 
+/* The sky dome: weewx-skyfield's dome_svg embedded beside the satellite
+ * roster; one column below 1000px, like the Geocentric.  The dome is
+ * sky-chart orientation (north top, east LEFT) -- deliberately opposite
+ * the dial; do not harmonize them.  NOTE: "dome-body" is taken -- it is
+ * the class on the embedded SVG's per-body mark groups (skyfield 2.0's
+ * data-body consumer contract), so the panel wrapper is "domepanel". */
+.domepanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
+           gap:26px; align-items:center; margin-top:8px}
+@media (max-width: 1000px){
+  .domepanel{display:flex; flex-direction:column; align-items:stretch}
+}
+#dome-wrap svg{max-width:640px; margin:0 auto}
+.roster .eyebrow{margin-top:2px}
+.chip-sat{background:var(--brass)}
+.satline{font-size:.8rem}
+/* Dome typography borrowed from weewx-skyfield's sky.css -- names and
+ * values kept in step, same cross-repo rule as cardinal/bodylab/gridlab
+ * above (the light-theme variants stay behind: this page is night-only). */
+.starlab{font-size:10px; fill:var(--muted); font-family:Georgia, serif; font-style:italic}
+.conlab{font-size:10px; fill:#7C8FC9; font-family:Georgia, serif; font-style:italic;
+        letter-spacing:.14em; text-transform:uppercase}
+.satlab{fill:var(--brass); font-family:Georgia, serif}
+.nowlab{font-size:10px; fill:var(--brass)}
+/* The live satellite layer (javascript-drawn): the marker dot and its
+ * name, each with a faint variant for a satellite that is up but not
+ * visible to the eye (daylight, or in Earth's shadow). */
+.satdot{fill:var(--brass); stroke:var(--night); stroke-width:1.5}
+/* In Earth's shadow: the fill/stroke inversion of weewx-skyfield's static
+   dome marker (hollow ring, background fill so hover still lands). */
+.satdot.shadow{fill:var(--night); stroke:var(--brass); stroke-width:2}
+/* In a bright sky (sun >= -6): dimmed but drawn.  Whole-element opacity so
+   the hollow ring dims too (fill-opacity would leave its stroke bright). */
+.satdot.faint{opacity:.35}
+.satlab.faint{opacity:.45}
+
+/* The Next Visible Pass panel (weewx-skyfield's pass_chart_html embedded beside
+ * the visible-pass roster): the same two-column shape as the dome panel
+ * above, chart left, roster right, one column on narrow screens.  The
+ * passhead trio is borrowed from sky.css -- names and values kept in
+ * step, the same cross-repo rule as the dome typography above. */
+.passpanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
+           gap:26px; align-items:center; margin-top:8px}
+@media (max-width: 1000px){
+  .passpanel{display:flex; flex-direction:column; align-items:stretch}
+}
+#pass-chart{max-width:640px; margin:0 auto}
+.passcaption{max-width:640px; margin-left:auto; margin-right:auto}
+.passhead{display:flex; justify-content:space-between; align-items:baseline;
+          gap:12px; margin-bottom:10px; flex-wrap:wrap}
+.passname{font-variant-caps:small-caps; letter-spacing:.1em}
+.passwhen{font-size:.85rem; color:var(--brass)}
+
 /* Shown in the panel when no extended almanac serves the report. */
 .skyhint{color:var(--muted); font-style:italic; text-align:center;
          border:1px dashed var(--line); padding:38px 20px; margin:8px 0 6px}
@@ -142,3 +194,10 @@ footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
        padding-top:16px; text-align:center; font-style:italic}
 footer a{color:inherit; text-underline-offset:3px; text-decoration-color:var(--brass)}
 footer a:hover{color:var(--brass)}
+
+/* The tap tooltip (sky.js): the same text as a mark's hover <title>,
+   shown as a floating chip when a finger has no hover to offer. */
+.skytip{position:fixed; display:none; z-index:10; max-width:min(340px, 90vw);
+        background:var(--vault); color:var(--ink); border:1px solid var(--brass);
+        padding:6px 10px; font-size:.85rem; pointer-events:none;
+        box-shadow:0 2px 10px rgba(0,0,0,.4)}

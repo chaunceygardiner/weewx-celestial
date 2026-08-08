@@ -12,6 +12,7 @@
 ## the keys that render.
 ## weewx.almanac feeds the footer's identity check (see there).
 #import weewx.almanac
+#import time
 <!DOCTYPE html>
 <html lang="$lang">
   <head>
@@ -34,6 +35,15 @@
     #set $css_href = 'celestial.css?v=' + str($Extras.version)
     #end if
     <link rel="stylesheet" href="$css_href">
+    ## Tap tooltips (sky.js, copied verbatim from weewx-skyfield): SVG
+    ## <title> tooltips are hover-only, dead on touch; a tap shows the
+    ## same text as a floating chip.  Version-tagged like the css, and
+    ## for the same reason.
+    #set $js_href = 'sky.js'
+    #if $Extras.has_key('version')
+    #set $js_href = 'sky.js?v=' + str($Extras.version)
+    #end if
+    <script src="$js_href" defer></script>
   </head>
   <body>
     #include "realtime_updater.inc"
@@ -101,7 +111,7 @@
           <div>
             <svg id="dial" viewBox="0 0 660 660" role="img"
                  aria-label="$gettext('Geocentric chart: bodies placed by compass azimuth and log distance from Earth')"></svg>
-            <p class="caption dialcaption">$gettext("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion")</p>
+            <p class="caption dialcaption">$gettext("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion") $gettext("Hover or tap any mark for its coordinates.")</p>
           </div>
           <div class="roster mono">
             ## Display names come from the report's [Almanac] section (the
@@ -139,6 +149,210 @@
           </div>
         </div>
       </section>
+
+      <section>
+        <h2 class="eyebrow">$gettext("The sky dome · live")</h2>
+        ## The dome is weewx-skyfield's dome_svg, embedded per report cycle
+        ## through the guarded $sky_page (celestial_sky.CelestialSkyPage:
+        ## the real SkyPage when skyfield is installed, else None -- and
+        ## dome_svg's own guard returns '' when the skyfield almanac is not
+        ## actually registered, so one emptiness test covers both).  It is
+        ## sky-chart orientation -- north top, EAST LEFT, agreeing with
+        ## skyfield's own Sky page and deliberately opposite the dial's
+        ## map-convention plan view; do not harmonize them.  The javascript
+        ## refetches the dome fragment (dome-svg.txt, written by its own
+        ## template each report cycle) and nudges the sun/moon/planet marks
+        ## at loop rates between refreshes through their data-body hooks
+        ## (skyfield 2.0's consumer contract); satellites are the genuinely
+        ## live layer.
+        #set $dome_html = ''
+        #if $sky_page
+        #try
+        #set $dome_html = str($sky_page.dome_svg($almanac))
+        #except
+        #pass
+        #end try
+        #end if
+        #if $dome_html
+        <div class="domepanel">
+          <div id="dome-wrap">
+            ## The inner div is the javascript's swap target: the dome
+            ## fragment refetch replaces exactly this element's contents.
+            ## The wrapper self-describes like the staggered fragments
+            ## (dome-svg-frag.inc owns the math -- keep this block in
+            ## step), so the javascript can pick the right slot from the
+            ## very first refetch.
+            #set $frag_interval = 300
+            #try
+            #set $frag_interval = int($current.interval.raw) * 60
+            #except
+            #pass
+            #end try
+            #set $frag_step = max(60, $frag_interval // 10)
+            #set $frag_count = min(10, max(1, $frag_interval // $frag_step))
+            #set $frag_ts = int($almanac.time_ts)
+            <div id="dome-svg"><div class="domefrag" data-dome-ts="$frag_ts" data-dome-step="$frag_step" data-dome-count="$frag_count">$dome_html</div></div>
+            <p class="caption dialcaption">$gettext("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon.") $gettext("Hover or tap any mark for its coordinates.")</p>
+          </div>
+          ## The satellite rosters: one row per CONFIGURED satellite --
+          ## [Skyfield] [[Satellites]], enumerated through skyfield 2.0's
+          ## public $sky_page.satellite_names() (guarded: an older
+          ## skyfield has no method and no satellites, so no rows) -- a
+          ## satellite whose tags error is simply skipped, so a lesser
+          ## almanac costs rows, never the page.  Two tables, split by
+          ## panel: the dome (which draws any overhead satellite, dimmed
+          ## when not visible) gets the next pass of ANY kind, each row
+          ## tagged visible/not visible from next_pass.visible; the Next
+          ## Pass panel below gets the next VISIBLE pass, the chart's own
+          ## story.  Rows first-paint here
+          ## and go live from loop data; the include feeds the javascript
+          ## the same list, so rows and live layer always agree.  The
+          ## pass line, the honest no-pass and no-elements rows all reuse
+          ## weewx-skyfield's Sky page wording, so the translations are
+          ## shared verbatim; the any-pass strings are celestial's own.
+          #set $sat_names = []
+          #try
+          #for $n in $sky_page.satellite_names()
+          #silent $sat_names.append(str($n))
+          #end for
+          #except
+          #pass
+          #end try
+          #set $sat_rows = []
+          #for $sat_name in $sat_names
+          #try
+          #set $sat_obj = getattr($almanac, $sat_name)
+          #set $sat_label = str($sat_obj.label)
+          #set $sat_pass = $sat_obj.next_visible_pass
+          #set $sat_line = ''
+          #set $sat_sub = ''
+          ## The head line is composed, never str($sat_pass.rise): the
+          ## bare ValueHelper renders ephem_day (time-of-day only), and a
+          ## next pass can be days out -- a dated line is the truthful
+          ## first paint.  Same date + HM + countdown idiom as skyfield's
+          ## satellite chips and this page's own live layer (fmtDayHM +
+          ## satWhen), so the live replacement changes dress, not meaning.
+          #if $sat_pass.rise.raw is not None
+          #set $sat_delta = $sat_pass.rise.raw - $almanac.time_ts
+          #if $sat_pass.set.raw is not None and $sat_pass.rise.raw <= $almanac.time_ts and $almanac.time_ts < $sat_pass.set.raw
+          #set $sat_when = $gettext('overhead now')
+          #else if $sat_delta < 3600
+          #set $sat_when = $gettext('in {m} min').format(m=max(1, int($sat_delta // 60)))
+          #else if $sat_delta < 86400
+          #set $sat_when = $gettext('in {h} h').format(h=int(round($sat_delta / 3600)))
+          #else if int(-(-$sat_delta // 86400)) == 1
+          #set $sat_when = $gettext('in {n} day').format(n=1)
+          #else
+          #set $sat_when = $gettext('in {n} days').format(n=int(-(-$sat_delta // 86400)))
+          #end if
+          #set $sat_line = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($sat_pass.rise.raw)) + ' · ' + $sat_when
+          #set $sat_sub = $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min').format(rise=str($sat_pass.rise_azimuth.ordinal_compass), alt='%.0f' % $sat_pass.max_altitude.raw, culm=str($sat_pass.culmination_azimuth.ordinal_compass), set=str($sat_pass.set_azimuth.ordinal_compass), m='%d' % round($sat_pass.duration.raw / 60))
+          #else if $sat_obj.sunlit is not None
+          #set $sat_line = $gettext('no visible pass in the coming week')
+          #else
+          #set $sat_line = $gettext('no usable orbital elements — see the weewxd log')
+          #end if
+          #set $any_pass = $sat_obj.next_pass
+          #set $any_line = ''
+          #set $any_sub = ''
+          #if $any_pass.rise.raw is not None
+          #set $any_delta = $any_pass.rise.raw - $almanac.time_ts
+          #if $any_pass.set.raw is not None and $any_pass.rise.raw <= $almanac.time_ts and $almanac.time_ts < $any_pass.set.raw
+          #set $any_when = $gettext('overhead now')
+          #else if $any_delta < 3600
+          #set $any_when = $gettext('in {m} min').format(m=max(1, int($any_delta // 60)))
+          #else if $any_delta < 86400
+          #set $any_when = $gettext('in {h} h').format(h=int(round($any_delta / 3600)))
+          #else if int(-(-$any_delta // 86400)) == 1
+          #set $any_when = $gettext('in {n} day').format(n=1)
+          #else
+          #set $any_when = $gettext('in {n} days').format(n=int(-(-$any_delta // 86400)))
+          #end if
+          #set $any_line = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($any_pass.rise.raw)) + ' · ' + $any_when
+          #set $any_sub = $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min').format(rise=str($any_pass.rise_azimuth.ordinal_compass), alt='%.0f' % $any_pass.max_altitude.raw, culm=str($any_pass.culmination_azimuth.ordinal_compass), set=str($any_pass.set_azimuth.ordinal_compass), m='%d' % round($any_pass.duration.raw / 60))
+          #if $any_pass.visible is True
+          #set $any_sub = $any_sub + ' · ' + $gettext('visible')
+          #else if $any_pass.visible is False
+          #set $any_sub = $any_sub + ' · ' + $gettext('not visible')
+          #end if
+          #else if $sat_obj.sunlit is not None
+          #set $any_line = $gettext('no pass in the coming week')
+          #else
+          #set $any_line = $gettext('no usable orbital elements — see the weewxd log')
+          #end if
+          #silent $sat_rows.append((str($sat_name), $sat_label, $sat_line, $sat_sub, $any_line, $any_sub))
+          #except
+          #pass
+          #end try
+          #end for
+          #if $sat_rows
+          <div class="roster mono">
+            <h3 class="eyebrow">$gettext("Satellites · the next pass overhead")</h3>
+            #for $sat_name, $sat_label, $sat_line, $sat_sub, $any_line, $any_sub in $sat_rows
+            <div class="row" id="sat-any-row-$sat_name">
+              <span class="bname"><span class="chip chip-sat"></span>$sat_label</span>
+              <span class="odo satline" id="sat-any-line-$sat_name">$any_line</span>
+              <span class="rsub"><span id="sat-any-pass-$sat_name">$any_sub</span></span>
+            </div>
+            #end for
+          </div>
+          #end if
+        </div>
+        #else
+        <p class="skyhint">$gettext("Install {skyfield} so the almanac can draw the live sky dome.").format(skyfield='<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>')</p>
+        #end if
+      </section>
+
+      ## The Next Visible Pass panel: skyfield 2.0's pass_chart_html -- the whole
+      ## sky as it will stand at the culmination of the soonest upcoming
+      ## visible pass among the configured satellites, the pass's arc
+      ## dashed across it under a dated head line (the dome stopped
+      ## drawing the arc in 2.0: an undated future track on the now-sky
+      ## crossed stars it will never cross) -- beside the visible-pass
+      ## roster, the chart's own story.  The chart is empty when no
+      ## configured satellite has a visible pass in its elements'
+      ## validity window: the roster's honest rows then tell that story
+      ## with the chart area hidden, and the whole section hides only
+      ## when there are no satellite rows either.  The javascript's
+      ## fragment refetch (pass-chart.txt) unhides the chart when a pass
+      ## enters the window.  During an in-progress pass the chart's
+      ## epoch is within minutes of now, so the javascript sweeps the
+      ## featured satellite's data-body marker along the drawn arc; the
+      ## chart's sun, moon, planets and stars belong to the culmination
+      ## instant and are never nudged.
+      #set $passchart = ''
+      #if $sky_page
+      #try
+      #set $passchart = str($sky_page.pass_chart_html($almanac))
+      #except
+      #pass
+      #end try
+      #end if
+      #if $dome_html
+      #set $pass_sec_attr = '' if ($passchart or $sat_rows) else ' hidden'
+      #set $pass_wrap_attr = '' if $passchart else ' hidden'
+      <section id="pass-sec"$pass_sec_attr>
+        <h2 class="eyebrow">$gettext("The Next Visible Pass · the sky at its peak")</h2>
+        <div class="passpanel">
+          <div id="pass-wrap"$pass_wrap_attr>
+            <div id="pass-chart">$passchart</div>
+            <p class="caption passcaption">$gettext("The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.")</p>
+          </div>
+          #if $sat_rows
+          <div class="roster mono">
+            <h3 class="eyebrow">$gettext("Satellites · the next visible pass")</h3>
+            #for $sat_name, $sat_label, $sat_line, $sat_sub, $any_line, $any_sub in $sat_rows
+            <div class="row" id="sat-row-$sat_name">
+              <span class="bname"><span class="chip chip-sat"></span>$sat_label</span>
+              <span class="odo satline" id="sat-line-$sat_name">$sat_line</span>
+              <span class="rsub"><span id="sat-pass-$sat_name">$sat_sub</span></span>
+            </div>
+            #end for
+          </div>
+          #end if
+        </div>
+      </section>
+      #end if
 
       <footer>
         ## The credit must be true for whatever almanac actually serves the
