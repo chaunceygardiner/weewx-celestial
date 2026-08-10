@@ -1,6 +1,6 @@
 ---
 title: weewx-celestial — Watch the sky move
-description: A live celestial page for WeeWX — the Geocentric panel, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart — updating on every loop packet via weewx-loopdata almanac fields.
+description: A live celestial page for WeeWX — countdown central, the Geocentric panel with comets, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart — updating on every loop packet via weewx-loopdata almanac fields.
 ---
 
 # weewx-celestial
@@ -17,7 +17,31 @@ every loop packet.
 ---
 
 weewx-celestial ships a live celestial page (the bundled `Celestial` skin)
-built from three panels:
+built from three panels under a countdown row:
+
+**Countdown central** (new in 8.1) — ticking countdown chips at the
+top of the page: the soonest visible satellite pass ("ISS · appears in
+00:41:12", then "overhead now", rolling to the next pass as this one
+ends), sunset or sunrise — whichever comes next — the next meteor
+shower's peak with the moon's illumination at the peak, and
+astronomical darkness (begins and ends, whichever is next).  Windowed
+guests join within ~30 days of their
+event: the next equinox or solstice — named by the season it begins —
+Earth's perihelion or aphelion,
+the next supermoon, the next eclipse visible from your station,
+and each configured comet's perihelion.  A day or more out a countdown
+reads days-hours-minutes with the event's date beside it; inside the
+final day it becomes a ticking `hh:mm:ss` clock.  Every chip is
+client-side
+arithmetic on an event instant weewx-loopdata computes once and caches
+until it passes.
+
+The row riding through a sunset, live (1-second frames at about 15×
+speed): the sunset chip counts `hh:mm:ss` down through zero, then rolls
+itself to the next sunrise — loopdata expires the event and the page
+follows, no reload:
+
+![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll.gif)
 
 **The Geocentric** — Earth at the center, every body (sun, moon, the
 eight planets, Proxima Centauri) placed by compass bearing and log
@@ -26,7 +50,19 @@ dashed, and an hour-long motion trail behind every dot.  Beside the dial,
 a roster gives each body an odometer distance readout that ticks between
 loop refreshes at the body's true radial rate (Mercury can recede ~28 km
 every second while Saturn approaches at the same pace), plus the raw
-astronomical-unit value and the current altitude.
+astronomical-unit value and the current altitude.  With weewx-skyfield
+2.1, every configured comet joins the dial and roster (8.1): a diamond
+placed like a planet, its tail fanning anti-sunward from the sun's own
+dial point, solid when naked-eye bright, hollow when fainter — and
+honestly absent when the Minor Planet Center has dropped the comet's
+elements.
+
+Both installer-default comets on the live dial — Halley's diamond low in
+the eastern sky, its three-ray tail fanning away from the sun's own dial
+point, Hale-Bopp dimmed below the southern horizon — with their live
+roster rows below the planets':
+
+![The Geocentric dial with both comet diamonds and their tails](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDial-Comets.png)
 
 **The sky dome** (new in 8.0) — everything above the horizon right now:
 weewx-skyfield's own dome chart, the full Hipparcos star field and
@@ -53,7 +89,9 @@ really end:
 culmination of the soonest upcoming *visible* pass, the pass's arc dashed
 across it under a dated head line, with the visible-pass roster beside
 it.  During the pass itself the page sweeps the satellite's dot live
-along the drawn arc.  When no configured satellite has a visible pass
+along the drawn arc — flipping it between the solid sunlit dot and the
+hollow in-shadow ring as the satellite crosses the shadow line, in step
+with the dome's marker (8.1).  When no configured satellite has a visible pass
 coming, the chart hides and the roster's honest rows say why.
 
 The same July 24 pass on this panel — the chart features it, so the
@@ -61,6 +99,14 @@ sweep dot rides the dashed arc from the 21:54 rise to the 22:05 set
 while the visible-pass roster counts down beside it:
 
 ![The Next Visible Pass panel during the ISS pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-ISS-zenith.gif)
+
+And the live flip itself, captured August 10: NOAA-21 rises sunlit into
+the pre-dawn sky and drops into Earth's shadow at 48°, the sweep dot
+snapping from solid to the in-shadow ring mid-ride, in step with the
+dome's marker (the July 24 capture above predates the fix; its dot
+stays solid to the set):
+
+![The Next Visible Pass panel during a NOAA-21 pass, the sweep dot flipping to the in-shadow ring mid-ride](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-NOAA21-shadow-entry.gif)
 
 Everything on the page moves.  The dial and roster update from
 `loop-data.txt` on every loop record (for the Vantage driver, every 2
@@ -92,17 +138,23 @@ What installs:
   `CelestialReport`.
 - The `--migrate-loopdata-fields` command-line utility (see
   [upgrading](installation.md#upgrading-from-5x-or-earlier)), and the
-  `--add-satellite`/`--remove-satellite` utility that makes (or unmakes)
-  every weewx.conf edit a satellite takes in one command (see
-  [Adding and removing satellites](configuration.md#adding-and-removing-satellites)).
+  `--add-satellite`/`--remove-satellite` and
+  `--add-comet`/`--remove-comet` utilities that make (or unmake) every
+  weewx.conf edit a satellite or comet takes in one command (see
+  [Adding and removing satellites](configuration.md#adding-and-removing-satellites)
+  and [comets](configuration.md#adding-and-removing-comets)).
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data.  What you see depends on the almanac WeeWX has: with
-**weewx-skyfield 2.0** (satellites configured), everything — Proxima, the
-dome, the Next Visible Pass chart and the live satellite layer.  With an earlier
+**weewx-skyfield 2.1** (satellites and comets configured), everything —
+Proxima, the dome, the Next Visible Pass chart, the live satellite
+layer, the comet diamonds and the full countdown row.  With
+**weewx-skyfield 2.0**, everything but the comets and the
+shower/supermoon chips.  With an earlier
 **weewx-skyfield**, everything but the satellites and their chart.  With
 **PyEphem** (no weewx-skyfield), the Geocentric minus the Proxima
-Centauri row, and no dome or chart.  With only WeeWX's **built-in
+Centauri row, the sunset and darkness chips, and no dome or chart.  With
+only WeeWX's **built-in
 almanac**, the page generates but the panels show install hints — the
 built-in almanac serves none of the positions or distances this page runs
 on, which is why weewx-skyfield is strongly recommended.
@@ -122,8 +174,9 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
   6.9 or later
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
   strongly recommended (required for Proxima Centauri; 2.0 or later
-  required for the sky dome's satellites and the Next Visible Pass chart), or
-  PyEphem
+  required for the sky dome's satellites and the Next Visible Pass
+  chart; 2.1 or later for the comets, the meteor showers and the full
+  countdown row), or PyEphem
 
 ## License
 

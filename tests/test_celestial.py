@@ -170,6 +170,45 @@ def wxskyfield_sat_almanac(wxskyfield_sat_sky):
                                     formatter=weewx.units.get_default_formatter())
 
 
+@pytest.fixture(scope='session')
+def wxskyfield_comet_sky():
+    """A satellites-AND-comets-configured Sky: the satellite fixture TLEs
+    plus skyfield 2.1's archived MPC rows (deterministic pins: Halley
+    faint at 35.9 AU, Hale-Bopp below the horizon, C/9999 Z9 'bright' the
+    fabricated always-naked-eye comet, 220P/McNaught with the 2026-06-14
+    perihelion).  Both families on one Sky so the render and browser
+    tests exercise the whole page.  Skips when the sibling checkout's
+    fixtures (or its comet support, pre-2.1) are not available."""
+    mod, user_root = load_wxskyfield()
+    data_dir = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                            'tests', 'data')
+    if not os.path.exists(os.path.join(data_dir, 'wxskyfield_comets.txt')):
+        pytest.skip('the weewx-skyfield comet fixtures are not available')
+    if not os.path.exists(os.path.join(data_dir, 'wxskyfield_sat_25544.tle')):
+        pytest.skip('the weewx-skyfield fixture TLEs are not available')
+    try:
+        s = mod.Sky(user_root, load_stars=True,
+                    satellites={'iss': 25544, 'tiangong': 48274},
+                    sat_dir=data_dir,
+                    comets={'halley': '1P', 'hale_bopp': 'C/1995 O1',
+                            'bright': 'C/9999 Z9', 'mcnaught': '220P'},
+                    comet_dir=data_dir)
+    except TypeError:
+        pytest.skip('this weewx-skyfield has no comet support (pre-2.1)')
+    assert s.is_valid()
+    return s
+
+
+@pytest.fixture()
+def wxskyfield_comet_almanac(wxskyfield_comet_sky):
+    """An Almanac served by the comets-configured skyfield almanac."""
+    mod, _ = load_wxskyfield()
+    with saved_almanacs():
+        assert mod.register_almanac(wxskyfield_comet_sky)
+        yield weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                    formatter=weewx.units.get_default_formatter())
+
+
 class TestEngineGuards:
     """WeeWX version guards."""
 
@@ -470,6 +509,121 @@ class TestSampleSkinRenders:
         assert 'id="skygp"' in html and 'id="domecp"' in html
         assert 'id="skyg"' in html and 'id="domec"' in html
 
+    def test_renders_with_comets(self, wxskyfield_comet_almanac):
+        """Comets configured (the skyfield 2.1 fixture MPC rows): the
+        Geocentric roster gains one guarded row per comet (Halley's cells
+        filled -- 35.9 AU, honestly faint; Hale-Bopp below the horizon at
+        the fixture noon), the javascript gets the same enumeration
+        through COMET_NAMES, the countdown row first-paints its always-on
+        chips from the report almanac, and the embedded dome carries the
+        comet marks' data-bright/comet-tail hooks through untouched."""
+        html = self.render(wxskyfield_comet_almanac, sky_page=make_sky_page())
+        for comet in ('halley', 'hale_bopp', 'bright', 'mcnaught'):
+            assert 'id="geo-row-%s"' % comet in html
+            # Every perihelion guest bakes its target even while hidden
+            # (all four fixture perihelia are outside the 30-day
+            # window; Hale-Bopp's is decades PAST -- the epoch still
+            # bakes, the window check keeps the chip hidden).
+            assert re.search(r'id="chip-peri-%s" data-ts="\d+" hidden' % comet,
+                             html)
+        # The roster reads nearest-tier outward: comets sit between
+        # Pluto and the stellar rim, never past Proxima.
+        assert (html.index('id="geo-row-pluto"')
+                < html.index('id="geo-row-halley"')
+                < html.index('id="geo-row-mcnaught"')
+                < html.index('id="geo-row-proxima_centauri"'))
+        assert re.match(r'[\d,]+$', self.cell(html, 'almanac.halley.earth_distance'))
+        assert self.cell(html, 'geo-au-halley').endswith(' au')
+        assert self.cell(html, 'geo-alt-halley').startswith('alt ')
+        assert self.cell(html, 'geo-alt-hale_bopp') == 'below horizon'
+        assert 'COMET_NAMES = ["halley", "hale_bopp", "bright", "mcnaught"];' in html
+        assert 'function renderComets(' in html
+        # The countdown row: the pass chip and the windowed guests
+        # first-paint hidden; the sun, shower and darkness chips
+        # first-paint the COUNTDOWN ITSELF -- the remaining time at
+        # generation, in the shape the javascript ticks: hh:mm:ss
+        # inside the final day, days-hours-minutes beyond (seconds are
+        # noise at that range) -- never the event's clock time alone (a
+        # countdown chip whose only number is a wall-clock time reads
+        # as remaining time and lies); the clock time / moon note is
+        # the small detail beside it (noon: sunset comes before
+        # sunrise, ~8 h out; the fixture shower peak is ~38 days out,
+        # so its countdown reads days-hours-minutes).
+        assert 'id="countdown"' in html
+        # The pass chip first-paints the soonest visible pass (the
+        # fixture ISS pass tomorrow morning, ~15 h out) -- all four
+        # always-on chips stand from the first byte, none pops in on
+        # the first loop packet.
+        assert re.search(r'id="chip-pass" data-ts="\d+" data-set="\d+"', html)
+        assert self.cell(html, 'chip-pass-k') == 'Iss'
+        assert self.cell(html, 'chip-pass-d') == 'appears in'
+        assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-pass-v'))
+        # The supermoon and eclipse guests bake their targets (and the
+        # eclipse its kind-derived label) even while out of window --
+        # nothing determinable at report time waits for the feed.
+        assert re.search(r'id="chip-super" data-ts="\d+" hidden', html)
+        assert re.search(r'id="chip-eclipse" data-ts="\d+" hidden', html)
+        assert self.cell(html, 'chip-eclipse-k') in ('lunar eclipse',
+                                                     'solar eclipse')
+        assert self.cell(html, 'chip-sun-k') == 'sunset'
+        assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-sun-v'))
+        assert re.match(r'\d{2}:\d{2}$', self.cell(html, 'chip-sun-d'))
+        assert self.cell(html, 'chip-shower-k') == 'Southern Delta Aquariids'
+        assert re.match(r'\d{1,3}d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-shower-v'))
+        assert 'moon ' in self.cell(html, 'chip-shower-d')
+        assert self.cell(html, 'chip-dark-k') == 'darkness begins'
+        assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-dark-v'))
+        assert re.match(r'\d{2}:\d{2}$', self.cell(html, 'chip-dark-d'))
+        # The season chip: from the June fixture the next event is
+        # September's equinox, 93 days out -- outside the 30-day window,
+        # so the chip first-paints hidden, but its label and target bake
+        # so the javascript can unhide it the moment the window opens
+        # (northern station: 'autumn begins').
+        assert re.search(r'id="chip-season" data-ts="\d+" hidden', html)
+        assert self.cell(html, 'chip-season-k') == 'autumn begins'
+        assert self.cell(html, 'chip-season-v') == ''
+        # Earth's apsis chip: the fixture aphelion is ~12 days out --
+        # INSIDE the window, so this guest first-paints visible and
+        # counting, date detail underneath.
+        assert re.search(r'id="chip-apsis" data-ts="\d+">', html)
+        assert self.cell(html, 'chip-apsis-k') == 'Earth aphelion'
+        assert re.match(r'\d{1,2}d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-apsis-v'))
+        assert re.match(r'\w+ \d{1,2} \d{2}:\d{2}$', self.cell(html, 'chip-apsis-d'))
+        # The embedded dome passes the 2.1 comet markup through intact:
+        # Halley's hollow diamond (mag 25.6) and the fabricated
+        # always-bright comet's solid one, tails and all.  (No radiant at
+        # the June fixture instant -- active_meteor_showers is empty.)
+        assert 'data-body="halley" data-bright="0"' in html
+        assert 'data-body="bright" data-bright="1"' in html
+        assert 'class="comet-tail"' in html
+
+    def test_comet_absence_renders_absence(self):
+        """An elementless comet (MPC drops faded ones) serves None across
+        its surface: the roster row renders honestly EMPTY cells -- never
+        the string "None" -- and its perihelion chip stays hidden."""
+        mod, user_root = load_wxskyfield()
+        data_dir = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                                'tests', 'data')
+        if not os.path.exists(os.path.join(data_dir, 'wxskyfield_comets.txt')):
+            pytest.skip('the weewx-skyfield comet fixtures are not available')
+        try:
+            ghost_sky = mod.Sky(user_root, load_stars=False,
+                                comets={'ghost': '998P'}, comet_dir=data_dir)
+        except TypeError:
+            pytest.skip('this weewx-skyfield has no comet support (pre-2.1)')
+        with saved_almanacs():
+            assert mod.register_almanac(ghost_sky)
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
+                                        altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            html = self.render(alm, sky_page=make_sky_page())
+        assert 'id="geo-row-ghost"' in html
+        assert self.cell(html, 'almanac.ghost.earth_distance') == ''
+        assert self.cell(html, 'geo-au-ghost') == ''
+        assert self.cell(html, 'geo-alt-ghost') == ''
+        assert 'id="chip-peri-ghost" hidden' in html
+        assert self.cell(html, 'chip-peri-ghost-k') == ''
+
     @staticmethod
     def render_dome_fragment(name, search):
         """Render a dome fragment template FILE-based, so Cheetah's real
@@ -639,12 +793,35 @@ class TestSampleSkinRenders:
         for body in bodies:
             for suffix in ('.az', '.alt', '.earth_distance'):
                 keys.add('almanac.%s%s' % (body, suffix))
-        # The literal (non-constructed) keys the include reads.
+        # The literal (non-constructed) keys the include reads -- the
+        # moon-phase pair, the anchor, and the countdown chips' event
+        # instants (8.1): the sun pair, astronomical darkness (the
+        # parenthesized horizon spelling, byte-exact with the fields
+        # line), the shower peak/label pair, the supermoon and the
+        # eclipse trio.
         for literal in ('current.dateTime.raw', 'almanac.moon.phase',
                         'almanac.next_full_moon.unix_epoch.raw',
-                        'almanac.next_new_moon.unix_epoch.raw'):
+                        'almanac.next_new_moon.unix_epoch.raw',
+                        'almanac.sun.next_setting.unix_epoch.raw',
+                        'almanac.sun.next_rising.unix_epoch.raw',
+                        'almanac(horizon=-18).sun.next_setting.unix_epoch.raw',
+                        'almanac(horizon=-18).sun.next_rising.unix_epoch.raw',
+                        'almanac.next_equinox.unix_epoch.raw',
+                        'almanac.next_solstice.unix_epoch.raw',
+                        'almanac.next_perihelion.unix_epoch.raw',
+                        'almanac.next_aphelion.unix_epoch.raw',
+                        'almanac.next_meteor_shower.peak.unix_epoch.raw',
+                        'almanac.next_meteor_shower.label',
+                        'almanac.next_supermoon.unix_epoch.raw',
+                        'almanac.next_eclipse.unix_epoch.raw',
+                        'almanac.next_eclipse_kind'):
             assert "'%s'" % literal in include or '"%s"' % literal in include, literal
             keys.add(literal)
+        # The eclipse TYPE is deliberately NOT a loopdata field: the
+        # type detail is generation-painted from the report tag
+        # ($almanac.next_eclipse_type in the template) and never
+        # rewritten live, so the line carries no field for it.
+        assert 'almanac.next_eclipse_type' not in celestial._MIGRATION_NEW_FIELDS
         # The satellite layer is DYNAMIC: SAT_NAMES is generated from
         # skyfield 2.0's public $sky_page.satellite_names() (the template
         # builds the roster rows from the same enumeration), and the
@@ -681,6 +858,19 @@ class TestSampleSkinRenders:
                 for attr in PASS_ATTRS:
                     keys.add('almanac.%s%s%s' % (sat, base, attr))
             keys.add('almanac.%s.next_pass.visible' % sat)
+        # The comet layer is dynamic the same way: COMET_NAMES from
+        # skyfield 2.1's public comet_names(), the per-comet keys
+        # composed from the suffix set below.  _MIGRATION_NEW_FIELDS
+        # carries the installer-DEFAULT comets (halley, hale_bopp);
+        # extra [[Comets]] entries take the same six-entry pattern
+        # (--add-comet writes it).
+        assert 'comet_names()' in include
+        for literal in ('.mag', '.perihelion.unix_epoch.raw'):
+            assert "'%s'" % literal in include, literal
+        for comet in ('halley', 'hale_bopp'):
+            for suffix in ('.az', '.alt', '.earth_distance', '.mag', '.label',
+                           '.perihelion.unix_epoch.raw'):
+                keys.add('almanac.%s%s' % (comet, suffix))
         assert keys == set(celestial._MIGRATION_NEW_FIELDS)
         # The pre-7.6 unpinned moon keys survive as read fallbacks, so a
         # fields line migrated under <= 7.5 keeps working across the
@@ -1049,6 +1239,514 @@ class TestSampleSkinRenders:
         assert out['dial_title'] == 'Mars · alt 30.0° · 1.660000 au'
         assert out['dial_chip'] == {'shown': True, 'text': out['dial_title']}
 
+    def test_pass_sweep_dot_flips_sunlit_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The 8.1 fix for the 8.0 ship-review finding: mid-pass the
+        chart's sweeping dot wears the satellite's LIVE sunlit state --
+        solid dot vs hollow in-shadow ring, the dome marker's own toggle
+        -- not the culmination's state for the whole ride (NOAA-21 Aug 8:
+        a shadow culmination drew the ring from rise while the dome
+        correctly showed the live shadow entry, the two panels
+        disagreeing).  The feed lies the fixture pass into progress
+        around the browser's real clock and walks sunlit true -> false ->
+        true: the dot must flip to the exact fill/stroke INVERSION of its
+        generated look (how the generator itself draws a shadowed
+        satellite -- no color knowledge, no CSS coupling) in agreement
+        with the dome's live marker, and restore the generated attributes
+        when sunlit returns.  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        # The generated look, straight from the rendered chart (the only
+        # data-sunlit iss group on the page: the ISS is below the horizon
+        # at the fixture instant, so the dome draws no marker for it).
+        # The fixture pass CULMINATES IN SHADOW -- visible at its ends,
+        # ringed at its peak: the NOAA-21 shape of the ship-review finding
+        # exactly, so the generated dot is the ring and the live-sunlit
+        # phases below flip it solid.
+        m = relib.search(r'<g class="dome-body" data-body="iss" data-sunlit="(\d)">'
+                         r'<circle[^>]*fill="([^"]+)" stroke="([^"]+)"', html)
+        assert m is not None
+        gen_sunlit, gen_fill, gen_stroke = m.group(1), m.group(2), m.group(3)
+        assert gen_sunlit == '0'
+        # Each live state's expected look, relative to the generated pair:
+        # the shadowed look is always the exact inversion of the sunlit one.
+        shadow_fill, shadow_stroke = gen_fill, gen_stroke
+        lit_fill, lit_stroke = gen_stroke, gen_fill
+
+        # Five packets, one per 2 s poll: the pass in progress around the
+        # browser's real clock, sunlit walking true -> false -> true (the
+        # last packet repeats forever, so the restore state is stable).
+        # A dark sky (sun at -30) keeps the dome marker un-faint: the
+        # shadow ring is the only toggle under test.
+        now = time.time()
+
+        def packet(i, sunlit):
+            return jsonlib.dumps({
+                'current.dateTime.raw': now + 2 * i,
+                'almanac.sun.alt': -30.0,
+                'almanac.iss.az': 120.0 + 0.5 * i,
+                'almanac.iss.alt': 45.0 + 0.1 * i,
+                'almanac.iss.sunlit': sunlit,
+                'almanac.iss.label': 'ISS',
+                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now - 60,
+                'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 600,
+            }).encode()
+        packets = [packet(0, True), packet(1, False), packet(2, False),
+                   packet(3, False), packet(4, True)]
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The sweep engaged: the feed put the pass in progress.\n'
+            "    page.wait_for_selector('#pass-chart g.dome-body[transform]',\n"
+            '                           timeout=15000)\n'
+            '    # The shadow packets: chart dot ringed, dome dot ringed --\n'
+            '    # the two panels agreeing is the point of the fix.\n'
+            '    page.wait_for_function("""() => {\n'
+            "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
+            "      return c !== null && c.getAttribute('fill') === '%(sfill)s' &&\n"
+            "             c.getAttribute('stroke') === '%(sstroke)s' &&\n"
+            "             document.querySelector('#dome-svg .satdot.shadow') !== null;\n"
+            '    }""", timeout=20000)\n'
+            '    # Sunlit returns: the chart dot flips to the inversion of its\n'
+            '    # generated shadow look, in step with the dome, mid-sweep.\n'
+            '    page.wait_for_function("""() => {\n'
+            "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
+            "      return c !== null && c.getAttribute('fill') === '%(lfill)s' &&\n"
+            "             c.getAttribute('stroke') === '%(lstroke)s' &&\n"
+            "             document.querySelector('#dome-svg .satdot') !== null &&\n"
+            "             document.querySelector('#dome-svg .satdot.shadow') === null;\n"
+            '    }""", timeout=20000)\n'
+            "    out = {'errors': errors,\n"
+            "           'swept': page.eval_on_selector_all(\n"
+            "               '#pass-chart g.dome-body[transform]', 'els => els.length')}\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % {'port': port, 'sfill': shadow_fill, 'sstroke': shadow_stroke,
+               'lfill': lit_fill, 'lstroke': lit_stroke})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert out['swept'] == 1           # still mid-pass at the final sample
+        assert served['n'] >= 5            # every phase of the walk was served
+
+    def test_countdown_chips_tick_and_roll_in_a_real_browser(
+            self, wxskyfield_comet_almanac, tmp_path):
+        """Countdown central, where it actually runs: synthetic
+        event instants around the browser's real clock (the chips are
+        pure client arithmetic, so the feed can stage any sky).  Pins:
+        the sun chip ticks hh:mm:ss from the FEED and ROLLS from sunset
+        to sunrise when the feed's event expiry replaces the passed
+        instant (the min() flip); the darkness chip ticks from its
+        generation-baked data-ts target with NO feed key at all -- a
+        countdown needs no feed to count; the shower chip shows a
+        days-hours-minutes value under its live label; the pass chip
+        shows the staged pass's label and 'appears in'; the windowed
+        guests obey their 30-day window (supermoon and one perihelion
+        in, eclipse and the other perihelion honestly out); zero page
+        errors.  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        now = time.time()
+        html = self.render(wxskyfield_comet_almanac, sky_page=make_sky_page())
+        # Rewire the darkness chip to the STATIC path: its feed key is
+        # deliberately absent from the packets below, and its baked
+        # data-ts target moves near the browser clock -- the chip must
+        # tick from the generation-baked target alone (a countdown
+        # needs no feed to count; the feed's job is the roll).
+        html, n_subs = re.subn(r'(id="chip-dark" data-ts=")\d+(")',
+                               r'\g<1>%d\g<2>' % int(now + 5000), html)
+        assert n_subs == 1
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        def packet(i, rolled):
+            return jsonlib.dumps({
+                'current.dateTime.raw': now + 2 * i,
+                # Sunset 4 s out; once it passes, the "feed" rolls
+                # next_setting to tomorrow and the min() flips the chip
+                # to the sooner sunrise.
+                'almanac.sun.next_setting.unix_epoch.raw':
+                    (now + 86404) if rolled else (now + 4),
+                'almanac.sun.next_rising.unix_epoch.raw': now + 40000,
+                'almanac.next_meteor_shower.peak.unix_epoch.raw': now + 3 * 86400,
+                'almanac.next_meteor_shower.label': 'Perseids',
+                # An equinox/solstice 10 days out: the season chip shows,
+                # named by the event's month and hemisphere.
+                'almanac.next_equinox.unix_epoch.raw': now + 10 * 86400,
+                'almanac.next_solstice.unix_epoch.raw': now + 100 * 86400,
+                'almanac.next_supermoon.unix_epoch.raw': now + 10 * 86400,
+                # Outside the 30-day window: the chip must stay hidden.
+                'almanac.next_eclipse.unix_epoch.raw': now + 40 * 86400,
+                'almanac.next_eclipse_kind': 'lunar',
+                'almanac.mcnaught.perihelion.unix_epoch.raw': now + 5 * 86400,
+                'almanac.mcnaught.label': 'McNaught',
+                'almanac.halley.perihelion.unix_epoch.raw': now + 1000 * 86400,
+                'almanac.iss.label': 'ISS',
+                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now + 300,
+                'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 900,
+            }).encode()
+        packets = [packet(0, False), packet(1, False), packet(2, True),
+                   packet(3, True)]
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json, re\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The first packet lands and the sun chip ticks sunset.\n'
+            '    page.wait_for_function("""() => {\n'
+            "      var k = document.getElementById('chip-sun-k');\n"
+            "      var v = document.getElementById('chip-sun-v');\n"
+            "      return k !== null && k.textContent === 'sunset' &&\n"
+            "             /^\\\\d{2}:\\\\d{2}:\\\\d{2}$/.test(v.textContent);\n"
+            '    }""", timeout=15000)\n'
+            '    # The darkness chip is inside its final day, so it ticks\n'
+            '    # hh:mm:ss: two samples a second apart must differ (the\n'
+            '    # 1 s local tick at work).\n'
+            "    v1 = page.inner_text('#chip-dark-v')\n"
+            '    page.wait_for_timeout(1500)\n'
+            "    v2 = page.inner_text('#chip-dark-v')\n"
+            '    # The roll: the feed replaced the passed sunset with\n'
+            "    # tomorrow's, and the min() flips the chip to sunrise.\n"
+            '    page.wait_for_function("""() => {\n'
+            "      var k = document.getElementById('chip-sun-k');\n"
+            "      return k !== null && k.textContent === 'sunrise';\n"
+            '    }""", timeout=20000)\n'
+            '    def hidden(cid):\n'
+            "        return page.eval_on_selector('#' + cid,\n"
+            "            'el => el.hasAttribute(\"hidden\")')\n"
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'v1': v1, 'v2': v2,\n"
+            "        'shower_k': page.inner_text('#chip-shower-k'),\n"
+            "        'shower_v': page.inner_text('#chip-shower-v'),\n"
+            "        'pass_hidden': hidden('chip-pass'),\n"
+            "        'pass_k': page.inner_text('#chip-pass-k'),\n"
+            "        'pass_d': page.inner_text('#chip-pass-d'),\n"
+            "        'pass_v': page.inner_text('#chip-pass-v'),\n"
+            "        'sun_d': page.inner_text('#chip-sun-d'),\n"
+            "        'dark_hidden': hidden('chip-dark'),\n"
+            "        'season_hidden': hidden('chip-season'),\n"
+            "        'season_k': page.inner_text('#chip-season-k'),\n"
+            "        'super_hidden': hidden('chip-super'),\n"
+            "        'eclipse_hidden': hidden('chip-eclipse'),\n"
+            "        'peri_mcnaught_hidden': hidden('chip-peri-mcnaught'),\n"
+            "        'peri_mcnaught_k': page.inner_text('#chip-peri-mcnaught-k'),\n"
+            "        'peri_halley_hidden': hidden('chip-peri-halley'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert out['v1'] != out['v2']              # the value really ticks
+        assert re.match(r'^\d{2}:\d{2}:\d{2}$', out['v1'])
+        # Days out, the countdown is days-hours-minutes (seconds are
+        # noise at that range); the staged peak is 3 days ahead.
+        assert re.match(r'^2d 23h \d{1,2}m$', out['shower_v'])
+        assert out['shower_k'] == 'Perseids'       # the live label took over
+        assert out['pass_hidden'] is False
+        assert out['pass_k'] == 'ISS'
+        assert out['pass_d'] == 'appears in'
+        assert re.match(r'^\d{2}:\d{2}:\d{2}$', out['pass_v'])
+        # The live detail renders EXACTLY the template's %H:%M shape (no
+        # locale AM/PM): the first live rewrite must not reformat what
+        # the report painted.  After the roll the chip counts to the
+        # staged sunrise.
+        assert out['sun_d'] == time.strftime('%H:%M',
+                                             time.localtime(now + 40000))
+        assert out['dark_hidden'] is False
+        # The season chip: the staged equinox is 10 days out (in the
+        # window), and its label follows the event's month and the
+        # station's hemisphere -- computed here exactly as the page
+        # computes it.
+        assert out['season_hidden'] is False
+        season_month = int(time.strftime('%m', time.localtime(now + 10 * 86400)))
+        if 2 <= season_month <= 4:
+            expected_season = 'spring begins'
+        elif 5 <= season_month <= 7:
+            expected_season = 'summer begins'
+        elif 8 <= season_month <= 10:
+            expected_season = 'autumn begins'
+        else:
+            expected_season = 'winter begins'
+        assert out['season_k'] == expected_season
+        assert out['super_hidden'] is False        # 10 days: in the window
+        assert out['eclipse_hidden'] is True       # 40 days: honestly out
+        assert out['peri_mcnaught_hidden'] is False
+        assert out['peri_mcnaught_k'] == 'McNaught perihelion'
+        assert out['peri_halley_hidden'] is True   # ~3 years: honestly out
+
+    def test_comet_dial_mark_renders_in_a_real_browser(
+            self, wxskyfield_comet_almanac, tmp_path):
+        """The comet layer on the dial, where it actually runs: packets
+        computed by the registered comets-configured almanac.  Pins:
+        Halley's diamond is the hollow faint look (mag 25.6), the
+        fabricated always-bright comet's is solid; six tail rays drawn,
+        the center ray pointing away from the sun's own dial point (the
+        anti-sunward anchor); the one-hour trail appears once two packets
+        derive rates; the tooltip carries the magnitude; the comets
+        absent from the feed (no fields) render absence; and the
+        embedded dome's comet groups pass through the live machinery
+        untouched -- present, un-nudged, no page errors (must-handle #1's
+        live half).  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+                  'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+        packets = []
+        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
+            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            r = {'current.dateTime.raw': ts,
+                 'almanac.moon.phase': alm.moon.phase,
+                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
+                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
+            for b in bodies:
+                obj = getattr(alm, b)
+                r['almanac.%s.az' % b] = obj.az
+                r['almanac.%s.alt' % b] = obj.alt
+                r['almanac.%s.earth_distance' % b] = obj.earth_distance
+            # Two of the four configured comets in the feed (halley
+            # honestly faint, the fabricated one bright); hale_bopp and
+            # mcnaught stay absent -- their dial marks must not draw.
+            for c in ('halley', 'bright'):
+                comet = getattr(alm, c)
+                r['almanac.%s.az' % c] = comet.az
+                r['almanac.%s.alt' % c] = comet.alt
+                r['almanac.%s.earth_distance' % c] = comet.earth_distance
+                r['almanac.%s.mag' % c] = comet.mag
+                r['almanac.%s.label' % c] = str(comet.label)
+            packets.append(jsonlib.dumps(r).encode())
+
+        (tmp_path / 'index.html').write_text(
+            self.render(wxskyfield_comet_almanac, sky_page=make_sky_page()))
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    page.wait_for_timeout(5500)\n'
+            '    tail_ok = page.evaluate("""() => {\n'
+            '      // The visible comet groups: diamond center from the path\n'
+            '      // d, center-ray direction vs the (comet - sun) vector.\n'
+            "      var sun = document.querySelector('#dial .geodot.fill-sun');\n"
+            '      if (sun === null) { return false; }\n'
+            "      var sx = parseFloat(sun.getAttribute('cx'));\n"
+            "      var sy = parseFloat(sun.getAttribute('cy'));\n"
+            '      var ok = 0;\n'
+            "      document.querySelectorAll('#dial g.geocomet').forEach(function(g) {\n"
+            "        if (g.getAttribute('display') === 'none') { return; }\n"
+            "        var d = g.querySelector('path').getAttribute('d');\n"
+            "        var m = /M ([\\\\d.-]+),([\\\\d.-]+)/.exec(d);\n"
+            '        var cx0 = parseFloat(m[1]), cy0 = parseFloat(m[2]) + 5.0;\n'
+            "        var rays = g.querySelectorAll('line.comet-tail');\n"
+            "        var r = rays[1];\n"
+            "        var vx = parseFloat(r.getAttribute('x2')) - parseFloat(r.getAttribute('x1'));\n"
+            "        var vy = parseFloat(r.getAttribute('y2')) - parseFloat(r.getAttribute('y1'));\n"
+            '        if (vx * (cx0 - sx) + vy * (cy0 - sy) > 0) { ok += 1; }\n'
+            '      });\n'
+            '      return ok;\n'
+            '    }""")\n'
+            '    titles = page.evaluate("""() => {\n'
+            '      var out = [];\n'
+            "      document.querySelectorAll('#dial g.geocomet title').forEach(function(t) {\n"
+            '        out.push(t.textContent);\n'
+            '      });\n'
+            '      return out;\n'
+            '    }""")\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'faint': page.eval_on_selector_all(\n"
+            "            '#dial path.cometdot.faint', 'els => els.length'),\n"
+            "        'solid': page.eval_on_selector_all(\n"
+            "            '#dial path.cometdot:not(.faint)', 'els => els.length'),\n"
+            "        'shown': page.eval_on_selector_all(\n"
+            '            \'#dial g.geocomet:not([display="none"])\', "els => els.length"),\n'
+            "        'rays': page.eval_on_selector_all(\n"
+            '            \'#dial line.comet-tail:not([display="none"])\', "els => els.length"),\n'
+            "        'trails': page.eval_on_selector_all(\n"
+            '            \'#dial line.trail.stroke-comet:not([display="none"])\', "els => els.length"),\n'
+            "        'tail_ok': tail_ok,\n"
+            "        'titles': titles,\n"
+            "        'dome_halley': page.eval_on_selector_all(\n"
+            '            \'#dome-svg g.dome-body[data-body="halley"]\', "els => els.length"),\n'
+            "        'dome_halley_nudged': page.eval_on_selector_all(\n"
+            '            \'#dome-svg g.dome-body[data-body="halley"][transform]\', "els => els.length"),\n'
+            "        'au_cell': page.inner_text('#geo-au-halley'),\n"
+            "        'ghost_au': page.inner_text('#geo-au-mcnaught'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert out['shown'] == 2               # halley + bright; the absent two hide
+        assert out['faint'] == 1               # halley, mag 25.6: hollow
+        assert out['solid'] >= 1               # the fabricated naked-eye comet
+        assert out['rays'] == 6                # three per drawn comet
+        assert out['trails'] == 48             # 24 segments x 2 drawn comets
+        assert out['tail_ok'] == 2             # both tails point anti-sunward
+        assert any('Halley' in t and 'mag 25.6' in t for t in out['titles'])
+        # The embedded dome's comet marks pass through the live machinery
+        # untouched: present, never nudged (comets are in no nudge list).
+        assert out['dome_halley'] == 1
+        assert out['dome_halley_nudged'] == 0
+        assert out['au_cell'].endswith(' au')  # the roster cell went live
+        # A comet ABSENT from the feed (mcnaught: real elements, no
+        # fields) keeps its report-time first paint -- the dual-source
+        # doctrine -- while its dial mark stays undrawn (shown == 2).
+        assert out['ghost_au'].endswith(' au')
+
     def test_page_reports_fetch_failure_in_badge(self, wxskyfield_almanac, tmp_path):
         """The 404 case a misconfigured loop_data_file produces (loopdata
         writing outside HTML_ROOT -- say /dev/shm -- with nothing on the
@@ -1263,6 +1961,9 @@ class TestI18n:
         'Pass sky chart',
         '{date} · {rise} → {set} · peak {alt}°',
         '%a %b %-d',
+        # The 2.1 dome's radiant marks (drawn while a shower is active;
+        # the comet marks reuse the mag tooltip above).
+        '{name} radiant — ZHR {zhr}, peak {date}',
     }
 
     @staticmethod
@@ -1339,6 +2040,14 @@ class TestI18n:
         assert conf['Almanac']['iss'] == 'ISS'
         assert conf['Almanac']['tiangong'] == 'Tiangong'
         assert conf['Almanac']['hst'] == 'HST'
+        # Comet display names ride the same channel (8.1): the installer
+        # defaults must not fall back to title-case ('Hale_Bopp').
+        assert conf['Almanac']['halley'] == 'Halley'
+        assert conf['Almanac']['hale_bopp'] == 'Hale-Bopp'
+        # The twelve IMO majors, for almanac.next_meteor_shower.label and
+        # the shower chip.
+        assert len(conf['Almanac']['MeteorShowers']) == 12
+        assert conf['Almanac']['MeteorShowers']['perseids'] == 'Perseids'
         assert len(conf['Almanac']['Constellations']) == 88
 
     def test_shipped_lang_files_are_consistent(self):
@@ -1442,6 +2151,13 @@ class TestI18n:
                 # Pre-2.0 skyfield lang files ship no satellite names.
                 if sat in sky['Almanac']:
                     assert cel['Almanac'][sat] == sky['Almanac'][sat], (name, sat)
+            for comet in ['halley', 'hale_bopp']:
+                # Pre-2.1 skyfield lang files ship no comet names.
+                if comet in sky['Almanac']:
+                    assert cel['Almanac'][comet] == sky['Almanac'][comet], (name, comet)
+            if 'MeteorShowers' in sky['Almanac']:
+                assert (dict(cel['Almanac']['MeteorShowers'])
+                        == dict(sky['Almanac']['MeteorShowers'])), name
             assert (list(cel['Almanac']['moon_phases'])
                     == list(sky['Almanac']['moon_phases'])), name
             assert (list(cel['Labels']['hemispheres'])
@@ -1915,6 +2631,106 @@ class TestMigrateLoopdataFields:
             assert again['almanac.iss.next_pass.rise.unix_epoch.raw'] == rise2
             assert again['almanac.iss.next_pass.set.unix_epoch.raw'] == set2
 
+    def test_comet_fields_evaluate_in_loopdata(self, wxskyfield_comet_sky):
+        """Every comet entry in _MIGRATION_NEW_FIELDS (and the mcnaught
+        substitution) evaluates through the sibling weewx-loopdata's own
+        evaluator against a comets-configured skyfield 2.1 almanac,
+        reproducing the skyfield fixture pins.  Halley is honestly faint
+        (mag 25.6 -- the page's hollow diamond) and 35.9 AU out; the
+        perihelion instants are raw TT-derived epochs that can lie far
+        past (Hale-Bopp 1997) or future (Halley 2061)."""
+        loopdata = load_loopdata()
+        mod, _ = load_wxskyfield()
+        entries = []
+        for tag in ('halley', 'mcnaught', 'hale_bopp'):
+            entries.extend(celestial.comet_fields(tag))
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_comet_sky)
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
+                                        altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            values = {}
+            for entry in entries:
+                af = loopdata.LoopData.parse_almanac_field(entry)
+                assert af is not None, entry
+                obj = loopdata.AlmanacFieldEvaluator.evaluate(None, af, alm, TIME_TS)
+                values[entry] = loopdata.AlmanacFieldEvaluator.to_json_value(
+                    None, af, obj)
+        assert abs(values['almanac.halley.az'] - 113.786) < 0.01
+        assert abs(values['almanac.halley.alt'] - 32.829) < 0.01
+        assert abs(values['almanac.halley.earth_distance'] - 35.9066) < 0.001
+        assert abs(values['almanac.halley.mag'] - 25.64) < 0.01
+        assert values['almanac.halley.label'] == 'Halley'
+        assert abs(values['almanac.halley.perihelion.unix_epoch.raw']
+                   - 2890316269) < 120
+        assert abs(values['almanac.mcnaught.perihelion.unix_epoch.raw']
+                   - 1781405334) < 120
+        assert abs(values['almanac.hale_bopp.perihelion.unix_epoch.raw']
+                   - 859596458) < 120
+
+    def test_countdown_fields_evaluate_in_loopdata(self, wxskyfield_comet_sky):
+        """The nine countdown base entries evaluate through the sibling
+        weewx-loopdata against the skyfield 2.1 almanac: the sun pair is
+        always ahead (next_* semantics), astronomical darkness falls
+        after sunset, the shower peak/label pair is consistent (Southern
+        Delta Aquariids from the June fixture), and the supermoon and
+        eclipse instants reproduce skyfield's own pins."""
+        loopdata = load_loopdata()
+        mod, _ = load_wxskyfield()
+        entries = [f for f in celestial._MIGRATION_NEW_FIELDS
+                   if ('.next_setting.' in f or '.next_rising.' in f
+                       or f.startswith(('almanac.next_equinox.',
+                                        'almanac.next_solstice.',
+                                        'almanac.next_perihelion.',
+                                        'almanac.next_aphelion.',
+                                        'almanac.next_meteor_shower.',
+                                        'almanac.next_supermoon.',
+                                        'almanac.next_eclipse')))]
+        assert len(entries) == 13
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_comet_sky)
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
+                                        altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            values = {}
+            for entry in entries:
+                af = loopdata.LoopData.parse_almanac_field(entry)
+                assert af is not None, entry
+                obj = loopdata.AlmanacFieldEvaluator.evaluate(None, af, alm, TIME_TS)
+                values[entry] = loopdata.AlmanacFieldEvaluator.to_json_value(
+                    None, af, obj)
+        setting = values['almanac.sun.next_setting.unix_epoch.raw']
+        rising = values['almanac.sun.next_rising.unix_epoch.raw']
+        dark = values['almanac(horizon=-18).sun.next_setting.unix_epoch.raw']
+        dark_end = values['almanac(horizon=-18).sun.next_rising.unix_epoch.raw']
+        assert TIME_TS < setting < TIME_TS + 86400
+        assert TIME_TS < rising < TIME_TS + 86400
+        assert setting < rising          # fixture noon: sunset comes first
+        assert dark > setting            # true darkness falls after sunset
+        assert TIME_TS < dark_end < TIME_TS + 86400
+        # The season pair: from the June fixture the next equinox is
+        # September's, the next solstice December's -- both ahead,
+        # equinox first.
+        equinox = values['almanac.next_equinox.unix_epoch.raw']
+        solstice = values['almanac.next_solstice.unix_epoch.raw']
+        assert TIME_TS < equinox < solstice < TIME_TS + 200 * 86400
+        # Earth's apsis pair (skyfield 2.1's next_perihelion/
+        # next_aphelion, built on this page's ask): from the June
+        # fixture the aphelion is ~12 days ahead (early July -- inside
+        # the chip's 30-day window, so the fixture page shows the
+        # chip), the perihelion next January.
+        aphelion = values['almanac.next_aphelion.unix_epoch.raw']
+        perihelion = values['almanac.next_perihelion.unix_epoch.raw']
+        assert TIME_TS < aphelion < TIME_TS + 30 * 86400
+        assert aphelion < perihelion < TIME_TS + 250 * 86400
+        peak = values['almanac.next_meteor_shower.peak.unix_epoch.raw']
+        assert abs(peak - 1753814687) < 600       # Southern Delta Aquariids
+        assert values['almanac.next_meteor_shower.label'] == 'Southern Delta Aquariids'
+        assert abs(values['almanac.next_supermoon.unix_epoch.raw']
+                   - 1762348758) < 600
+        assert values['almanac.next_eclipse.unix_epoch.raw'] > TIME_TS
+        assert values['almanac.next_eclipse_kind'] in ('lunar', 'solar')
+
     def test_satellites_follow_configured_set(self):
         """With a configured satellite set, the appended satellite entries
         are that set exactly -- the nineteen-entry pattern per tag, in
@@ -2004,6 +2820,73 @@ class TestMigrateLoopdataFields:
         assert not any(f.startswith(('almanac.iss.', 'almanac.tiangong.'))
                        for f in fields)
         assert any('[[Satellites]]' in note for note in report['notes'])
+
+    def test_comets_follow_configured_set(self):
+        """With a configured comet set, the appended comet entries are
+        that set exactly -- the six-entry pattern per tag, in
+        configuration order, the installer default nowhere in sight --
+        and a second run adds nothing."""
+        new, report = celestial.migrate_loopdata_fields(
+            ['current.outTemp'], satellites=[], comets=['a3', 'encke'])
+        assert len([f for f in new if f.startswith('almanac.a3.')]) == 6
+        assert len([f for f in new if f.startswith('almanac.encke.')]) == 6
+        assert 'almanac.a3.perihelion.unix_epoch.raw' in new
+        assert not any(f.startswith(('almanac.halley.', 'almanac.hale_bopp.'))
+                       for f in new)
+        assert new.index('almanac.a3.az') < new.index('almanac.encke.az')
+        assert any('almanac.a3.*' in note and '[[Comets]]' in note
+                   for note in report['notes'])
+        twice, report2 = celestial.migrate_loopdata_fields(
+            new, satellites=[], comets=['a3', 'encke'])
+        assert twice == new and report2['added'] == []
+
+    def test_empty_comets_appends_none_keeps_existing(self):
+        """A present-but-empty [[Comets]] is authoritative: no comet
+        fields are appended (a deliberately emptied set is not
+        resurrected), but comet entries already on the line stay."""
+        fields = ['current.outTemp', 'almanac.halley.az']
+        new, report = celestial.migrate_loopdata_fields(
+            fields, satellites=[], comets=[])
+        assert [f for f in new if f.startswith('almanac.halley.')] == [
+            'almanac.halley.az']
+        assert any('[[Comets]]' in note and '--add-comet' in note
+                   for note in report['notes'])
+
+    def test_no_comets_section_appends_defaults(self):
+        """No [[Comets]] to follow (weewx-skyfield absent or pre-2.1):
+        the installer defaults (halley and hale_bopp) are provisioned,
+        and the note says so."""
+        new, report = celestial.migrate_loopdata_fields(['current.outTemp'])
+        assert len([f for f in new if f.startswith('almanac.halley.')]) == 6
+        assert len([f for f in new if f.startswith('almanac.hale_bopp.')]) == 6
+        assert any('almanac.halley.*' in note and 'almanac.hale_bopp.*' in note
+                   and 'installer defaults' in note
+                   for note in report['notes'])
+
+    def test_conf_rewrite_follows_skyfield_comets(self, tmp_path):
+        """The migrator reads [Skyfield] [[Comets]] from the very
+        configuration it rewrites: fields for the configured comets,
+        none for the installer default the user does not have."""
+        conf = tmp_path / 'weewx.conf'
+        conf.write_text(
+            '[Skyfield]\n'
+            '    [[Satellites]]\n'
+            '        iss = 25544\n'
+            '    [[Comets]]\n'
+            '        a3 = "C/2023 A3"\n'
+            '[LoopData]\n'
+            '    [[Include]]\n'
+            '        fields = current.outTemp\n'
+        )
+        out = tmp_path / 'weewx.conf.migrated'
+        report = celestial.migrate_loopdata_conf(str(conf), str(out))
+        import configobj
+        fields = configobj.ConfigObj(str(out))['LoopData']['Include']['fields']
+        assert len([f for f in fields if f.startswith('almanac.a3.')]) == 6
+        assert len([f for f in fields if f.startswith('almanac.iss.')]) == 19
+        assert not any(f.startswith(('almanac.halley.', 'almanac.tiangong.'))
+                       for f in fields)
+        assert any('[[Comets]]' in note for note in report['notes'])
 
 
 class TestSatelliteUtility:
@@ -2227,6 +3110,205 @@ class TestSatelliteUtility:
         assert 'iss' not in new['Skyfield']['Satellites']
         assert new['Skyfield']['Satellites']['tiangong'] == '48274'
 
+    def test_add_refuses_comet_tags(self, tmp_path):
+        """Satellites and comets share the almanac.<tag> namespace: a
+        configured [[Comets]] tag is refused, and so is the comet
+        installer default even when no [[Comets]] section exists (the
+        next weewx-skyfield install re-adds it)."""
+        conf = self._write_conf(tmp_path, self.BASE_CONF.replace(
+            '    [[Satellites]]\n',
+            '    [[Comets]]\n        encke = 2P\n    [[Satellites]]\n'))
+        out = tmp_path / 'weewx.conf.new'
+        with pytest.raises(ValueError, match='comet tag'):
+            celestial.add_satellite_conf(str(conf), str(out), 'encke', '23088')
+        conf2 = self._write_conf(tmp_path)          # no [[Comets]] at all
+        with pytest.raises(ValueError, match='comet tag'):
+            celestial.add_satellite_conf(str(conf2), str(out), 'halley', '23088')
+        assert not out.exists()
+
+
+class TestCometUtility:
+    """The --add-comet / --remove-comet utility: the three weewx.conf
+    edits a comet takes -- the [Skyfield] [[Comets]] entry, the six
+    fields-line entries, the [StdReport] [[Defaults]] [[[Almanac]]]
+    display name -- each independently idempotent, mirroring the
+    satellite utility."""
+
+    BASE_CONF = (
+        '# a comment\n'
+        '[Station]\n'
+        '    location = Test Station\n'
+        '[Skyfield]\n'
+        '    comet_downloads = true\n'
+        '    [[Satellites]]\n'
+        '        iss = 25544\n'
+        '    [[Comets]]\n'
+        '        halley = 1P\n'
+        '[LoopData]\n'
+        '    [[Include]]\n'
+        '        fields = current.dateTime.raw, almanac.sun.az, almanac.halley.az\n'
+    )
+
+    def _write_conf(self, tmp_path, text=None):
+        conf = tmp_path / 'weewx.conf'
+        conf.write_text(self.BASE_CONF if text is None else text)
+        return conf
+
+    def test_pattern_is_six_tag_substituted(self):
+        """The per-comet pattern is the almanac.halley.* subset of
+        _MIGRATION_NEW_FIELDS with the tag substituted -- one source of
+        truth with the page's comet consumption -- and stays comma-free
+        (the fields line is a bare comma-separated list)."""
+        fields = celestial.comet_fields('mcnaught')
+        halley_fields = [f for f in celestial._MIGRATION_NEW_FIELDS
+                         if f.startswith('almanac.halley.')]
+        assert len(fields) == 6
+        assert fields == [f.replace('almanac.halley.', 'almanac.mcnaught.')
+                          for f in halley_fields]
+        for field in fields:
+            assert ',' not in field, field
+
+    def test_added_entries_parse_in_loopdata(self):
+        """Every entry the utility appends parses in the sibling
+        weewx-loopdata checkout's almanac grammar."""
+        loopdata = load_loopdata()
+        for entry in celestial.comet_fields('mcnaught'):
+            assert loopdata.LoopData.parse_almanac_field(entry) is not None, entry
+
+    def test_add_conf_roundtrip(self, tmp_path):
+        conf = self._write_conf(tmp_path)
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_comet_conf(
+            str(conf), str(out), 'mcnaught', '220P', 'McNaught')
+        assert report['comets_entry'] == 'added'
+        assert len(report['fields_added']) == 6
+        assert report['name_entry'] == 'added'
+        import configobj
+        new = configobj.ConfigObj(str(out))
+        assert new['Skyfield']['Comets']['mcnaught'] == '220P'
+        assert new['Skyfield']['Comets']['halley'] == '1P'       # untouched
+        fields = new['LoopData']['Include']['fields']
+        assert 'almanac.mcnaught.az' in fields
+        assert 'almanac.mcnaught.perihelion.unix_epoch.raw' in fields
+        assert fields[:3] == ['current.dateTime.raw', 'almanac.sun.az',
+                              'almanac.halley.az']               # appended, not reordered
+        assert new['StdReport']['Defaults']['Almanac']['mcnaught'] == 'McNaught'
+        # The rest of the configuration survives; the original is untouched.
+        assert new['Station']['location'] == 'Test Station'
+        assert 'mcnaught' not in conf.read_text()
+
+    def test_add_accepts_spaced_designation(self, tmp_path):
+        """Provisional designations carry a space (C/2023 A3) and
+        fragment suffixes a hyphen (C/1947 X1-B); both round-trip
+        through the config grammar (never a comma, so the [[Comets]]
+        value cannot break it)."""
+        conf = self._write_conf(tmp_path)
+        import configobj
+        for tag, designation in (('a3', 'C/2023 A3'),
+                                 ('southern', 'C/1947 X1-B')):
+            out = tmp_path / ('%s.conf' % tag)
+            report = celestial.add_comet_conf(str(conf), str(out),
+                                              tag, designation)
+            assert report['comets_entry'] == 'added'
+            assert configobj.ConfigObj(str(out))['Skyfield']['Comets'][tag] \
+                == designation
+
+    def test_add_is_idempotent(self, tmp_path):
+        conf = self._write_conf(tmp_path)
+        once = tmp_path / 'once.conf'
+        celestial.add_comet_conf(str(conf), str(once),
+                                 'mcnaught', '220P', 'McNaught')
+        twice = tmp_path / 'twice.conf'
+        report = celestial.add_comet_conf(str(once), str(twice),
+                                          'mcnaught', '220P', 'McNaught')
+        assert report['comets_entry'] == 'unchanged'
+        assert report['fields_added'] == []
+        assert report['name_entry'] == 'unchanged'
+        import configobj
+        assert (configobj.ConfigObj(str(once))['LoopData']['Include']['fields']
+                == configobj.ConfigObj(str(twice))['LoopData']['Include']['fields'])
+
+    def test_add_updates_differing_designation(self, tmp_path):
+        """The invocation is authoritative: an existing entry with a
+        different designation is updated and reported."""
+        conf = self._write_conf(tmp_path)
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_comet_conf(str(conf), str(out), 'halley', '109P')
+        assert report['comets_entry'] == 'updated'
+        assert report['previous_designation'] == '1P'
+        import configobj
+        assert configobj.ConfigObj(str(out))['Skyfield']['Comets']['halley'] == '109P'
+
+    def test_add_refuses_bad_tags_and_designations(self, tmp_path):
+        conf = self._write_conf(tmp_path)
+        out = tmp_path / 'weewx.conf.new'
+        for tag in ('moon', 'venus', 'proxima_centauri',  # almanac bodies
+                    'Halley', 'hale-bopp', '2p', ''):     # not lowercase identifiers
+            with pytest.raises(ValueError):
+                celestial.add_comet_conf(str(conf), str(out), tag, '1P')
+        for tag in ('iss', 'tiangong'):  # satellite tags: configured + default
+            with pytest.raises(ValueError, match='satellite tag'):
+                celestial.add_comet_conf(str(conf), str(out), tag, '1P')
+        for designation in ('1p', 'halley', '2023 A3', '1P,2P', 'P/', ''):
+            with pytest.raises(ValueError):
+                celestial.add_comet_conf(str(conf), str(out), 'encke', designation)
+        assert not out.exists()   # nothing was written
+
+    def test_add_requires_fields_line(self, tmp_path):
+        """Without a [LoopData] [[Include]] fields entry there is nothing
+        to append to: the error points at --migrate-loopdata-fields."""
+        conf = self._write_conf(tmp_path, '[Station]\n    location = Test\n')
+        out = tmp_path / 'weewx.conf.new'
+        with pytest.raises(ValueError, match='migrate-loopdata-fields'):
+            celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
+
+    def test_remove_conf_roundtrip(self, tmp_path):
+        conf = self._write_conf(tmp_path)
+        added = tmp_path / 'added.conf'
+        celestial.add_comet_conf(str(conf), str(added),
+                                 'mcnaught', '220P', 'McNaught')
+        # A hand-added entry with almanac arguments belongs to the comet
+        # too; removal sweeps every spelling.
+        import configobj
+        cfg = configobj.ConfigObj(str(added))
+        cfg['LoopData']['Include']['fields'].append(
+            'almanac(horizon=10).mcnaught.az')
+        cfg.write()
+        out = tmp_path / 'removed.conf'
+        report = celestial.remove_comet_conf(str(added), str(out), 'mcnaught')
+        assert report['comets_entry'] == 'removed'
+        assert report['designation'] == '220P'
+        assert len(report['fields_removed']) == 7
+        assert report['name_entry'] == 'removed'
+        new = configobj.ConfigObj(str(out))
+        assert 'mcnaught' not in new['Skyfield']['Comets']
+        fields = new['LoopData']['Include']['fields']
+        assert not any('mcnaught' in f for f in fields)
+        assert 'almanac.halley.az' in fields         # other comets untouched
+        assert 'almanac.sun.az' in fields
+        assert 'mcnaught' not in new['StdReport']['Defaults']['Almanac']
+        # Removing an absent comet is a no-op, not an error.
+        out2 = tmp_path / 'removed2.conf'
+        report2 = celestial.remove_comet_conf(str(out), str(out2), 'mcnaught')
+        assert report2['comets_entry'] == 'absent'
+        assert report2['fields_removed'] == []
+        assert report2['name_entry'] == 'absent'
+
+    def test_remove_default_comet_warns(self, tmp_path):
+        """halley removal works like any other -- with the warning that a
+        weewx-skyfield upgrade's conditional merge re-adds the [[Comets]]
+        entry (only), so the removal wants re-running."""
+        conf = self._write_conf(tmp_path)
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.remove_comet_conf(str(conf), str(out), 'halley')
+        assert report['comets_entry'] == 'removed'
+        assert report['fields_removed'] == ['almanac.halley.az']
+        assert any('installer default' in h for h in report['hints'])
+        import configobj
+        new = configobj.ConfigObj(str(out))
+        assert 'halley' not in new['Skyfield']['Comets']
+        assert new['Skyfield']['Satellites']['iss'] == '25544'   # untouched
+
 
 def load_installer():
     """The repo's install.py, imported under a private name with the real
@@ -2254,12 +3336,15 @@ def load_installer():
 
 
 class TestInstallerFieldsHint:
-    """The install-time fields hint: weectl's configure() hook compares the
-    station's [LoopData] [[Include]] fields line with what the page reads
-    -- the bundled migrator run in memory as the oracle, [Skyfield]
-    [[Satellites]] included -- and prints the migration commands when
-    entries are missing.  A hint only: it never touches the configuration
-    (configure always returns False) and never fails the install."""
+    """The install-time fields update: weectl's configure() hook brings
+    the station's [LoopData] [[Include]] fields line up to date with
+    what the page reads -- the bundled migrator run in memory as the
+    oracle, [Skyfield] [[Satellites]] and [[Comets]] included.
+    APPEND-ONLY: missing entries are appended in place (configure
+    returns True and weectl saves); existing entries are never renamed,
+    removed or reordered -- the migrator's destructive half stays
+    behind the human-reviewed CLI flow and is only hinted.  Honors
+    weectl's dry run and never fails the install."""
 
     class _Printer:
         def __init__(self):
@@ -2268,59 +3353,131 @@ class TestInstallerFieldsHint:
         def out(self, msg, level=1):
             self.lines.append(msg)
 
-    def _engine(self, config):
+    def _engine(self, config, dry_run=False):
         import types
         return types.SimpleNamespace(config_dict=config,
                                      printer=self._Printer(),
-                                     dry_run=False,
+                                     dry_run=dry_run,
                                      root_dict={'WEEWX_ROOT': '/wx'},
                                      config_path='/wx/weewx.conf')
 
     def _installer(self):
         return load_installer().CelestialInstaller()
 
-    def test_hint_when_fields_missing(self):
+    def test_appends_missing_fields(self):
+        """A line missing entries gains exactly the migrator's appends,
+        AFTER the existing entries (never reordered), and configure
+        returns True so weectl saves the configuration."""
         engine = self._engine(
             {'LoopData': {'Include': {'fields': ['current.outTemp']}}})
-        assert self._installer().configure(engine) is False
+        assert self._installer().configure(engine) is True
+        new_line = engine.config_dict['LoopData']['Include']['fields']
+        # 50 base entries plus 19 each for the default satellites and 6
+        # each for the default comets (no [Skyfield] section to follow).
+        assert new_line[0] == 'current.outTemp'
+        assert len(new_line) == 101
+        assert 'almanac.halley.az' in new_line
+        assert 'almanac.iss.next_pass.visible' in new_line
         text = '\n'.join(engine.printer.lines)
-        # 37 base entries plus 19 each for the default satellites (no
-        # [Skyfield] section to follow), and the commands are concrete:
-        # the engine's own BIN_DIR and config path, the running python.
-        assert 'missing 75 entries' in text
-        assert '--migrate-loopdata-fields' in text
-        assert 'cd /wx/bin' in text
-        assert '--config /wx/weewx.conf' in text
-        assert sys.executable in text
-        # The review command is a word-diff: the fields line is one long
-        # comma-separated value, and a plain diff shows two unreadable lines.
-        assert 'git diff --no-index --word-diff /wx/weewx.conf' in text
+        assert 'Appended 100 entries' in text
+        assert '    almanac.sun.az' in text        # each entry is listed
+        assert 'Restart weewxd' in text
+        assert 'outdated spellings' not in text    # nothing to hint here
 
-    def test_hint_counts_follow_satellites(self):
+    def test_appends_follow_satellites_and_comets(self):
         engine = self._engine(
             {'Skyfield': {'Satellites': {'terra': '25994'}},
              'LoopData': {'Include': {'fields': ['current.outTemp']}}})
-        assert self._installer().configure(engine) is False
-        text = '\n'.join(engine.printer.lines)
-        assert 'missing 56 entries' in text     # 37 base + 19 for terra
+        assert self._installer().configure(engine) is True
+        # 50 base + 19 for terra + 6 each for halley and hale_bopp (a
+        # [Skyfield] with no [[Comets]] section still falls back to the
+        # comet defaults).
+        assert 'Appended 81 entries' in '\n'.join(engine.printer.lines)
+        new_line = engine.config_dict['LoopData']['Include']['fields']
+        assert 'almanac.terra.az' in new_line
+        assert not any(f.startswith('almanac.iss.') for f in new_line)
 
     def test_silent_when_complete_for_configured_satellites(self):
-        """A line complete for the CONFIGURED set stays silent -- the
-        absent installer defaults must not be nagged about."""
+        """A line complete for the CONFIGURED set stays silent and
+        untouched -- the absent installer defaults must not be added or
+        nagged about."""
         complete, _ = celestial.migrate_loopdata_fields(
             ['current.outTemp'], satellites=['terra'])
         engine = self._engine(
             {'Skyfield': {'Satellites': {'terra': '25994'}},
-             'LoopData': {'Include': {'fields': complete}}})
+             'LoopData': {'Include': {'fields': list(complete)}}})
         assert self._installer().configure(engine) is False
         assert engine.printer.lines == []
+        assert engine.config_dict['LoopData']['Include']['fields'] == complete
 
-    def test_renames_hinted(self):
-        complete, _ = celestial.migrate_loopdata_fields([])
+    def test_silent_for_emptied_comets(self):
+        """A deliberately emptied [[Comets]] is authoritative for the
+        installer too: a line complete for the configured sets is left
+        alone, never re-provisioned with the halley defaults."""
+        complete, _ = celestial.migrate_loopdata_fields(
+            ['current.outTemp'], satellites=['terra'], comets=[])
         engine = self._engine(
-            {'LoopData': {'Include': {'fields': ['current.Sunrise.raw'] + complete}}})
-        self._installer().configure(engine)
+            {'Skyfield': {'Satellites': {'terra': '25994'}, 'Comets': {}},
+             'LoopData': {'Include': {'fields': list(complete)}}})
+        assert self._installer().configure(engine) is False
+        assert engine.printer.lines == []
+        assert engine.config_dict['LoopData']['Include']['fields'] == complete
+
+    def test_dry_run_touches_nothing(self):
+        """weectl --dry-run: the would-append count prints, the
+        configuration is not modified, configure returns False."""
+        engine = self._engine(
+            {'LoopData': {'Include': {'fields': ['current.outTemp']}}},
+            dry_run=True)
+        assert self._installer().configure(engine) is False
+        assert engine.config_dict['LoopData']['Include']['fields'] == \
+            ['current.outTemp']
         text = '\n'.join(engine.printer.lines)
+        assert 'Would append 100 entries' in text
+
+    def test_renames_hinted_never_applied(self):
+        """Outdated spellings are the migrator's destructive half: the
+        installer prints the reviewed-migration commands but NEVER
+        rewrites an existing entry -- the legacy entry survives
+        verbatim, and with nothing to append the configuration is
+        unmodified."""
+        complete, _ = celestial.migrate_loopdata_fields([])
+        line = ['current.Sunrise.raw'] + complete
+        engine = self._engine(
+            {'LoopData': {'Include': {'fields': list(line)}}})
+        assert self._installer().configure(engine) is False
+        assert engine.config_dict['LoopData']['Include']['fields'] == line
+        text = '\n'.join(engine.printer.lines)
+        assert 'outdated spellings' in text
+        assert '--migrate-loopdata-fields' in text
+        assert 'cd /wx/bin' in text
+        assert '--config /wx/weewx.conf' in text
+        # The command must carry the running weewx's location: on a
+        # deb/rpm package install WeeWX lives in /usr/share/weewx, on
+        # sys.path only inside weectl, and the bare 7.8-8.0 hint died
+        # there with ModuleNotFoundError: weewx.
+        weewx_dir = os.path.dirname(os.path.dirname(
+            os.path.abspath(weewx.__file__)))
+        assert ('PYTHONPATH=%s %s -m user.celestial'
+                % (weewx_dir, sys.executable)) in text
+        # The review command is a word-diff: the fields line is one long
+        # comma-separated value, and a plain diff shows two unreadable lines.
+        assert 'git diff --no-index --word-diff /wx/weewx.conf' in text
+
+    def test_appends_and_hints_together(self):
+        """A legacy line missing entries gets BOTH: the safe appends
+        applied (configure returns True), the renames only hinted --
+        and the legacy entry still survives verbatim."""
+        engine = self._engine(
+            {'LoopData': {'Include': {'fields': ['current.Sunrise.raw']}}})
+        assert self._installer().configure(engine) is True
+        new_line = engine.config_dict['LoopData']['Include']['fields']
+        assert new_line[0] == 'current.Sunrise.raw'
+        # The rename target (almanac.sunrise.unix_epoch.raw) is not a
+        # page field, so it is NOT appended -- renames stay manual.
+        assert 'almanac.sunrise.unix_epoch.raw' not in new_line
+        text = '\n'.join(engine.printer.lines)
+        assert 'Appended 100 entries' in text
         assert 'outdated spellings' in text
 
     def test_hint_when_no_loopdata(self):

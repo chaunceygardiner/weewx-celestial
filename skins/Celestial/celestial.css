@@ -43,6 +43,34 @@ h1 .over{color:var(--brass)}
 .sub{color:var(--muted); margin-top:6px; font-size:.95rem}
 #live-label{color:var(--brass); font-variant-caps:small-caps; letter-spacing:.1em}
 
+/* Countdown central: the ticking event chips under the header.  The chip
+ * family (.countdown/.count and the k/v/d cells) is borrowed from
+ * weewx-skyfield's sky.css -- names and values kept in step, the same
+ * cross-repo rule as the dome typography below.  The [hidden] rule is
+ * celestial's own: display:flex would otherwise defeat the hidden
+ * attribute the javascript toggles on the windowed chips. */
+.countdown{display:flex; gap:10px; flex-wrap:wrap}
+.count{border:1px solid var(--line); padding:7px 12px; display:flex; gap:8px;
+       align-items:baseline; background:var(--vault)}
+.count .k{color:var(--muted); font-variant-caps:small-caps; letter-spacing:.1em; font-size:.8rem}
+.count .v{font-size:.9rem}
+.count .d{color:var(--brass); font-size:.8rem}
+/* Celestial's chips are two lines by design (a deliberate divergence
+ * from sky.css's one-line chip): the label and the ticking value on
+ * the first line, the event's clock time / date detail underneath.
+ * Grid, not wrapped flex: a flex container's shrink-to-fit width is
+ * computed as if every item sat on one line, so forcing the detail
+ * onto a second line with flex-basis:100% left the detail's width as
+ * dead space on the chip's right.  The grid sizes each chip to its
+ * wider LINE.  justify-content:start keeps the auto columns at their
+ * natural widths when the detail line is the wider one.  An empty
+ * detail must not open a blank second line. */
+.count{display:grid; grid-template-columns:auto auto; row-gap:2px;
+       justify-content:start}
+.count .d{grid-column:1/-1}
+.count .d:empty{display:none}
+.count[hidden]{display:none}
+
 /* Cards */
 section{background:var(--vault); border:1px solid var(--line); padding:20px 22px 16px}
 .eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass); font-weight:400;
@@ -121,6 +149,18 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
 .geomoon.below .moon-rim{stroke-dasharray:2.5 2.5}
 /* Motion trails: per-segment opacity is set by the javascript. */
 .trail{stroke-width:1.5; stroke-linecap:round}
+/* Comet marks (javascript-drawn on the dial): a brass diamond with an
+ * anti-sunward tail fan, solid when naked-eye bright (mag <= 6), the
+ * hollow inversion when fainter or when magnitude is honestly absent --
+ * the satdot/shadow convention.  One shared color: comet tags are
+ * dynamic, so per-tag classes cannot exist (the satellite precedent). */
+.cometdot{fill:var(--brass); stroke:var(--night); stroke-width:1.5}
+.cometdot.faint{fill:var(--night); stroke:var(--brass); stroke-width:2}
+.cometdot.below{fill-opacity:.35; stroke-dasharray:2.5 2.5}
+.comet-tail{stroke:var(--brass)}
+.geocomet.below .comet-tail{opacity:.35}
+.stroke-comet{stroke:var(--brass)}
+.chip-comet{background:var(--brass)}
 
 /* SVG typography.  cardinal/bodylab/gridlab keep the same names and values
  * as weewx-skyfield's sky.css, so the two pages read as one family. */

@@ -9,13 +9,43 @@ Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 **This extension requires Python 3.9 or later, WeeWX 5.2 or later,
 [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 6.9 or
 later, and (strongly recommended)
-[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.0 or
-later for the sky dome's satellites and the Next Visible Pass chart.**
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.1 or
+later for the comets, the meteor showers and the full countdown row; 2.0
+serves the sky dome's satellites and the Next Visible Pass chart.**
 
 ## Description
 
 weewx-celestial ships a live celestial page (the bundled `Celestial` skin)
-built around three panels.  **The Geocentric** — Earth at the center,
+built around three panels under a countdown row.  **Countdown central**
+(new in 8.1) is a row of ticking countdown chips at the top of the
+page: the soonest visible satellite pass ("ISS · appears in 00:41:12",
+ticking to zero, "overhead now" for the show, rolling to the next pass
+the moment this one ends), sunset or sunrise — whichever comes next, the
+chip flipping by itself at each event — the next meteor shower's peak
+under its name with the moon's illumination at the peak (the fact that
+decides whether a shower year is worth an alarm), and astronomical
+darkness — begins at the −18° sunset, ends at the −18° sunrise,
+whichever is next.  Windowed guests join within ~30 days of their
+event: the next equinox or solstice, named by the season it begins
+("autumn begins in 2d 04:11:09" — the one countdown whose zero lands
+on the astronomical instant to the second), Earth's perihelion or
+aphelion, the next
+supermoon, the next eclipse visible from your station, and each
+configured comet's perihelion.  A countdown's precision follows its
+horizon: a day or more out it reads days-hours-minutes with the event's
+date beside it; inside the final day it becomes a ticking `hh:mm:ss`
+clock.  Every chip is client-side arithmetic on
+an event instant weewx-loopdata computes once and caches until it
+passes, so the ticking costs the engine nothing.
+
+The row riding through a sunset, live (1-second frames at about 15×
+speed): the sunset chip counts `hh:mm:ss` down through zero, then rolls
+itself to the next sunrise — loopdata expires the event and the page
+follows, no reload:
+
+![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll.gif)
+
+**The Geocentric** — Earth at the center,
 every body (sun, moon, the eight planets, Proxima Centauri) placed by
 compass bearing and log distance, the moon at its true phase, bodies below
 the horizon dimmed and dashed, and an hour-long motion trail behind every
@@ -23,6 +53,21 @@ dot.  Beside the dial, a roster gives each body an odometer distance
 readout that ticks between loop refreshes at the body's true radial rate
 (Mercury can recede ~28 km every second while Saturn approaches at the
 same pace), plus the raw astronomical-unit value and the current altitude.
+With weewx-skyfield 2.1, every `[Skyfield]` `[[Comets]]` entry (the
+installer defaults to Halley and Hale-Bopp) joins the dial and the
+roster: a diamond placed exactly like a planet, its three-ray tail
+fanning away from the sun's own dial point — anti-sunward, as a comet's
+tail really points — solid when the comet is naked-eye bright
+(magnitude 6.0 or brighter), the hollow inversion when fainter, with the
+live magnitude in its tap tooltip.  A comet the Minor Planet Center has
+dropped renders honest absence: no diamond, an empty row.
+
+Both installer-default comets on the live dial — Halley's diamond low in
+the eastern sky, its three-ray tail fanning away from the sun's own dial
+point, Hale-Bopp dimmed below the southern horizon — with their live
+roster rows below the planets':
+
+![The Geocentric dial with both comet diamonds and their tails](CelestialDial-Comets.png)
 
 **The sky dome** (new in 8.0) is everything above the horizon right now:
 weewx-skyfield's own dome chart — the full Hipparcos star field, the
@@ -59,7 +104,10 @@ epoch, so the arc crosses the stars it will actually cross — beside a
 roster of each satellite's next VISIBLE pass, the ones worth stepping
 outside for.  During the pass itself the chart's moment is only minutes
 from now, and the page sweeps the satellite's dot live along the drawn
-arc.  When no configured satellite has a visible pass coming in its
+arc — flipping it between the solid sunlit dot and the hollow in-shadow
+ring as the satellite crosses the shadow line, in step with the dome's
+marker (8.1; through 8.0 the dot wore the culmination's state for the
+whole ride).  When no configured satellite has a visible pass coming in its
 elements' validity window the chart area hides and the roster's honest
 rows say why; the open page refetches the chart every five minutes, so a
 completed pass's chart rolls over to the next pass by itself.
@@ -69,6 +117,14 @@ sweep dot rides the dashed arc from the 21:54 rise to the 22:05 set
 while the visible-pass roster counts down beside it:
 
 ![The Next Visible Pass panel during the ISS pass](CelestialPassPanel-ISS-zenith.gif)
+
+And the live flip itself, captured August 10: NOAA-21 rises sunlit into
+the pre-dawn sky and drops into Earth's shadow at 48°, the sweep dot
+snapping from solid to the in-shadow ring mid-ride, in step with the
+dome's marker (the July 24 capture above predates the fix; its dot
+stays solid to the set):
+
+![The Next Visible Pass panel during a NOAA-21 pass, the sweep dot flipping to the in-shadow ring mid-ride](CelestialPassPanel-NOAA21-shadow-entry.gif)
 
 Everything on the page moves.  The dial and roster update from
 `loop-data.txt` on every loop record (for the Vantage driver, every 2
@@ -106,18 +162,24 @@ What installs:
   otherwise — so the dome panel degrades to an install hint instead of
   killing report generation.
 - The `--migrate-loopdata-fields` command-line utility (see upgrading),
-  and the `--add-satellite`/`--remove-satellite` utility that makes (or
-  unmakes) every weewx.conf edit a satellite takes in one command (see
+  and the `--add-satellite`/`--remove-satellite` and
+  `--add-comet`/`--remove-comet` utilities that make (or unmake) every
+  weewx.conf edit a satellite or comet takes in one command (see
   installing).
 
 The page first-paints at report time from `$almanac` and then goes live
 from loop data.  What you see depends on the almanac WeeWX has: with
-**weewx-skyfield 2.0** (satellites configured), everything — Proxima, the
-dome, the Next Visible Pass chart, and the live satellite layer.  With an earlier
+**weewx-skyfield 2.1** (satellites and comets configured), everything —
+Proxima, the dome, the Next Visible Pass chart, the live satellite
+layer, the comet diamonds and the full countdown row.  With
+**weewx-skyfield 2.0**, everything but the comets and the
+shower/supermoon chips (the sunset, darkness and pass chips still
+tick).  With an earlier
 **weewx-skyfield**, everything but the satellites and their chart, and
 the dome's marks step only at the once-a-minute backdrop step (the
 live-nudge hooks are 2.0's).  With **PyEphem** (no weewx-skyfield), the Geocentric
-minus the Proxima Centauri row, and no dome or chart — the dome panel
+minus the Proxima Centauri row, the sunset and darkness chips, and no
+dome or chart — the dome panel
 shows an install hint.  With only WeeWX's **built-in
 almanac**, the page generates but both panels show install hints — the
 built-in almanac serves none of the positions or distances this page runs
@@ -128,7 +190,7 @@ on, which is why weewx-skyfield is strongly recommended.
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    6.9 or later and
    [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.0 or later, both per their instructions.
+   2.1 or later, both per their instructions.
 
 1. Download `weewx-celestial.zip` from the release page, then:
 
@@ -136,24 +198,34 @@ on, which is why weewx-skyfield is strongly recommended.
    weectl extension install weewx-celestial.zip
    ```
 
-1. Add the fields the report reads to the `fields` line of
-   `[LoopData] [[Include]]` in `weewx.conf`.  The line must stay a BARE
-   comma-separated list (no brackets or quotes).  Append:
+1. Check the `fields` line of `[LoopData] [[Include]]` in `weewx.conf`
+   — the install step above appended the entries the report reads
+   (printing each one).  The line must stay a BARE comma-separated
+   list (no brackets or quotes); the full set, for reference and hand
+   editing:
 
    ```
-   current.dateTime.raw, almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance, almanac.moon.az, almanac.moon.alt, almanac.moon.earth_distance, almanac.moon.phase, almanac.next_full_moon.unix_epoch.raw, almanac.next_new_moon.unix_epoch.raw, almanac.mercury.az, almanac.mercury.alt, almanac.mercury.earth_distance, almanac.venus.az, almanac.venus.alt, almanac.venus.earth_distance, almanac.mars.az, almanac.mars.alt, almanac.mars.earth_distance, almanac.jupiter.az, almanac.jupiter.alt, almanac.jupiter.earth_distance, almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance, almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance, almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance, almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance, almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance, almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.rise.unix_epoch.raw, almanac.iss.next_visible_pass.set.unix_epoch.raw, almanac.iss.next_visible_pass.max_altitude.degree_angle.raw, almanac.iss.next_visible_pass.duration.second.raw, almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass, almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_visible_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.rise.unix_epoch.raw, almanac.tiangong.next_visible_pass.set.unix_epoch.raw, almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.duration.second.raw, almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible
+   current.dateTime.raw, almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance, almanac.moon.az, almanac.moon.alt, almanac.moon.earth_distance, almanac.moon.phase, almanac.next_full_moon.unix_epoch.raw, almanac.next_new_moon.unix_epoch.raw, almanac.mercury.az, almanac.mercury.alt, almanac.mercury.earth_distance, almanac.venus.az, almanac.venus.alt, almanac.venus.earth_distance, almanac.mars.az, almanac.mars.alt, almanac.mars.earth_distance, almanac.jupiter.az, almanac.jupiter.alt, almanac.jupiter.earth_distance, almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance, almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance, almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance, almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance, almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance, almanac.sun.next_setting.unix_epoch.raw, almanac.sun.next_rising.unix_epoch.raw, almanac(horizon=-18).sun.next_setting.unix_epoch.raw, almanac(horizon=-18).sun.next_rising.unix_epoch.raw, almanac.next_equinox.unix_epoch.raw, almanac.next_solstice.unix_epoch.raw, almanac.next_perihelion.unix_epoch.raw, almanac.next_aphelion.unix_epoch.raw, almanac.next_meteor_shower.peak.unix_epoch.raw, almanac.next_meteor_shower.label, almanac.next_supermoon.unix_epoch.raw, almanac.next_eclipse.unix_epoch.raw, almanac.next_eclipse_kind, almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.rise.unix_epoch.raw, almanac.iss.next_visible_pass.set.unix_epoch.raw, almanac.iss.next_visible_pass.max_altitude.degree_angle.raw, almanac.iss.next_visible_pass.duration.second.raw, almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass, almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_visible_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.rise.unix_epoch.raw, almanac.tiangong.next_visible_pass.set.unix_epoch.raw, almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.duration.second.raw, almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible, almanac.halley.az, almanac.halley.alt, almanac.halley.earth_distance, almanac.halley.mag, almanac.halley.label, almanac.halley.perihelion.unix_epoch.raw, almanac.hale_bopp.az, almanac.hale_bopp.alt, almanac.hale_bopp.earth_distance, almanac.hale_bopp.mag, almanac.hale_bopp.label, almanac.hale_bopp.perihelion.unix_epoch.raw
    ```
 
    (Entries already present — e.g. `current.dateTime.raw` — need not be
    repeated; weewx-loopdata ignores duplicates.  The `almanac.iss.*` and
    `almanac.tiangong.*` entries feed the live satellite layer and need
-   weewx-skyfield 2.0 with its default `[[Satellites]]`; on an older
-   almanac they are simply omitted from `loop-data.txt` — one weewxd log
-   line per field — and the page hides its satellite layer, so they are
-   safe to add either way.  The installer checks this line at install
-   time and prints tailored `--migrate-loopdata-fields` commands when
-   entries the page reads are missing — it never edits `[LoopData]`
-   itself.)
+   weewx-skyfield 2.0 with its default `[[Satellites]]`; the
+   `almanac.halley.*`/`almanac.hale_bopp.*` entries and the meteor
+   shower, supermoon and eclipse fields feed the comet layer and the
+   countdown chips and need 2.1 with its default `[[Comets]]`.  On a
+   lesser almanac any of them is simply omitted from `loop-data.txt` —
+   one weewxd log line per field — and the page hides that layer or
+   chip, so they are safe to add either way.  As of 8.1 the installer
+   does this step for you: `weectl extension install` appends any of
+   these entries missing from the line — append-only, printing each
+   one; existing entries are never renamed, removed or reordered, so a
+   hand-curated line serving other pages is safe.  Restart weewxd
+   afterwards so weewx-loopdata reloads the line.  Only pre-6.0
+   spellings stay manual: renames deserve review, so the installer
+   prints tailored `--migrate-loopdata-fields` commands instead of
+   applying them.)
 
    To watch more satellites than the installer's two, use the bundled
    utility — a satellite is three separate weewx.conf edits (the
@@ -164,6 +236,13 @@ on, which is why weewx-skyfield is strongly recommended.
    ```
    python -m user.celestial --add-satellite zenit23088=23088 --name 'Zenit-2 23088' --config /home/weewx/weewx.conf --output /tmp/weewx.conf.new
    ```
+
+   Run it with the WeeWX venv activated, from the directory containing
+   the `user` package (`/home/weewx/bin` here, `~/weewx-data/bin` on
+   pip installs).  On a Debian or Red Hat package install there is no
+   venv — run from `/etc/weewx/bin` with a
+   `PYTHONPATH=/usr/share/weewx python3` prefix instead (WeeWX's own
+   code lives in `/usr/share/weewx`, on the path only inside `weectl`).
 
    Review the changes and move the file into place (or use `--in-place`,
    which backs the original up first).  Use a word-diff to review — the
@@ -192,6 +271,22 @@ on, which is why weewx-skyfield is strongly recommended.
            [[[Almanac]]]
                zenit23088 = Zenit-2 23088
    ```
+
+   Comets work the same way (8.1): a comet is the same three weewx.conf
+   edits — the `[Skyfield]` `[[Comets]]` entry (tag = MPC designation),
+   the six fields-line entries with its tag, the display name — and
+   `--add-comet` makes them all, one comet per run.  Quote a
+   designation with a space:
+
+   ```
+   python -m user.celestial --add-comet a3="C/2023 A3" --name 'Tsuchinshan-ATLAS' --config /home/weewx/weewx.conf --output /tmp/weewx.conf.new
+   ```
+
+   `--remove-comet a3` is the exact inverse.  Every edit is idempotent,
+   exactly like the satellite verbs; satellites and comets share the
+   `almanac.<tag>` namespace, so each family refuses the other's tags.
+   All comets ride one shared Minor Planet Center element file, so
+   adding comets costs no extra downloads.
 
 1. Point weewx-loopdata's output where the page looks.  The skin fetches
    `loop_data_file` — default `../loop-data.txt`, the directory above
@@ -283,9 +378,21 @@ this extension, so this version must be installed before it can run:
    git diff --no-index --word-diff /home/weewx/weewx.conf /tmp/weewx.conf.migrated   # review, then move into place
    ```
 
-   (`--in-place` edits weewx.conf directly after making a
-   `.bak-celestial-<version>` backup; `--print-fields-value` just prints the
-   migrated line for cut-and-paste.)
+   On a Debian or Red Hat package install there is no venv to activate,
+   and WeeWX's own code lives in `/usr/share/weewx` — on the path only
+   inside `weectl` — so prefix the command instead:
+
+   ```
+   cd /etc/weewx/bin
+   PYTHONPATH=/usr/share/weewx python3 -m user.celestial --migrate-loopdata-fields --config /etc/weewx/weewx.conf --output /tmp/weewx.conf.migrated
+   git diff --no-index --word-diff /etc/weewx/weewx.conf /tmp/weewx.conf.migrated   # review, then move into place
+   ```
+
+   (The commands `weectl extension install` prints are tailored to your
+   machine and carry the prefix already.  `--in-place` edits weewx.conf
+   directly after making a `.bak-celestial-<version>` backup;
+   `--print-fields-value` just prints the migrated line for
+   cut-and-paste.)
 
 1. Restart WeeWX.
 

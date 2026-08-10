@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Installing weewx-celestial 8.x (with the satellite fields for the live sky dome and Next Visible Pass chart), and upgrading from 7.x, 6.x, or 5.x and earlier with the bundled --migrate-loopdata-fields utility.
+description: Installing weewx-celestial 8.x (with the satellite, comet and countdown fields for the live sky dome, the Next Visible Pass chart and countdown central), and upgrading from earlier versions with the bundled --migrate-loopdata-fields utility.
 ---
 
 # Installation
@@ -18,9 +18,10 @@ description: Installing weewx-celestial 8.x (with the satellite fields for the l
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    6.9 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.0 or later, both per their instructions.  (weewx-skyfield's installer
-   configures its default satellites — the ISS and Tiangong — which is
-   what the fields line below assumes.)
+   2.1 or later, both per their instructions.  (weewx-skyfield's installer
+   configures its default satellites — the ISS and Tiangong — and its
+   default comets — Halley and Hale-Bopp — which is what the fields line
+   below assumes.)
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases),
@@ -30,19 +31,22 @@ description: Installing weewx-celestial 8.x (with the satellite fields for the l
    weectl extension install weewx-celestial.zip
    ```
 
-1. Add the fields the report reads to the `fields` line of
-   `[LoopData] [[Include]]` in `weewx.conf`.  The line must stay a BARE
-   comma-separated list (no brackets or quotes).  Append:
+1. Check the `fields` line of `[LoopData] [[Include]]` in `weewx.conf`
+   — the install step above appended the entries the report reads
+   (printing each one).  The line must stay a BARE comma-separated
+   list (no brackets or quotes); the full set, for reference and hand
+   editing:
 
    ```
-   current.dateTime.raw, almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance, almanac.moon.az, almanac.moon.alt, almanac.moon.earth_distance, almanac.moon.phase, almanac.next_full_moon.unix_epoch.raw, almanac.next_new_moon.unix_epoch.raw, almanac.mercury.az, almanac.mercury.alt, almanac.mercury.earth_distance, almanac.venus.az, almanac.venus.alt, almanac.venus.earth_distance, almanac.mars.az, almanac.mars.alt, almanac.mars.earth_distance, almanac.jupiter.az, almanac.jupiter.alt, almanac.jupiter.earth_distance, almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance, almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance, almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance, almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance, almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance, almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.rise.unix_epoch.raw, almanac.iss.next_visible_pass.set.unix_epoch.raw, almanac.iss.next_visible_pass.max_altitude.degree_angle.raw, almanac.iss.next_visible_pass.duration.second.raw, almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass, almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_visible_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.rise.unix_epoch.raw, almanac.tiangong.next_visible_pass.set.unix_epoch.raw, almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.duration.second.raw, almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible
+   current.dateTime.raw, almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance, almanac.moon.az, almanac.moon.alt, almanac.moon.earth_distance, almanac.moon.phase, almanac.next_full_moon.unix_epoch.raw, almanac.next_new_moon.unix_epoch.raw, almanac.mercury.az, almanac.mercury.alt, almanac.mercury.earth_distance, almanac.venus.az, almanac.venus.alt, almanac.venus.earth_distance, almanac.mars.az, almanac.mars.alt, almanac.mars.earth_distance, almanac.jupiter.az, almanac.jupiter.alt, almanac.jupiter.earth_distance, almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance, almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance, almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance, almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance, almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance, almanac.sun.next_setting.unix_epoch.raw, almanac.sun.next_rising.unix_epoch.raw, almanac(horizon=-18).sun.next_setting.unix_epoch.raw, almanac(horizon=-18).sun.next_rising.unix_epoch.raw, almanac.next_equinox.unix_epoch.raw, almanac.next_solstice.unix_epoch.raw, almanac.next_perihelion.unix_epoch.raw, almanac.next_aphelion.unix_epoch.raw, almanac.next_meteor_shower.peak.unix_epoch.raw, almanac.next_meteor_shower.label, almanac.next_supermoon.unix_epoch.raw, almanac.next_eclipse.unix_epoch.raw, almanac.next_eclipse_kind, almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.rise.unix_epoch.raw, almanac.iss.next_visible_pass.set.unix_epoch.raw, almanac.iss.next_visible_pass.max_altitude.degree_angle.raw, almanac.iss.next_visible_pass.duration.second.raw, almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass, almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_visible_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.rise.unix_epoch.raw, almanac.tiangong.next_visible_pass.set.unix_epoch.raw, almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.duration.second.raw, almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible, almanac.halley.az, almanac.halley.alt, almanac.halley.earth_distance, almanac.halley.mag, almanac.halley.label, almanac.halley.perihelion.unix_epoch.raw, almanac.hale_bopp.az, almanac.hale_bopp.alt, almanac.hale_bopp.earth_distance, almanac.hale_bopp.mag, almanac.hale_bopp.label, almanac.hale_bopp.perihelion.unix_epoch.raw
    ```
 
-   (Entries already present — e.g. `current.dateTime.raw` — need not be
-   repeated; weewx-loopdata ignores duplicates.  The installer checks
-   this line at install time and prints tailored
-   `--migrate-loopdata-fields` commands when entries the page reads are
-   missing — it never edits `[LoopData]` itself.)
+   (As of 8.1 the installer does this step for you: `weectl extension
+   install` appends any of these entries missing from the line —
+   append-only, printing each one; existing entries are never renamed,
+   removed or reordered — so the line above is the reference for hand
+   editing and for older installs.  Entries already present need not be
+   repeated; weewx-loopdata ignores duplicates.)
 
    The `almanac.iss.*` and `almanac.tiangong.*` entries are the
    satellite layer.  A satellite you add beyond the installer's two
@@ -53,6 +57,14 @@ description: Installing weewx-celestial 8.x (with the satellite fields for the l
    `--add-satellite` utility makes those edits — plus the display name —
    in one command; `--remove-satellite` is its inverse.  See
    [Adding and removing satellites](configuration.md#adding-and-removing-satellites).
+
+   The `almanac.halley.*`/`almanac.hale_bopp.*` entries are the comet
+   layer (six per comet, following `[Skyfield] [[Comets]]` the same
+   way — `--add-comet`/`--remove-comet` make and unmake the edits, see
+   [Adding and removing comets](configuration.md#adding-and-removing-comets)),
+   and the sunset/sunrise, darkness, equinox/solstice,
+   perihelion/aphelion, meteor shower,
+   supermoon and eclipse entries feed the countdown row.
 
    By hand, the display name belongs in an `[Almanac]` entry where every
    report sees it:
@@ -90,18 +102,23 @@ Install right over the existing version, then restart WeeWX —
 weectl extension install weewx-celestial.zip
 ```
 
-One action lights up the new satellite layer: append the
-`almanac.iss.*` and `almanac.tiangong.*` entries above to your
-`[LoopData] [[Include]] fields` line (running
-`--migrate-loopdata-fields` appends them for you — it follows your
-`[Skyfield]` `[[Satellites]]`, so a customized satellite set gets
-entries for its own tags instead of these defaults, and it is
-idempotent and never touches non-celestial entries), and run
-weewx-skyfield 2.0 with its default `[[Satellites]]`.  Without them the page simply has no
-satellites; everything else is drop-in and the rest of the fields line
-is unchanged.  The install itself reminds you: when the fields line is
-missing entries the page reads, the installer prints the exact migrator
-commands, tailored to your configuration.
+One action lights up the new layers: append the missing entries above
+to your `[LoopData] [[Include]] fields` line — the satellite entries
+(8.0), and 8.1's countdown-chip fields and per-comet entries.  Running
+`--migrate-loopdata-fields` appends them all for you: it follows your
+`[Skyfield]` `[[Satellites]]` and `[[Comets]]`, so a customized set
+gets entries for its own tags instead of the defaults, and it is
+idempotent and never touches non-celestial entries.  Run weewx-skyfield
+2.1 for the comets and the shower/supermoon chips (2.0 still serves the
+satellites; the sunset, darkness and pass chips tick on either).
+Without the entries the page simply hides those layers and chips;
+everything else is drop-in and the rest of the fields line is
+unchanged.  As of 8.1 the install itself appends the missing entries
+(append-only, each one printed; restart weewxd so weewx-loopdata
+reloads the line), so the migrator run is only needed when the line
+carries pre-6.0 spellings — renames deserve review, and the installer
+prints the exact migrator commands, tailored to your configuration,
+instead of applying them.
 
 Note that upgrading replaces the bundled skin (`skins/Celestial/`,
 including its `lang/` files) — local additions and overrides survive
@@ -162,16 +179,17 @@ this extension, so the new version must be installed before it can run:
 
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    6.9+ and [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.0+ if you have not already, then install this version.
+   2.1+ if you have not already, then install this version.
 
 1. Run the bundled utility to rewrite your `[LoopData] [[Include]] fields`
    line — every celestial entry (including pre-3.0 PascalCase names)
    becomes its almanac equivalent, rendition suffixes are honored,
    non-celestial entries are never touched, and the fields the report
-   needs are appended.  The satellite entries follow your `[Skyfield]`
-   `[[Satellites]]` — fields for exactly the satellites you have
-   configured, the installer defaults (iss, tiangong) only when there
-   is no `[[Satellites]]` section to follow.  Raw times and durations
+   needs are appended.  The satellite and comet entries follow your
+   `[Skyfield]` `[[Satellites]]` and `[[Comets]]` — fields for exactly
+   the sets you have configured, the installer defaults (iss and
+   tiangong; halley and hale_bopp) only when there is no section to
+   follow.  Raw times and durations
    arrive with pinned units
    (`almanac.sunrise.unix_epoch.raw`, `almanac.sun.visible.second.raw`),
    so they keep the old fields' fixed meanings — epoch seconds, seconds
@@ -185,9 +203,21 @@ this extension, so the new version must be installed before it can run:
    git diff --no-index --word-diff /home/weewx/weewx.conf /tmp/weewx.conf.migrated   # review, then move into place
    ```
 
-   (`--in-place` edits weewx.conf directly after making a
-   `.bak-celestial-<version>` backup; `--print-fields-value` just prints
-   the migrated line for cut-and-paste.)
+   On a Debian or Red Hat package install there is no venv to activate,
+   and WeeWX's own code lives in `/usr/share/weewx` — on the path only
+   inside `weectl` — so prefix the command instead:
+
+   ```
+   cd /etc/weewx/bin
+   PYTHONPATH=/usr/share/weewx python3 -m user.celestial --migrate-loopdata-fields --config /etc/weewx/weewx.conf --output /tmp/weewx.conf.migrated
+   git diff --no-index --word-diff /etc/weewx/weewx.conf /tmp/weewx.conf.migrated   # review, then move into place
+   ```
+
+   (The commands `weectl extension install` prints are tailored to your
+   machine and carry the prefix already.  `--in-place` edits weewx.conf
+   directly after making a `.bak-celestial-<version>` backup;
+   `--print-fields-value` just prints the migrated line for
+   cut-and-paste.)
 
 1. Restart WeeWX.
 

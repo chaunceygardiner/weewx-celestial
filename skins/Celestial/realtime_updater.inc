@@ -133,6 +133,34 @@
   #silent $t.update({'visible': $gettext('visible')})
   #silent $t.update({'not visible': $gettext('not visible')})
   #silent $t.update({'no usable orbital elements — see the weewxd log': $gettext('no usable orbital elements — see the weewxd log')})
+  ## The countdown chips' live strings.  The eclipse vocabulary and the
+  ## perihelion label are shared verbatim with weewx-skyfield's Sky page
+  ## (its translations are mined into this skin's lang files); sunset/
+  ## sunrise/darkness/supermoon/appears in and the day-count wrapper are
+  ## celestial's own wording.
+  #silent $t.update({'sunset': $gettext('sunset')})
+  #silent $t.update({'sunrise': $gettext('sunrise')})
+  #silent $t.update({'darkness begins': $gettext('darkness begins')})
+  #silent $t.update({'darkness ends': $gettext('darkness ends')})
+  #silent $t.update({'spring begins': $gettext('spring begins')})
+  #silent $t.update({'summer begins': $gettext('summer begins')})
+  #silent $t.update({'autumn begins': $gettext('autumn begins')})
+  #silent $t.update({'winter begins': $gettext('winter begins')})
+  #silent $t.update({'Earth perihelion': $gettext('Earth perihelion')})
+  #silent $t.update({'Earth aphelion': $gettext('Earth aphelion')})
+  #silent $t.update({'supermoon': $gettext('supermoon')})
+  #silent $t.update({'appears in': $gettext('appears in')})
+  #silent $t.update({'{d}d {h}h {m}m': $gettext('{d}d {h}h {m}m')})
+  #silent $t.update({'lunar eclipse': $gettext('lunar eclipse')})
+  #silent $t.update({'solar eclipse': $gettext('solar eclipse')})
+  #silent $t.update({'penumbral': $gettext('penumbral')})
+  #silent $t.update({'partial': $gettext('partial')})
+  #silent $t.update({'total': $gettext('total')})
+  #silent $t.update({'annular': $gettext('annular')})
+  #silent $t.update({'{name} perihelion': $gettext('{name} perihelion')})
+  ## The comet dial tooltip's magnitude suffix (celestial's own wording;
+  ## the rest of the tooltip reuses the roster keys above).
+  #silent $t.update({'mag {mag}': $gettext('mag {mag}')})
   T = $json.dumps($t);
   // Composed translations: look the English key up in T (falling back to
   // the key, so a missing entry renders English) and fill the {named}
@@ -225,6 +253,17 @@
     return new Date(ts * 1000).toLocaleString(LOCALE,
       tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit'}));
   }
+  function fmtHM(ts) {
+    // The countdown chips' event-time detail: BYTE-IDENTICAL to the
+    // template's first paint, which renders %H:%M -- the first live
+    // rewrite must not reformat what the report painted (no seconds,
+    // no locale AM/PM: en-GB with hour12 off is 24-hour HH:MM in
+    // every browser).  The ticking remaining-time value above it is
+    // the hh:mm:ss-shaped number; the two must not wear the same
+    // dress.
+    return new Date(ts * 1000).toLocaleString('en-GB',
+      tzOptions({hour: '2-digit', minute: '2-digit', hour12: false}));
+  }
   function numberWithCommas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
@@ -277,6 +316,8 @@
     return e;
   }
   var dialMarks = null;   // per-body dial elements, built on first render
+  var sunDialPt = null;   // the sun's dial point this render, the comet
+                          // tails' anti-sunward anchor (null: no tail)
   function buildDial() {
     var dial = document.getElementById('dial');
     if (!dial) {
@@ -344,6 +385,34 @@
       m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
       marks[key] = m;
     });
+    // The comet marks: a diamond with an anti-sunward tail fan and the
+    // planets' one-hour trail, one per configured comet.  Same mark
+    // anatomy as the bodies (group + <title> child for sky.js taps,
+    // label parented to the dial); the diamond is a <path> repositioned
+    // by rewriting its d each render, the three tail rays carry
+    // skyfield's fixed per-ray opacity and get their endpoints per
+    // render (weewx-skyfield's _comet_tail geometry, ported).
+    COMET_NAMES.forEach(function(key) {
+      var segs = [];
+      for (var i = 0; i < TRAIL_N; i++) {
+        segs.push(svgEl('line', {'class': 'trail stroke-comet',
+                                 display: 'none'}, trailsG));
+      }
+      var g = svgEl('g', {'class': 'geocomet', display: 'none'}, dial);
+      var m = {label: satLabel(key), g: g, segs: segs,
+               glow: null, dot: null, lit: null, rim: null, rays: []};
+      m.title = svgEl('title', {}, g, m.label);
+      var rayOpacity = ['0.55', '0.9', '0.55'];
+      for (var ri = 0; ri < 3; ri++) {
+        m.rays.push(svgEl('line', {'class': 'comet-tail',
+                                   'stroke-width': 1.2,
+                                   'stroke-opacity': rayOpacity[ri],
+                                   display: 'none'}, g));
+      }
+      m.dot = svgEl('path', {'class': 'cometdot'}, g);
+      m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
+      marks[key] = m;
+    });
     return marks;
   }
   // The moon disc's limb/terminator geometry (same construction as the
@@ -357,6 +426,38 @@
     return 'M ' + cx + ',' + (cy - R) +
            ' A ' + R + ',' + R + ' 0 0 ' + limbSweep + ' ' + cx + ',' + (cy + R) +
            ' A ' + rx + ',' + R + ' 0 0 ' + termSweep + ' ' + cx + ',' + (cy - R) + ' Z';
+  }
+  function drawTrail(segs, azNow, auNow, altNow, azRate, auRate, altRate) {
+    // The trail: the last hour of motion at the derived rates, drawn
+    // backward from now (real observed positions replace nothing here --
+    // the rates ARE observed, so the wake is the true recent path to
+    // first order).  Hidden until motion can be derived.  On this dial
+    // the angle is azimuth, so everything -- planets and comets alike --
+    // sweeps at the sky's diurnal rate and earns the same wake.
+    var haveRates = (azRate !== null && auRate !== null && altRate !== null);
+    var step = TRAIL_SEC / TRAIL_N;
+    for (var i = 0; i < TRAIL_N; i++) {
+      var seg = segs[i];
+      if (!haveRates) {
+        seg.setAttribute('display', 'none');
+        continue;
+      }
+      var backA = TRAIL_SEC - i * step;        // seconds before now
+      var backB = backA - step;
+      var azA = (azNow - azRate * backA + 720) % 360;
+      var azB = (azNow - azRate * backB + 720) % 360;
+      var rA = rOfAu(auNow - auRate * backA);
+      var rB = rOfAu(auNow - auRate * backB);
+      var altB = altNow - altRate * backB;
+      var pA = dialXY(azA, rA), pB = dialXY(azB, rB);
+      seg.removeAttribute('display');
+      seg.setAttribute('x1', pA[0]);
+      seg.setAttribute('y1', pA[1]);
+      seg.setAttribute('x2', pB[0]);
+      seg.setAttribute('y2', pB[1]);
+      seg.setAttribute('stroke-opacity',
+                       (i + 1) / TRAIL_N * (altB < 0 ? 0.28 : 0.6));
+    }
   }
   function placeBodyLabel(lab, az, r) {
     // Radially outward from Earth (inward for Proxima at the rim), the
@@ -481,6 +582,7 @@
     }
     var waxing = (nextFull !== null && nextNew !== null) ? (nextFull < nextNew) : true;
     var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
+    sunDialPt = null;        // re-captured below when the sun has data
     GEO_BODIES.forEach(function(key) {
       var azKey = 'almanac.' + key + '.az';
       var altKey = 'almanac.' + key + '.alt';
@@ -529,6 +631,9 @@
       var below = altNow < 0;
       var r = rOfAu(auNow);
       var p = dialXY(azNow, r);
+      if (key === 'sun') {
+        sunDialPt = p;       // valid below the horizon too, like
+      }                      // skyfield's own dome tail anchor
       m.dot.setAttribute('cx', p[0]);
       m.dot.setAttribute('cy', p[1]);
       if (key === 'moon') {
@@ -559,34 +664,119 @@
                             fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)});
       }
       placeBodyLabel(m.lab, azNow, r);
-      // The trail: the last hour of motion at the derived rates, drawn
-      // backward from now (real observed positions replace nothing here --
-      // the rates ARE observed, so the wake is the true recent path to
-      // first order).  Hidden until motion can be derived.
-      var haveRates = (azRate !== null && auRate !== null && altRate !== null);
-      var step = TRAIL_SEC / TRAIL_N;
-      for (var i = 0; i < TRAIL_N; i++) {
-        var seg = m.segs[i];
-        if (!haveRates) {
-          seg.setAttribute('display', 'none');
+      drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
+    });
+    renderComets(dt);
+  }
+  function renderComets(dt) {
+    // The comets, drawn AFTER the bodies so sunDialPt is this render's:
+    // the exact planet pipeline (guarded reads, ring-long rates, roster
+    // cells, below-horizon dimming, the one-hour trail), with a diamond
+    // marker in place of the dot -- solid when naked-eye bright
+    // (mag <= 6), the hollow inversion when fainter or when magnitude
+    // is honestly absent (an MPC row without g/k parameters) -- and a
+    // three-ray tail fanning away from the sun's dial point.  A comet
+    // whose fields read null across the surface (MPC dropped it) renders
+    // ABSENCE: no diamond, no tail, no trail, empty roster cells.
+    COMET_NAMES.forEach(function(key) {
+      var azKey = 'almanac.' + key + '.az';
+      var altKey = 'almanac.' + key + '.alt';
+      var distKey = 'almanac.' + key + '.earth_distance';
+      var az = num(latest, azKey), alt = num(latest, altKey);
+      var au = num(latest, distKey);
+      var azRate = rateOf(azKey, true);
+      var altRate = rateOf(altKey, false);
+      var auRate = rateOf(distKey, false);
+      var azNow = (az === null) ? null : (az + (azRate || 0) * dt + 360) % 360;
+      var altNow = (alt === null) ? null : Math.max(-90, Math.min(90, alt + (altRate || 0) * dt));
+      var auNow = (au === null) ? null : au + (auRate || 0) * dt;
+      if (auNow !== null) {
+        setOdometer(distKey, numberWithCommas(Math.round(auNow * PER_AU)));
+        setHtml('geo-au-' + key,
+                fmt('{dist} au',
+                    {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)}));
+      }
+      if (auRate !== null) {
+        var perSec = Math.abs(auRate) * PER_AU;
+        setHtml('geo-rate-' + key,
+                '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
+                T[auRate >= 0 ? 'receding' : 'approaching'] + ' ' +
+                perSec.toFixed(2) + DIST_LABEL + '/s');
+      }
+      if (altNow !== null) {
+        setHtml('geo-alt-' + key,
+                altNow < 0 ? T['below horizon']
+                           : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)}));
+        setRowBelow(key, altNow < 0);
+      }
+      var m = dialMarks === null ? null : dialMarks[key];
+      if (!m) {
+        return;
+      }
+      m.label = satLabel(key);
+      m.lab.textContent = m.label;
+      if (azNow === null || altNow === null || auNow === null) {
+        m.g.setAttribute('display', 'none');
+        m.lab.setAttribute('display', 'none');
+        return;
+      }
+      m.g.removeAttribute('display');
+      m.lab.removeAttribute('display');
+      var below = altNow < 0;
+      var r = rOfAu(auNow);
+      var p = dialXY(azNow, r);
+      m.dot.setAttribute('d',
+          'M ' + p[0].toFixed(1) + ',' + (p[1] - 5).toFixed(1) +
+          ' L ' + (p[0] + 5).toFixed(1) + ',' + p[1].toFixed(1) +
+          ' L ' + p[0].toFixed(1) + ',' + (p[1] + 5).toFixed(1) +
+          ' L ' + (p[0] - 5).toFixed(1) + ',' + p[1].toFixed(1) + ' Z');
+      var mag = num(latest, 'almanac.' + key + '.mag');
+      var bright = (mag !== null && mag <= 6.0);
+      m.g.setAttribute('class', below ? 'geocomet below' : 'geocomet');
+      m.dot.setAttribute('class',
+          'cometdot' + (bright ? '' : ' faint') + (below ? ' below' : ''));
+      // The tail: three rays fanning ANTI-SUNWARD -- away from the sun's
+      // own dial point (the sun sits on this plan view like any body;
+      // radially-outward is sun-centered orrery logic and wrong here).
+      // Skipped when the sun is off the dial this render or degenerately
+      // close, skyfield's own guard.
+      var ux = null, uy = null;
+      if (sunDialPt !== null) {
+        var dx = p[0] - sunDialPt[0], dy = p[1] - sunDialPt[1];
+        var dn = Math.sqrt(dx * dx + dy * dy);
+        if (dn > 1.0) {
+          ux = dx / dn;
+          uy = dy / dn;
+        }
+      }
+      var rayGeom = [[-0.18, 9.0], [0.0, 12.0], [0.18, 9.0]];
+      for (var ri = 0; ri < 3; ri++) {
+        var ray = m.rays[ri];
+        if (ux === null) {
+          ray.setAttribute('display', 'none');
           continue;
         }
-        var backA = TRAIL_SEC - i * step;        // seconds before now
-        var backB = backA - step;
-        var azA = (azNow - azRate * backA + 720) % 360;
-        var azB = (azNow - azRate * backB + 720) % 360;
-        var rA = rOfAu(auNow - auRate * backA);
-        var rB = rOfAu(auNow - auRate * backB);
-        var altB = altNow - altRate * backB;
-        var pA = dialXY(azA, rA), pB = dialXY(azB, rB);
-        seg.removeAttribute('display');
-        seg.setAttribute('x1', pA[0]);
-        seg.setAttribute('y1', pA[1]);
-        seg.setAttribute('x2', pB[0]);
-        seg.setAttribute('y2', pB[1]);
-        seg.setAttribute('stroke-opacity',
-                         (i + 1) / TRAIL_N * (altB < 0 ? 0.28 : 0.6));
+        var ca = Math.cos(rayGeom[ri][0]), sa = Math.sin(rayGeom[ri][0]);
+        var rx = ux * ca - uy * sa, ry = ux * sa + uy * ca;
+        ray.removeAttribute('display');
+        ray.setAttribute('x1', (p[0] + 6.0 * rx).toFixed(1));
+        ray.setAttribute('y1', (p[1] + 6.0 * ry).toFixed(1));
+        ray.setAttribute('x2', (p[0] + (6.0 + rayGeom[ri][1]) * rx).toFixed(1));
+        ray.setAttribute('y2', (p[1] + (6.0 + rayGeom[ri][1]) * ry).toFixed(1));
       }
+      m.lab.setAttribute('class', below ? 'bodylab dim' : 'bodylab');
+      var tip = m.label + ' \u00B7 ' +
+          (below ? T['below horizon']
+                 : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)})) +
+          ' \u00B7 ' +
+          fmt('{dist} au',
+              {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)});
+      if (mag !== null) {
+        tip += ' \u00B7 ' + fmt('mag {mag}', {mag: mag.toFixed(1)});
+      }
+      m.title.textContent = tip;
+      placeBodyLabel(m.lab, azNow, r);
+      drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
   }
 
@@ -635,6 +825,22 @@
   #end try
   #end if
   SAT_NAMES = $json.dumps($sat_names);
+  ## The comet set follows [Skyfield] [[Comets]] the same way, through
+  ## skyfield 2.1's public comet_names() (guarded: an older skyfield has
+  ## no method and no comets).  Comets ride the DIAL, not the dome: the
+  ## embedded dome fragments already carry their diamonds, redrawn every
+  ## backdrop refetch -- nothing to nudge at comet speed.
+  #set $comet_names = []
+  #if $sky_page
+  #try
+  #for $n in $sky_page.comet_names()
+  #silent $comet_names.append(str($n))
+  #end for
+  #except
+  #pass
+  #end try
+  #end if
+  COMET_NAMES = $json.dumps($comet_names);
   // dome_svg's fixed geometry (viewBox 0 0 680 706): sky-chart
   // orientation, north up, EAST LEFT -- hence minus sine.  Mirrors
   // wxskyfield_sky._dome_xy; deliberately opposite the dial's east-right.
@@ -1017,7 +1223,8 @@
   // satellite's own dot at the arc's peak (a dome-body group -- the same
   // consumer contract as the dome's marks, under the chart's own SVG
   // ids).  During the pass itself the chart's epoch is within minutes of
-  // now, so nudging that ONE dot from the live alt/az is epoch-honest;
+  // now, so nudging that ONE dot from the live alt/az -- and flipping
+  // its ring/solid look from the live sunlit flag -- is epoch-honest;
   // the chart's sun, moon, planets and stars belong to the culmination
   // instant and are never touched.  The fragment refetch (pass-chart.txt,
   // rewritten each report cycle) swaps in the next chart once a pass
@@ -1032,7 +1239,10 @@
     // The featured satellite is named by the arc's own data-body; its
     // baseline is the dot's generated position, exactly the dome-mark
     // pattern.  tag stays null when the chart lacks the hooks (an older
-    // skyfield): nothing sweeps, the chart stands as drawn.
+    // skyfield): nothing sweeps, the chart stands as drawn.  The
+    // baseline also records the dot's generated look -- fill, stroke,
+    // and the data-sunlit hook's verdict -- so the sweep can flip and
+    // restore it (passDotLit below).
     passBase = {tag: null};
     var svg = passSvg();
     if (svg === null) {
@@ -1048,10 +1258,32 @@
     if (c === null || !c.hasAttribute('cx')) {
       return;
     }
-    passBase = {tag: tag, g: g,
+    var ds = g.getAttribute('data-sunlit');
+    passBase = {tag: tag, g: g, c: c,
                 lab: svg.querySelector('text[data-body="' + tag + '"]'),
                 x: parseFloat(c.getAttribute('cx')),
-                y: parseFloat(c.getAttribute('cy'))};
+                y: parseFloat(c.getAttribute('cy')),
+                fill: c.getAttribute('fill'),
+                stroke: c.getAttribute('stroke'),
+                genLit: ds === null ? null : ds !== '0'};
+  }
+  function passDotLit(b, lit) {
+    // Solid vs hollow ring on the chart's dot.  The generator draws a
+    // shadowed satellite as the exact fill/stroke inversion of a sunlit
+    // one, so the two looks are the recorded generated pair and its
+    // swap -- no color knowledge of skyfield's chart palette needed,
+    // and no CSS coupling.  Without the data-sunlit hook (an older
+    // chart) the dot stands as drawn.
+    if (b.genLit === null || b.fill === null || b.stroke === null) {
+      return;
+    }
+    if (lit === b.genLit) {
+      b.c.setAttribute('fill', b.fill);
+      b.c.setAttribute('stroke', b.stroke);
+    } else {
+      b.c.setAttribute('fill', b.stroke);
+      b.c.setAttribute('stroke', b.fill);
+    }
   }
   function renderPass(nowTs) {
     if (passSvg() === null || latest === null) {
@@ -1073,6 +1305,7 @@
       // (after the pass the next refetch brings the next chart).
       b.g.removeAttribute('transform');
       b.g.removeAttribute('display');
+      passDotLit(b, b.genLit);
       if (b.lab !== null) {
         b.lab.removeAttribute('transform');
       }
@@ -1093,6 +1326,17 @@
       return;
     }
     b.g.removeAttribute('display');
+    // Mid-ride the ring/solid state is the satellite's LIVE state, the
+    // dome's own toggle (renderSats above): 8.0 shipped the sweeping dot
+    // wearing the culmination's sunlit state all pass, so the two panels
+    // disagreed whenever the satellite crossed the shadow line mid-pass
+    // (NOAA-21's Aug 8 shadow culmination wore the ring from rise while
+    // the dome showed the live shadow entry).  Only when the feed
+    // carries the key: a trimmed fields line keeps the chart as drawn.
+    var sl = latest['almanac.' + b.tag + '.sunlit'];
+    if (sl !== undefined) {
+      passDotLit(b, sl !== false);
+    }
     var p = domeXY(azNow, altNow);
     var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
     b.g.setAttribute('transform', tr);
@@ -1148,10 +1392,362 @@
   }
   setInterval(refreshPass, CHART_REFRESH * 1000);
 
+  // ---- countdown central ---------------------------------------------------
+  // The chip row under the header: d hh:mm:ss countdowns ticking on the
+  // one-second local tick, each pure client arithmetic against an
+  // event-tier loopdata field -- computed once by the engine, cached
+  // until the event, zero cost at this cadence.  Feature detection is
+  // the roster's: an ABSENT key (not on the fields line, or an almanac
+  // that cannot serve it) leaves the chip's report-time first paint
+  // alone; a key present but null is loopdata's honest "nothing ahead"
+  // and hides the chip.  The windowed guests (supermoon, eclipse, a
+  // comet's perihelion) show only within CHIP_WINDOW_SEC of the event
+  // -- close enough to tick meaningfully.
+  var CHIP_WINDOW_SEC = 30 * 86400;
+  function fmtDHMS(sec) {
+    // The countdown's precision follows its horizon: a day or more out
+    // it reads days-hours-minutes, ticking by the minute (seconds --
+    // and a seconds-bearing clock shape -- are noise at that range, and
+    // the chip's detail carries the actual date); inside the final day
+    // it becomes the ticking hh:mm:ss clock, where seconds are the
+    // point.
+    sec = Math.max(0, Math.floor(sec));
+    var days = Math.floor(sec / 86400);
+    var rem = sec - days * 86400;
+    var hh = Math.floor(rem / 3600);
+    var mm = Math.floor((rem - hh * 3600) / 60);
+    if (days >= 1) {
+      return fmt('{d}d {h}h {m}m', {d: days, h: hh, m: mm});
+    }
+    var ss = rem - hh * 3600 - mm * 60;
+    return ('0' + hh).slice(-2) + ':' + ('0' + mm).slice(-2) + ':' +
+           ('0' + ss).slice(-2);
+  }
+  function chipShow(id, show) {
+    var el = document.getElementById(id);
+    if (el === null) {
+      return;
+    }
+    if (show) {
+      el.removeAttribute('hidden');
+    } else {
+      el.setAttribute('hidden', '');
+    }
+  }
+  function chipStaticTs(id) {
+    // The generation-baked target instant (the chip's data-ts): a
+    // countdown needs only a target and the browser clock, so the
+    // chips tick from the moment the page loads -- the loop feed's
+    // job is re-anchoring and ROLLING the target when the event
+    // passes, not enabling the tick.
+    var el = document.getElementById(id);
+    if (el === null) {
+      return null;
+    }
+    var v = parseFloat(el.getAttribute('data-ts'));
+    return isFinite(v) ? v : null;
+  }
+  function seasonKey(ts) {
+    // The season the instant begins, hemisphere-aware, named by the
+    // event's month in the display zone (equinoxes fall in
+    // March/September, solstices in June/December -- the month is
+    // unambiguous even across zone shifts).
+    var mo = parseInt(new Date(ts * 1000).toLocaleString('en-GB',
+        tzOptions({month: 'numeric'})), 10);
+    var north = STATION_LAT >= 0;
+    if (mo >= 2 && mo <= 4) {
+      return north ? 'spring begins' : 'autumn begins';
+    }
+    if (mo >= 5 && mo <= 7) {
+      return north ? 'summer begins' : 'winter begins';
+    }
+    if (mo >= 8 && mo <= 10) {
+      return north ? 'autumn begins' : 'spring begins';
+    }
+    return north ? 'winter begins' : 'summer begins';
+  }
+  function chipEvent(id, key, nowTs, windowed) {
+    // The shared chip skeleton: read the pinned instant -- the live
+    // feed's when it carries the key, else the generation-baked
+    // data-ts -- decide visibility, tick the value.  Returns the
+    // instant (null: hidden, or the first paint stands) so callers can
+    // dress the k/d cells.  The -60 grace shows 00:00:00 between the
+    // event and the roll that replaces the target; without a feed
+    // there is no roll, so a passed static target hides its chip until
+    // the next report cycle regenerates the page.
+    var ts;
+    if (hasKey(key)) {
+      ts = num(latest, key);       // present but null: honest nothing
+    } else {
+      ts = chipStaticTs(id);
+      if (ts === null) {
+        return null;               // nothing to tick: first paint stands
+      }
+    }
+    var show = ts !== null && ts - nowTs > -60 &&
+               (!windowed || (ts - nowTs >= 0 && ts - nowTs <= CHIP_WINDOW_SEC));
+    chipShow(id, show);
+    if (!show) {
+      return null;
+    }
+    setHtml(id + '-v', fmtDHMS(ts - nowTs));
+    return ts;
+  }
+  function renderCountdown(nowTs) {
+    // Runs on every local tick, loop feed or none: the sun, shower and
+    // darkness chips tick from their generation-baked targets until
+    // the feed's event fields arrive to re-anchor and roll them.  The
+    // pass chip is feed-only (rolling is its whole story).
+    var bestTag = null, bestRise = null, bestSet = null, anyPassKey = false;
+    SAT_NAMES.forEach(function(sat) {
+      var base = 'almanac.' + sat + '.next_visible_pass';
+      if (!hasKey(base + '.rise.unix_epoch.raw') && !hasKey(base + '.rise.raw')) {
+        return;
+      }
+      anyPassKey = true;
+      var rise = numOr(base + '.rise.unix_epoch.raw', base + '.rise.raw');
+      if (rise === null) {
+        return;
+      }
+      if (bestRise === null || rise < bestRise) {
+        bestTag = sat;
+        bestRise = rise;
+        bestSet = numOr(base + '.set.unix_epoch.raw', base + '.set.raw');
+      }
+    });
+    if (anyPassKey) {
+      var passShow = bestRise !== null &&
+          (nowTs < bestRise || (bestSet !== null && nowTs < bestSet + 60));
+      chipShow('chip-pass', passShow);
+      if (passShow) {
+        setHtml('chip-pass-k', satLabel(bestTag));
+        if (nowTs < bestRise) {
+          setHtml('chip-pass-d', T['appears in']);
+          setHtml('chip-pass-v', fmtDHMS(bestRise - nowTs));
+        } else if (bestSet !== null && nowTs < bestSet) {
+          setHtml('chip-pass-d', T['overhead now']);
+          setHtml('chip-pass-v', '');
+        } else {
+          setHtml('chip-pass-d', T['just set']);
+          setHtml('chip-pass-v', '');
+        }
+      }
+    } else {
+      // No feed keys: tick from the generation-baked rise/set pair
+      // (the painted label stands).  Without a feed there is no roll,
+      // so a completed pass hides its chip until the next report
+      // cycle regenerates the page.
+      var passStatic = chipStaticTs('chip-pass');
+      if (passStatic !== null) {
+        var passEl = document.getElementById('chip-pass');
+        var passSetRaw = parseFloat(passEl.getAttribute('data-set'));
+        var passSetStatic = isFinite(passSetRaw) ? passSetRaw : null;
+        if (nowTs < passStatic) {
+          chipShow('chip-pass', true);
+          setHtml('chip-pass-d', T['appears in']);
+          setHtml('chip-pass-v', fmtDHMS(passStatic - nowTs));
+        } else if (passSetStatic !== null && nowTs < passSetStatic) {
+          chipShow('chip-pass', true);
+          setHtml('chip-pass-d', T['overhead now']);
+          setHtml('chip-pass-v', '');
+        } else {
+          chipShow('chip-pass', false);
+        }
+      }
+    }
+    // Sunset or sunrise, whichever next: a client-side min() -- the
+    // next_* pair always lies ahead by definition, and loopdata's event
+    // expiry rolls each the moment it passes, so the sunset chip
+    // becomes the sunrise chip by itself.
+    if (hasKey('almanac.sun.next_setting.unix_epoch.raw') ||
+        hasKey('almanac.sun.next_rising.unix_epoch.raw')) {
+      var sunSet = num(latest, 'almanac.sun.next_setting.unix_epoch.raw');
+      var sunRise = num(latest, 'almanac.sun.next_rising.unix_epoch.raw');
+      var sunTs = null, sunK = null;
+      if (sunSet !== null && (sunRise === null || sunSet <= sunRise)) {
+        sunTs = sunSet;
+        sunK = T['sunset'];
+      } else if (sunRise !== null) {
+        sunTs = sunRise;
+        sunK = T['sunrise'];
+      }
+      var sunShow = sunTs !== null && sunTs - nowTs > -60;
+      chipShow('chip-sun', sunShow);
+      if (sunShow) {
+        setHtml('chip-sun-k', sunK);
+        setHtml('chip-sun-v', fmtDHMS(sunTs - nowTs));
+        setHtml('chip-sun-d', fmtHM(sunTs));
+      }
+    } else {
+      // No feed keys: tick from the generation-baked target (the k and
+      // d cells stand as painted -- same event).
+      var sunStatic = chipStaticTs('chip-sun');
+      if (sunStatic !== null) {
+        var sunStaticShow = sunStatic - nowTs > -60;
+        chipShow('chip-sun', sunStaticShow);
+        if (sunStaticShow) {
+          setHtml('chip-sun-v', fmtDHMS(sunStatic - nowTs));
+        }
+      }
+    }
+    // The shower chip: there is always a next shower; the label rides
+    // the same event group as the peak, so both roll together.  The
+    // generation-time moon note (illumination at the peak) is cleared
+    // if the live label has rolled past the shower it described.
+    var showerTs = chipEvent('chip-shower',
+        'almanac.next_meteor_shower.peak.unix_epoch.raw', nowTs, false);
+    if (showerTs !== null) {
+      var showerLab = strAt('almanac.next_meteor_shower.label');
+      if (showerLab !== null) {
+        setHtml('chip-shower-k', showerLab);
+        var showerChip = document.getElementById('chip-shower');
+        if (showerChip !== null &&
+            showerChip.getAttribute('data-shower-label') !== showerLab) {
+          showerChip.setAttribute('data-shower-label', showerLab);
+          setHtml('chip-shower-d', '');
+        }
+      }
+    }
+    // Astronomical darkness, symmetric with the sun chip: darkness
+    // begins at the -18 sunset, ends at the -18 sunrise -- stargazers
+    // care about both ends of the window.  A high-latitude summer
+    // where -18 never comes serves nulls and hides the chip.  The
+    // keys are the fields-line spellings verbatim.
+    if (hasKey('almanac(horizon=-18).sun.next_setting.unix_epoch.raw') ||
+        hasKey('almanac(horizon=-18).sun.next_rising.unix_epoch.raw')) {
+      var darkSet = num(latest, 'almanac(horizon=-18).sun.next_setting.unix_epoch.raw');
+      var darkRise = num(latest, 'almanac(horizon=-18).sun.next_rising.unix_epoch.raw');
+      var darkTs = null, darkK = null;
+      if (darkSet !== null && (darkRise === null || darkSet <= darkRise)) {
+        darkTs = darkSet;
+        darkK = T['darkness begins'];
+      } else if (darkRise !== null) {
+        darkTs = darkRise;
+        darkK = T['darkness ends'];
+      }
+      var darkShow = darkTs !== null && darkTs - nowTs > -60;
+      chipShow('chip-dark', darkShow);
+      if (darkShow) {
+        setHtml('chip-dark-k', darkK);
+        setHtml('chip-dark-v', fmtDHMS(darkTs - nowTs));
+        setHtml('chip-dark-d', fmtHM(darkTs));
+      }
+    } else {
+      var darkStatic = chipStaticTs('chip-dark');
+      if (darkStatic !== null) {
+        var darkStaticShow = darkStatic - nowTs > -60;
+        chipShow('chip-dark', darkStaticShow);
+        if (darkStaticShow) {
+          setHtml('chip-dark-v', fmtDHMS(darkStatic - nowTs));
+        }
+      }
+    }
+    // The season chip: equinox or solstice, whichever next, inside the
+    // 30-day window -- the one event whose tick-to-zero is exact to
+    // the second, named by the season it begins.  The date detail is
+    // generation-painted and never rewritten (the chip's k rides the
+    // same translated keys both sides).
+    if (hasKey('almanac.next_equinox.unix_epoch.raw') ||
+        hasKey('almanac.next_solstice.unix_epoch.raw')) {
+      var eqTs = num(latest, 'almanac.next_equinox.unix_epoch.raw');
+      var solTs = num(latest, 'almanac.next_solstice.unix_epoch.raw');
+      var seasonTs = null;
+      if (eqTs !== null && (solTs === null || eqTs <= solTs)) {
+        seasonTs = eqTs;
+      } else if (solTs !== null) {
+        seasonTs = solTs;
+      }
+      var seasonShow = seasonTs !== null && seasonTs - nowTs >= 0 &&
+                       seasonTs - nowTs <= CHIP_WINDOW_SEC;
+      chipShow('chip-season', seasonShow);
+      if (seasonShow) {
+        var sk = seasonKey(seasonTs);
+        setHtml('chip-season-k', T[sk] || sk);
+        setHtml('chip-season-v', fmtDHMS(seasonTs - nowTs));
+      }
+    } else {
+      var seasonStatic = chipStaticTs('chip-season');
+      if (seasonStatic !== null) {
+        var seasonStaticShow = seasonStatic - nowTs >= 0 &&
+                               seasonStatic - nowTs <= CHIP_WINDOW_SEC;
+        chipShow('chip-season', seasonStaticShow);
+        if (seasonStaticShow) {
+          setHtml('chip-season-v', fmtDHMS(seasonStatic - nowTs));
+        }
+      }
+    }
+    // Earth's apsis chip, the season chip's twin: perihelion or
+    // aphelion, whichever next, inside the 30-day window -- extremum
+    // instants, minute-class by nature.  The date detail is
+    // generation-painted and never rewritten.
+    if (hasKey('almanac.next_perihelion.unix_epoch.raw') ||
+        hasKey('almanac.next_aphelion.unix_epoch.raw')) {
+      var periTs2 = num(latest, 'almanac.next_perihelion.unix_epoch.raw');
+      var aphTs = num(latest, 'almanac.next_aphelion.unix_epoch.raw');
+      var apsisTs = null, apsisK = null;
+      if (periTs2 !== null && (aphTs === null || periTs2 <= aphTs)) {
+        apsisTs = periTs2;
+        apsisK = T['Earth perihelion'];
+      } else if (aphTs !== null) {
+        apsisTs = aphTs;
+        apsisK = T['Earth aphelion'];
+      }
+      var apsisShow = apsisTs !== null && apsisTs - nowTs >= 0 &&
+                      apsisTs - nowTs <= CHIP_WINDOW_SEC;
+      chipShow('chip-apsis', apsisShow);
+      if (apsisShow) {
+        setHtml('chip-apsis-k', apsisK);
+        setHtml('chip-apsis-v', fmtDHMS(apsisTs - nowTs));
+      }
+    } else {
+      var apsisStatic = chipStaticTs('chip-apsis');
+      if (apsisStatic !== null) {
+        var apsisStaticShow = apsisStatic - nowTs >= 0 &&
+                              apsisStatic - nowTs <= CHIP_WINDOW_SEC;
+        chipShow('chip-apsis', apsisStaticShow);
+        if (apsisStaticShow) {
+          setHtml('chip-apsis-v', fmtDHMS(apsisStatic - nowTs));
+        }
+      }
+    }
+    // The remaining windowed guests.  Their date/type details are
+    // generation-painted and never rewritten (first paint and live
+    // must not differ in dress); the live layer decides visibility,
+    // ticks the value, and re-derives the label from the feed's own
+    // strings -- the same translated text the generator painted.
+    chipEvent('chip-super', 'almanac.next_supermoon.unix_epoch.raw',
+              nowTs, true);
+    var eclTs = chipEvent('chip-eclipse',
+        'almanac.next_eclipse.unix_epoch.raw', nowTs, true);
+    if (eclTs !== null && hasKey('almanac.next_eclipse.unix_epoch.raw')) {
+      // Live path only: the kind names the chip; without one the chip
+      // cannot say what it is counting to, so it hides.  (On the
+      // static path the generation-painted label stands.)
+      var eclKind = strAt('almanac.next_eclipse_kind');
+      if (eclKind === 'lunar' || eclKind === 'solar') {
+        setHtml('chip-eclipse-k',
+                T[eclKind === 'lunar' ? 'lunar eclipse' : 'solar eclipse']);
+      } else {
+        chipShow('chip-eclipse', false);
+      }
+    }
+    COMET_NAMES.forEach(function(cometTag) {
+      var periKey = 'almanac.' + cometTag + '.perihelion.unix_epoch.raw';
+      var periTs = chipEvent('chip-peri-' + cometTag, periKey, nowTs, true);
+      if (periTs !== null && hasKey(periKey)) {
+        setHtml('chip-peri-' + cometTag + '-k',
+                fmt('{name} perihelion', {name: satLabel(cometTag)}));
+      }
+    });
+  }
+
   // ---- poll + local tick ---------------------------------------------------
   function localTick() {
     var nowTs = Date.now() / 1000;
     setHtml('live-clock', fmtHMS(nowTs));
+    // The countdowns tick with or without loop data -- their static
+    // targets are baked into the page; the feed re-anchors and rolls.
+    renderCountdown(nowTs);
     if (latest !== null) {
       renderGeo(nowTs);
       renderDome(nowTs);

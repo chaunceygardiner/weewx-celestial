@@ -1,6 +1,121 @@
 weewx-celestial change history
 ------------------------------
 
+8.1 2026/08/10
+-----------------
+- The installer now updates the [LoopData] [[Include]] fields line
+  itself: weectl extension install appends the entries the page reads
+  that are missing -- APPEND-ONLY, each one printed, existing entries
+  never renamed, removed or reordered (an append cannot break another
+  page consuming the same line), weectl's own weewx.conf backup made
+  first, --dry-run honored.  Restart weewxd after installing so
+  weewx-loopdata reloads the line.  The 8.1 additions it appends: the
+  thirteen countdown-chip event fields (the sunset/sunrise and
+  darkness-begins/-ends pairs, the equinox/solstice and Earth
+  perihelion/aphelion pairs, the meteor
+  shower peak and label, the supermoon, and the eclipse instant and
+  kind -- the eclipse type is generation-time decoration from the
+  report tag, no loop field needed)
+  and six fields per comet, following your [Skyfield] [[Satellites]]
+  and [[Comets]]
+  (weewx-skyfield 2.1's installer defaults, Halley and Hale-Bopp, when
+  there is no [[Comets]] section to follow).  Only pre-6.0 spellings
+  stay manual -- renames deserve review, so the installer prints the
+  tailored --migrate-loopdata-fields commands instead of applying
+  them.  The comet layer and the
+  shower/supermoon chips need weewx-skyfield 2.1; the sunset, darkness
+  and satellite-pass chips light up on 2.0.  An almanac that cannot
+  serve a field omits it from loop-data.txt (one weewxd log line per
+  field) and the page hides that chip or layer; nothing else changes --
+  the upgrade is otherwise drop-in.
+- The Next Visible Pass chart's sweeping dot now flips between the solid
+  sunlit dot and the hollow in-shadow ring live, from the same
+  almanac.<satellite>.sunlit flag that drives the dome's marker -- the
+  two panels stay in agreement when the satellite crosses the shadow
+  line mid-pass.  8.0 kept the culmination's state for the whole ride
+  (NOAA-21 culminating in shadow wore the ring from rise while the dome
+  correctly showed the live shadow entry).  Outside the pass the chart
+  still stands exactly as generated: the peak-instant portrait,
+  culmination state included.
+- Countdown central: a row of ticking countdown chips at the top of
+  the page, each pure client arithmetic against an event-tier loopdata
+  field -- computed once by the engine, cached until the event, zero
+  cost at the one-second tick.  A countdown's precision follows its
+  horizon: a day or more out it reads days-hours-minutes with the
+  event's date beside it (seconds are noise at that range); inside the
+  final day it becomes the ticking hh:mm:ss clock, where seconds are
+  the point.  Always on: the soonest visible
+  satellite pass ("ISS · appears in 00:41:12", ticking to zero, then
+  "overhead now", rolling to the next pass the moment this one ends),
+  sunset or sunrise -- whichever comes next, the chip flipping by
+  itself at each event -- the next meteor shower's peak under its
+  translated name with the moon's illumination AT the peak as the
+  detail line (the fact that decides whether a shower year is worth an
+  alarm), and astronomical darkness -- begins at the -18 degree
+  sunset, ends at the -18 degree sunrise, whichever is next
+  (stargazers care about both ends of the window; a high-latitude
+  summer where -18 never comes hides the chip honestly).  Windowed
+  guests appear only within ~30 days of the event, close enough to
+  tick meaningfully: the next equinox or solstice, named by the season
+  it begins ("autumn begins in 2d 04h 11m") -- the one event whose
+  tick-to-zero is exact to the second -- Earth's perihelion or
+  aphelion (early January and early July; minute-class extremum
+  instants, weewx-skyfield 2.1 tags built on this page's ask), the
+  next supermoon, the next
+  eclipse visible from
+  the station, and each configured comet's perihelion.  (weewx-skyfield's
+  own page shows the perihelion as a dated chip up to a year out; the
+  30-day window here is deliberate -- a ticking countdown wants a
+  nearer horizon.)
+- Comets ride the Geocentric dial: each [Skyfield] [[Comets]] entry
+  places exactly like a planet -- compass azimuth, log Earth distance,
+  below-horizon dimming, the same one-hour trail (on this dial the
+  angle is azimuth, so a comet sweeps at the sky's diurnal rate like
+  everything else) -- drawn as a diamond with a three-ray tail fanning
+  away from the sun's own dial point, anti-sunward on the plan view.
+  Solid diamond when the comet is naked-eye bright (magnitude 6.0 or
+  brighter), the hollow inversion when fainter or when the Minor
+  Planet Center row carries no magnitude parameters; the roster gains
+  a row per comet, and the tap tooltip carries the live magnitude.  A
+  comet the MPC has dropped serves nulls across its surface and the
+  page renders absence -- no diamond, no row values, never the string
+  "None".  The dome and the pass chart need nothing: their comet
+  diamonds and shower radiants arrive inside weewx-skyfield's own
+  fragments, and the live machinery passes both new mark shapes
+  through untouched.
+- --add-comet TAG=DESIGNATION [--name NAME] and --remove-comet TAG
+  join the command-line utility, symmetric with the satellite verbs:
+  one idempotent command for the three weewx.conf edits a comet takes
+  (the [Skyfield] [[Comets]] entry, the six fields-line entries, the
+  [StdReport] [[Defaults]] [[[Almanac]]] display name).  MPC
+  designations validate (1P, 220P, "C/2023 A3" -- quote one with a
+  space); satellites and comets share the almanac.<tag> namespace, so
+  each family refuses the other's tags.  The migrator and the
+  install-time fields hint follow [Skyfield] [[Comets]] exactly as
+  they follow [[Satellites]]: a present-but-empty section is
+  authoritative and appends nothing.
+- All nine languages learn the new strings: the eclipse vocabulary,
+  the perihelion label, the moon note and the radiant tooltip verbatim
+  from weewx-skyfield's translations, the countdown chips' own wording
+  (sunset, sunrise, darkness begins/ends, the four season-begins
+  labels, supermoon, appears in)
+  translated here; the [Almanac] sections gain Halley and Hale-Bopp
+  display names and the twelve IMO meteor showers'.
+- The Geocentric dial's caption reads "... trails show the last hour
+  of motion · Hover or tap any mark for its coordinates."  Through 8.0
+  the two sentences ran together with no separator (the joining "·" is
+  template markup, so no translation changes).
+- The tailored --migrate-loopdata-fields commands the installer prints
+  now carry a PYTHONPATH=<weewx's location> prefix, so they paste and
+  run on every install layout.  On a Debian/Red Hat package install
+  WeeWX's own code lives in /usr/share/weewx, on the path only inside
+  weectl, so the bare command 7.8-8.0 printed died with
+  ModuleNotFoundError: No module named 'weewx' (reported by Gert
+  Andersen).  The README and manual now show the package-install
+  variant (cd /etc/weewx/bin, prefix PYTHONPATH=/usr/share/weewx)
+  beside the venv commands for the migrator and the
+  satellite/comet utilities.
+
 8.0 2026/08/08
 -----------------
 - ACTION (only to light up the satellite layer): append the

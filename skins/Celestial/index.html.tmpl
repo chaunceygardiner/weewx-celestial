@@ -84,6 +84,31 @@
     ## has no Proxima; the built-in almanac has no extras at all) leaves
     ## that row's cells empty for the javascript, never breaks the page.
     #set $geo_bodies = ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri')
+    ## The comets follow [Skyfield] [[Comets]] through skyfield 2.1's
+    ## public $sky_page.comet_names() (guarded: an older skyfield has no
+    ## method and no comets).  Each configured comet gets a roster row in
+    ## the Geocentric panel and a windowed perihelion countdown chip; the
+    ## include feeds the javascript the same list, so rows, dial marks
+    ## and chips always agree.
+    #set $comet_names = []
+    #try
+    #for $n in $sky_page.comet_names()
+    #silent $comet_names.append(str($n))
+    #end for
+    #except
+    #pass
+    #end try
+    ## The satellite set, enumerated here as well as in the dome section
+    ## below: the pass chip first-paints the soonest visible pass, and
+    ## the countdown row renders before the dome.
+    #set $sat_names = []
+    #try
+    #for $n in $sky_page.satellite_names()
+    #silent $sat_names.append(str($n))
+    #end for
+    #except
+    #pass
+    #end try
     <div class="page">
       <header>
         <div>
@@ -102,6 +127,319 @@
         </div>
       </header>
 
+      ## Countdown central: a row of countdown chips ticking on the
+      ## javascript's one-second local tick, each pure client arithmetic
+      ## against an event-tier loopdata field -- computed once by the
+      ## engine, cached until the event, zero cost at tick cadence.  The
+      ## chip family (.countdown/.count) is weewx-skyfield's, kept in
+      ## step.  A countdown's precision follows its horizon (fmtDHMS in
+      ## the include owns the shape; these first paints mirror it): a
+      ## day or more out it reads days-hours-minutes, inside the final
+      ## day the ticking hh:mm:ss clock.  Dual-source like the roster:
+      ## the always-on chips first-paint the COUNTDOWN ITSELF -- the
+      ## remaining time at generation -- with the event's clock time or
+      ## date as the small detail (a countdown chip whose only number
+      ## is a wall-clock time reads as remaining time and lies).
+      ## Guarded: a lesser almanac first-paints the
+      ## chip hidden and the javascript unhides it when the loop feed
+      ## serves it.  The pass chip and the windowed guests (supermoon,
+      ## eclipse, perihelion within ~30 days) first-paint hidden always.
+      ## The pass chip first-paints the soonest visible pass across the
+      ## configured satellites -- the same pick the live layer makes --
+      ## so all the row's chips stand from the first byte (a chip that
+      ## pops in on the first loop packet is a jump like any other).
+      ## The rise and set instants bake so the countdown ticks and
+      ## rolls into "overhead now" even before loop data arrives.
+      #set $pass_k = ''
+      #set $pass_v = ''
+      #set $pass_d = ''
+      #set $pass_data = ''
+      #set $pass_attr = ' hidden'
+      #try
+      #set $best_rise = None
+      #set $best_set = None
+      #set $best_label = ''
+      #for $sn in $sat_names
+      #try
+      #set $so = getattr($almanac, $sn)
+      #set $sp = $so.next_visible_pass
+      #set $sr = $sp.rise.raw
+      #if $sr is not None and ($best_rise is None or $sr < $best_rise)
+      #set $best_rise = $sr
+      #set $best_set = $sp.set.raw
+      #set $best_label = str($so.label)
+      #end if
+      #except
+      #pass
+      #end try
+      #end for
+      #if $best_rise is not None
+      #set $pass_attr = ''
+      #set $pass_k = $best_label
+      #set $pass_data = ' data-ts="%d"' % int($best_rise)
+      #if $best_set is not None
+      #set $pass_data = $pass_data + ' data-set="%d"' % int($best_set)
+      #end if
+      #if $best_set is not None and $best_rise <= $almanac.time_ts and $almanac.time_ts < $best_set
+      #set $pass_d = $gettext('overhead now')
+      #else
+      #set $pass_d = $gettext('appears in')
+      #set $pass_rem = max(0, int($best_rise - $almanac.time_ts))
+      #set $pass_hms = '%02d:%02d:%02d' % ($pass_rem % 86400 // 3600, $pass_rem % 3600 // 60, $pass_rem % 60)
+      #set $pass_v = $gettext('{d}d {h}h {m}m').format(d=$pass_rem // 86400, h=$pass_rem % 86400 // 3600, m=$pass_rem % 3600 // 60) if $pass_rem >= 86400 else $pass_hms
+      #end if
+      #end if
+      #except
+      #pass
+      #end try
+      #set $sun_k = ''
+      #set $sun_v = ''
+      #set $sun_d = ''
+      #set $sun_data = ''
+      #try
+      #set $next_set = $almanac.sun.next_setting.raw
+      #set $next_rise = $almanac.sun.next_rising.raw
+      #set $sun_ts = None
+      #if $next_set is not None and ($next_rise is None or $next_set <= $next_rise)
+      #set $sun_k = $gettext('sunset')
+      #set $sun_ts = $next_set
+      #else if $next_rise is not None
+      #set $sun_k = $gettext('sunrise')
+      #set $sun_ts = $next_rise
+      #end if
+      #if $sun_ts is not None
+      #set $sun_rem = max(0, int($sun_ts - $almanac.time_ts))
+      #set $sun_hms = '%02d:%02d:%02d' % ($sun_rem % 86400 // 3600, $sun_rem % 3600 // 60, $sun_rem % 60)
+      #set $sun_v = $gettext('{d}d {h}h {m}m').format(d=$sun_rem // 86400, h=$sun_rem % 86400 // 3600, m=$sun_rem % 3600 // 60) if $sun_rem >= 86400 else $sun_hms
+      #set $sun_d = time.strftime('%H:%M', time.localtime($sun_ts))
+      #set $sun_data = ' data-ts="%d"' % int($sun_ts)
+      #end if
+      #except
+      #pass
+      #end try
+      ## Astronomical darkness, symmetric with the sun chip: darkness
+      ## begins at the -18 sunset, ends at the -18 sunrise -- stargazers
+      ## care about both ends of the window.  A high-latitude summer
+      ## where -18 never comes serves nulls and the chip stays hidden.
+      #set $dark_k = ''
+      #set $dark_v = ''
+      #set $dark_d = ''
+      #set $dark_data = ''
+      #try
+      #set $d_set = $almanac(horizon=-18).sun.next_setting.raw
+      #set $d_rise = $almanac(horizon=-18).sun.next_rising.raw
+      #set $dark_ts = None
+      #if $d_set is not None and ($d_rise is None or $d_set <= $d_rise)
+      #set $dark_k = $gettext('darkness begins')
+      #set $dark_ts = $d_set
+      #else if $d_rise is not None
+      #set $dark_k = $gettext('darkness ends')
+      #set $dark_ts = $d_rise
+      #end if
+      #if $dark_ts is not None
+      #set $dark_rem = max(0, int($dark_ts - $almanac.time_ts))
+      #set $dark_hms = '%02d:%02d:%02d' % ($dark_rem % 86400 // 3600, $dark_rem % 3600 // 60, $dark_rem % 60)
+      #set $dark_v = $gettext('{d}d {h}h {m}m').format(d=$dark_rem // 86400, h=$dark_rem % 86400 // 3600, m=$dark_rem % 3600 // 60) if $dark_rem >= 86400 else $dark_hms
+      #set $dark_d = time.strftime('%H:%M', time.localtime($dark_ts))
+      #set $dark_data = ' data-ts="%d"' % int($dark_ts)
+      #end if
+      #except
+      #pass
+      #end try
+      ## The season chip (a windowed guest): equinox or solstice,
+      ## whichever next, named by the season it begins -- the one event
+      ## whose tick-to-zero is exact to the second.  The label and
+      ## target bake even outside the window (the javascript unhides
+      ## the chip when the window opens); the countdown and date paint
+      ## only when the chip first-paints visible.
+      #set $season_k = ''
+      #set $season_v = ''
+      #set $season_d = ''
+      #set $season_data = ''
+      #set $season_attr = ' hidden'
+      #try
+      #set $eq_ts = $almanac.next_equinox.raw
+      #set $sol_ts = $almanac.next_solstice.raw
+      #set $season_ts = None
+      #if $eq_ts is not None and ($sol_ts is None or $eq_ts <= $sol_ts)
+      #set $season_ts = $eq_ts
+      #else if $sol_ts is not None
+      #set $season_ts = $sol_ts
+      #end if
+      #if $season_ts is not None
+      #set $season_data = ' data-ts="%d"' % int($season_ts)
+      #set $season_mo = int(time.strftime('%m', time.localtime($season_ts)))
+      #set $season_north = $lat_f >= 0
+      #if $season_mo >= 2 and $season_mo <= 4
+      #set $season_k = $gettext('spring begins') if $season_north else $gettext('autumn begins')
+      #else if $season_mo >= 5 and $season_mo <= 7
+      #set $season_k = $gettext('summer begins') if $season_north else $gettext('winter begins')
+      #else if $season_mo >= 8 and $season_mo <= 10
+      #set $season_k = $gettext('autumn begins') if $season_north else $gettext('spring begins')
+      #else
+      #set $season_k = $gettext('winter begins') if $season_north else $gettext('summer begins')
+      #end if
+      #set $season_rem = int($season_ts - $almanac.time_ts)
+      #if $season_rem >= 0 and $season_rem <= 30 * 86400
+      #set $season_attr = ''
+      #set $season_hms = '%02d:%02d:%02d' % ($season_rem % 86400 // 3600, $season_rem % 3600 // 60, $season_rem % 60)
+      #set $season_v = $gettext('{d}d {h}h {m}m').format(d=$season_rem // 86400, h=$season_rem % 86400 // 3600, m=$season_rem % 3600 // 60) if $season_rem >= 86400 else $season_hms
+      #set $season_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($season_ts))
+      #end if
+      #end if
+      #except
+      #pass
+      #end try
+      ## Earth's apsis chip (a windowed guest, the season chip's twin):
+      ## perihelion or aphelion, whichever next -- early January and
+      ## early July, minute-class extremum instants (weewx-skyfield
+      ## 2.1's next_perihelion/next_aphelion, built on this page's
+      ## ask).
+      #set $apsis_k = ''
+      #set $apsis_v = ''
+      #set $apsis_d = ''
+      #set $apsis_data = ''
+      #set $apsis_attr = ' hidden'
+      #try
+      #set $peri_ts = $almanac.next_perihelion.raw
+      #set $aph_ts = $almanac.next_aphelion.raw
+      #set $apsis_ts = None
+      #if $peri_ts is not None and ($aph_ts is None or $peri_ts <= $aph_ts)
+      #set $apsis_ts = $peri_ts
+      #set $apsis_k = $gettext('Earth perihelion')
+      #else if $aph_ts is not None
+      #set $apsis_ts = $aph_ts
+      #set $apsis_k = $gettext('Earth aphelion')
+      #end if
+      #if $apsis_ts is not None
+      #set $apsis_data = ' data-ts="%d"' % int($apsis_ts)
+      #set $apsis_rem = int($apsis_ts - $almanac.time_ts)
+      #if $apsis_rem >= 0 and $apsis_rem <= 30 * 86400
+      #set $apsis_attr = ''
+      #set $apsis_hms = '%02d:%02d:%02d' % ($apsis_rem % 86400 // 3600, $apsis_rem % 3600 // 60, $apsis_rem % 60)
+      #set $apsis_v = $gettext('{d}d {h}h {m}m').format(d=$apsis_rem // 86400, h=$apsis_rem % 86400 // 3600, m=$apsis_rem % 3600 // 60) if $apsis_rem >= 86400 else $apsis_hms
+      #set $apsis_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($apsis_ts))
+      #end if
+      #end if
+      #except
+      #pass
+      #end try
+      ## The shower chip's detail line is generation-time static: the
+      ## peak's date and the moon's illumination AT the peak (the almanac
+      ## time-traveled), the one fact that decides whether a shower year
+      ## is worth an alarm.  The javascript clears it if the live label
+      ## rolls to a different shower before the next report cycle.
+      #set $shower_label = ''
+      #set $shower_v = ''
+      #set $shower_note = ''
+      #set $shower_data = ''
+      #try
+      #set $shower_peak = $almanac.next_meteor_shower.peak.raw
+      #if $shower_peak is not None
+      #set $shower_label = str($almanac.next_meteor_shower.label)
+      #set $shower_rem = max(0, int($shower_peak - $almanac.time_ts))
+      #set $shower_hms = '%02d:%02d:%02d' % ($shower_rem % 86400 // 3600, $shower_rem % 3600 // 60, $shower_rem % 60)
+      #set $shower_v = $gettext('{d}d {h}h {m}m').format(d=$shower_rem // 86400, h=$shower_rem % 86400 // 3600, m=$shower_rem % 3600 // 60) if $shower_rem >= 86400 else $shower_hms
+      #set $shower_data = ' data-ts="%d"' % int($shower_peak)
+      #set $shower_pct = int(round($almanac(almanac_time=int($shower_peak)).moon.phase))
+      #set $shower_note = time.strftime($gettext('%b %-d'), time.localtime($shower_peak)) + ' &middot; ' + $gettext('moon {pct}%').format(pct=$shower_pct)
+      #end if
+      #except
+      #pass
+      #end try
+      ## The remaining windowed guests bake their targets and labels
+      ## the same way (NO chip on this row may pop in on the first loop
+      ## packet): supermoon, eclipse (kind names the chip, type is
+      ## decoration), and one perihelion chip per configured comet.
+      ## Guest date details are generation-painted and never rewritten
+      ## live, so first paint and live never differ in dress.
+      #set $super_v = ''
+      #set $super_d = ''
+      #set $super_data = ''
+      #set $super_attr = ' hidden'
+      #try
+      #set $sm_ts = $almanac.next_supermoon.raw
+      #if $sm_ts is not None
+      #set $super_data = ' data-ts="%d"' % int($sm_ts)
+      #set $sm_rem = int($sm_ts - $almanac.time_ts)
+      #if $sm_rem >= 0 and $sm_rem <= 30 * 86400
+      #set $super_attr = ''
+      #set $sm_hms = '%02d:%02d:%02d' % ($sm_rem % 86400 // 3600, $sm_rem % 3600 // 60, $sm_rem % 60)
+      #set $super_v = $gettext('{d}d {h}h {m}m').format(d=$sm_rem // 86400, h=$sm_rem % 86400 // 3600, m=$sm_rem % 3600 // 60) if $sm_rem >= 86400 else $sm_hms
+      #set $super_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($sm_ts))
+      #end if
+      #end if
+      #except
+      #pass
+      #end try
+      #set $ecl_k = ''
+      #set $ecl_v = ''
+      #set $ecl_d = ''
+      #set $ecl_data = ''
+      #set $ecl_attr = ' hidden'
+      #try
+      #set $ecl_ts = $almanac.next_eclipse.raw
+      #set $ecl_kind = str($almanac.next_eclipse_kind)
+      #if $ecl_ts is not None and $ecl_kind in ('lunar', 'solar')
+      #set $ecl_k = $gettext('lunar eclipse') if $ecl_kind == 'lunar' else $gettext('solar eclipse')
+      #set $ecl_data = ' data-ts="%d"' % int($ecl_ts)
+      #set $ecl_rem = int($ecl_ts - $almanac.time_ts)
+      #if $ecl_rem >= 0 and $ecl_rem <= 30 * 86400
+      #set $ecl_attr = ''
+      #set $ecl_hms = '%02d:%02d:%02d' % ($ecl_rem % 86400 // 3600, $ecl_rem % 3600 // 60, $ecl_rem % 60)
+      #set $ecl_v = $gettext('{d}d {h}h {m}m').format(d=$ecl_rem // 86400, h=$ecl_rem % 86400 // 3600, m=$ecl_rem % 3600 // 60) if $ecl_rem >= 86400 else $ecl_hms
+      #set $ecl_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($ecl_ts))
+      #try
+      #set $ecl_type = str($almanac.next_eclipse_type)
+      #set $ecl_type_t = {'penumbral': $gettext('penumbral'), 'partial': $gettext('partial'), 'total': $gettext('total'), 'annular': $gettext('annular')}.get($ecl_type, $ecl_type)
+      #set $ecl_d = $ecl_type_t + ' &middot; ' + $ecl_d
+      #except
+      #pass
+      #end try
+      #end if
+      #end if
+      #except
+      #pass
+      #end try
+      #set $sun_attr = '' if $sun_k else ' hidden'
+      #set $shower_attr = '' if $shower_label else ' hidden'
+      #set $dark_attr = '' if $dark_k else ' hidden'
+      <div class="countdown mono" id="countdown">
+        <div class="count" id="chip-pass"$pass_data$pass_attr><span class="k" id="chip-pass-k">$pass_k</span><span class="v" id="chip-pass-v">$pass_v</span><span class="d" id="chip-pass-d">$pass_d</span></div>
+        <div class="count" id="chip-sun"$sun_data$sun_attr><span class="k" id="chip-sun-k">$sun_k</span><span class="v" id="chip-sun-v">$sun_v</span><span class="d" id="chip-sun-d">$sun_d</span></div>
+        <div class="count" id="chip-shower" data-shower-label="$shower_label"$shower_data$shower_attr><span class="k" id="chip-shower-k">$shower_label</span><span class="v" id="chip-shower-v">$shower_v</span><span class="d" id="chip-shower-d">$shower_note</span></div>
+        <div class="count" id="chip-dark"$dark_data$dark_attr><span class="k" id="chip-dark-k">$dark_k</span><span class="v" id="chip-dark-v">$dark_v</span><span class="d" id="chip-dark-d">$dark_d</span></div>
+        <div class="count" id="chip-season"$season_data$season_attr><span class="k" id="chip-season-k">$season_k</span><span class="v" id="chip-season-v">$season_v</span><span class="d" id="chip-season-d">$season_d</span></div>
+        <div class="count" id="chip-apsis"$apsis_data$apsis_attr><span class="k" id="chip-apsis-k">$apsis_k</span><span class="v" id="chip-apsis-v">$apsis_v</span><span class="d" id="chip-apsis-d">$apsis_d</span></div>
+        <div class="count" id="chip-super"$super_data$super_attr><span class="k" id="chip-super-k">$gettext('supermoon')</span><span class="v" id="chip-super-v">$super_v</span><span class="d" id="chip-super-d">$super_d</span></div>
+        <div class="count" id="chip-eclipse"$ecl_data$ecl_attr><span class="k" id="chip-eclipse-k">$ecl_k</span><span class="v" id="chip-eclipse-v">$ecl_v</span><span class="d" id="chip-eclipse-d">$ecl_d</span></div>
+        #for $comet_name in $comet_names
+        #set $cp_k = ''
+        #set $cp_v = ''
+        #set $cp_d = ''
+        #set $cp_data = ''
+        #set $cp_attr = ' hidden'
+        #try
+        #set $cp_obj = getattr($almanac, $comet_name)
+        #set $cp_ts = $cp_obj.perihelion.raw
+        #if $cp_ts is not None
+        #set $cp_data = ' data-ts="%d"' % int($cp_ts)
+        #set $cp_rem = int($cp_ts - $almanac.time_ts)
+        #if $cp_rem >= 0 and $cp_rem <= 30 * 86400
+        #set $cp_attr = ''
+        #set $cp_k = $gettext('{name} perihelion').format(name=str($cp_obj.label))
+        #set $cp_hms = '%02d:%02d:%02d' % ($cp_rem % 86400 // 3600, $cp_rem % 3600 // 60, $cp_rem % 60)
+        #set $cp_v = $gettext('{d}d {h}h {m}m').format(d=$cp_rem // 86400, h=$cp_rem % 86400 // 3600, m=$cp_rem % 3600 // 60) if $cp_rem >= 86400 else $cp_hms
+        #set $cp_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($cp_ts))
+        #end if
+        #end if
+        #except
+        #pass
+        #end try
+        <div class="count" id="chip-peri-$comet_name"$cp_data$cp_attr><span class="k" id="chip-peri-${comet_name}-k">$cp_k</span><span class="v" id="chip-peri-${comet_name}-v">$cp_v</span><span class="d" id="chip-peri-${comet_name}-d">$cp_d</span></div>
+        #end for
+      </div>
+
       <section>
         <h2 class="eyebrow">$gettext("The geocentric · live")</h2>
         #if not $extras
@@ -111,7 +449,7 @@
           <div>
             <svg id="dial" viewBox="0 0 660 660" role="img"
                  aria-label="$gettext('Geocentric chart: bodies placed by compass azimuth and log distance from Earth')"></svg>
-            <p class="caption dialcaption">$gettext("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion") $gettext("Hover or tap any mark for its coordinates.")</p>
+            <p class="caption dialcaption">$gettext("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion") · $gettext("Hover or tap any mark for its coordinates.")</p>
           </div>
           <div class="roster mono">
             ## Display names come from the report's [Almanac] section (the
@@ -119,8 +457,17 @@
             ## capitalized tag name; Proxima Centauri uses the short
             ## [Texts] label so the row never overflows.  The value cells
             ## share their [Texts] keys with the javascript, so first
-            ## paint and live updates always agree.
-            #for $body_name in $geo_bodies
+            ## paint and live updates always agree.  The configured
+            ## comets join the roster between Pluto and Proxima -- the
+            ## roster reads nearest-tier outward, and a comet at tens
+            ## of au belongs among the planets, not past the stellar
+            ## rim -- same row anatomy, the shared brass comet chip
+            ## (comet tags are dynamic, so per-tag color classes cannot
+            ## exist): the guarded cells leave an elementless comet's
+            ## row honestly empty (MPC drops faded comets; absence,
+            ## never the string "None").
+            #for $body_name in ($geo_bodies[:-1] + tuple($comet_names) + $geo_bodies[-1:])
+            #set $chip_cls = 'chip-comet' if $body_name in $comet_names else 'chip-' + $body_name
             #set $display_name = $gettext('Proxima') if $body_name == 'proxima_centauri' else str($almanac.texts.get($body_name, $body_name.capitalize()))
             #set $dist_html = ''
             #set $au_html = ''
@@ -141,7 +488,7 @@
             #end try
             #end if
             <div class="row$below_cls" id="geo-row-$body_name">
-              <span class="bname"><span class="chip chip-$body_name"></span>$display_name</span>
+              <span class="bname"><span class="chip $chip_cls"></span>$display_name</span>
               <span class="odo"><span id="almanac.${body_name}.earth_distance">$dist_html</span><span class="unit">$distance_label</span></span>
               <span class="rsub"><span id="geo-rate-$body_name"></span><span id="geo-au-$body_name">$au_html</span><span id="geo-alt-$body_name">$alt_html</span></span>
             </div>

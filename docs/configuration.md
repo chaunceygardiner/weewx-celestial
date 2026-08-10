@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone — the sky dome and Next Visible Pass panels, the satellite set, and how the page degrades across almanac tiers.
+description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone — the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, and how the page degrades across almanac tiers.
 ---
 
 # Configuration
@@ -75,6 +75,36 @@ configuration:
 - **The satellite marker is honest about visibility**: drawn whenever
   the satellite is up, full brightness only when you could actually see
   it (sunlit satellite against a dark sky), dimmed otherwise.
+- **The comet set** (8.1, weewx-skyfield 2.1) is `[Skyfield]
+  [[Comets]]` (installer defaults: Halley and Hale-Bopp).  Each
+  configured comet gets a diamond on the Geocentric dial — placed like
+  a planet, its tail fanning anti-sunward, solid when naked-eye bright
+  — a roster row, and a windowed perihelion countdown chip; each needs
+  its six fields-line entries to go live.  The bundled
+  [`--add-comet` utility](#adding-and-removing-comets) makes the three
+  edits in one command.  The dome and the pass chart draw their own
+  comet diamonds and meteor shower radiants inside weewx-skyfield's
+  fragments — nothing to configure here.
+
+## The countdown row
+
+The chip row at the top of the page has no options of its own: the
+always-on chips (the soonest visible pass, sunset/sunrise, the meteor
+shower peak, and astronomical darkness — begins at the −18° sunset,
+ends at the −18° sunrise, whichever is next) follow the fields line,
+and the windowed guests (the next equinox or solstice — named by the
+season it begins — Earth's perihelion or aphelion, the next supermoon,
+the next eclipse visible from
+the station, each configured comet's perihelion) appear only within
+~30 days of their event — close enough for a ticking countdown to mean
+something.  A day or more out a countdown reads days-hours-minutes
+with the event's date beside it; inside the final day it becomes a
+ticking `hh:mm:ss` clock.  Every chip is client-side arithmetic on an
+event instant
+weewx-loopdata computes once and caches until it passes; a chip whose
+field the almanac cannot serve simply stays hidden.  (weewx-skyfield's
+own Sky page shows a perihelion as a dated chip up to a year out; the
+30-day window here is deliberate.)
 
 ## Adding and removing satellites
 
@@ -90,6 +120,13 @@ cd /home/weewx/bin    # the directory CONTAINING the `user` package
 python -m user.celestial --add-satellite zenit23088=23088 --name 'Zenit-2 23088' --config /home/weewx/weewx.conf --output /tmp/weewx.conf.new
 git diff --no-index --word-diff /home/weewx/weewx.conf /tmp/weewx.conf.new   # review, then move into place
 ```
+
+On a Debian or Red Hat package install there is no venv to activate,
+and WeeWX's own code lives in `/usr/share/weewx` — on the path only
+inside `weectl` — so run from `/etc/weewx/bin` with a
+`PYTHONPATH=/usr/share/weewx python3` prefix instead.  The same goes
+for every `python -m user.celestial` command on this page and in
+[Installation](installation.md).
 
 The tag (`zenit23088` — a lowercase identifier of your choosing, refused
 if it shadows a body name the almanac already serves) becomes the
@@ -122,6 +159,29 @@ that a future weewx-skyfield upgrade re-adds the `[[Satellites]]` entry
 (only; the fields line stays as you left it), so re-run the removal
 afterwards.  The utility prints both reminders.
 
+## Adding and removing comets
+
+A comet is the same three edits — the `[Skyfield] [[Comets]]` entry
+(tag = MPC designation), six fields-line entries, the display name —
+and `--add-comet` makes them in one command, one comet per run:
+
+```
+python -m user.celestial --add-comet a3="C/2023 A3" --name 'Tsuchinshan-ATLAS' --config /home/weewx/weewx.conf --output /tmp/weewx.conf.new
+```
+
+The designation is the Minor Planet Center's — a numbered periodic
+(`1P`, `220P`) or provisional (`C/2023 A3` — quote it, it has a space)
+designation, fragment suffixes allowed (`C/1947 X1-B`).  Satellites and
+comets share the `almanac.<tag>` namespace, so each family refuses the
+other's tags (and both refuse body names).  All comets ride one shared
+MPC element file fetched every two days, so adding comets costs no
+extra downloads — but a comet the MPC has dropped serves no values, and
+the page renders it absent.  Everything else works exactly like the
+satellite verbs: idempotent edits, `--output`/`--in-place`, the
+`--remove-comet` inverse, and the installer-default warning (removing
+`halley` or `hale_bopp` wants re-running after a weewx-skyfield
+upgrade re-adds the `[[Comets]]` entry).
+
 ## The almanac tiers
 
 The rosters first-paint at report time from `$almanac` and then go live
@@ -129,9 +189,10 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.0** (satellites configured) | Everything — Proxima Centauri, the sky dome, the satellite layer and the Next Visible Pass chart; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.1** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.0** | Everything but the comets and the shower/supermoon chips (the sunset, darkness and pass chips still tick) |
 | **weewx-skyfield** (earlier) | Everything but the satellites and their chart; the dome's sun/moon/planet marks step only at the backdrop step (the live-nudge hooks are 2.0's) |
-| **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it); no dome or chart — the dome panel shows an install hint |
+| **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances this page runs on |
 
 The footer credit is generated truthfully for whichever almanac actually
@@ -139,11 +200,18 @@ serves the page.
 
 ## The fields line
 
-The skin consumes exactly the 75 fields listed in
+The skin consumes exactly the 100 fields listed in
 [Installation](installation.md#fresh-install) — az/alt/earth_distance per
-body, the moon-phase fields, `current.dateTime.raw`, and nineteen
-satellite entries per configured satellite (position, sunlit, label, and
-the next-pass/next-visible-pass facts).  Two rules:
+body, the moon-phase fields, `current.dateTime.raw`, the thirteen
+countdown-chip event fields (the sunset/sunrise and
+darkness-begins/-ends pairs, the equinox/solstice and Earth
+perihelion/aphelion pairs, the meteor
+shower peak and label, the supermoon, and the eclipse instant and
+kind — the eclipse *type* renders at generation from the report tag
+and needs no loop field), nineteen satellite entries per configured satellite
+(position, sunlit, label, and the next-pass/next-visible-pass facts),
+and six comet entries per configured comet (position, distance,
+magnitude, label, perihelion).  Two rules:
 
 - `[LoopData] [[Include]] fields` must stay a **bare comma-separated
   list** — no brackets, no quotes.  (Almanac entries are single-argument

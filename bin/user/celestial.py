@@ -33,7 +33,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '8.0'
+CELESTIAL_VERSION = '8.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -183,14 +183,14 @@ for _planet in _MIGRATION_PLANETS:
     _ALMANAC_FIELD_MAP['earth%sDistance' % _cap] = (
         'almanac.%s.earth_distance' % _planet, 'almanac.%s.earth_distance' % _planet)
 
-# The fields the sample report (the 7.0 Geocentric panel) reads; the
-# migrator appends the missing ones.  Per body: az places the dial dot,
-# alt decides above/below-horizon rendering, earth_distance (raw AU)
-# drives the odometer; the moon adds its phase percent and the next
-# full/new moon instants (waxing = full before new) for the phase disc --
-# pinned to epoch seconds (.unix_epoch) because the page does date math
-# on them, so a [Units] [[Groups]] group_time override on loopdata's
-# target report must not change their meaning.
+# The fields the sample report reads; the migrator appends the missing
+# ones.  Per body: az places the dial dot, alt decides
+# above/below-horizon rendering, earth_distance (raw AU) drives the
+# odometer; the moon adds its phase percent and the next full/new moon
+# instants (waxing = full before new) for the phase disc -- pinned to
+# epoch seconds (.unix_epoch) because the page does date math on them,
+# so a [Units] [[Groups]] group_time override on loopdata's target
+# report must not change their meaning.
 # current.dateTime.raw is loopdata's own field, the live-age indicator
 # and the extrapolation anchor.
 _MIGRATION_NEW_FIELDS: List[str] = [
@@ -209,6 +209,30 @@ _MIGRATION_NEW_FIELDS: List[str] = [
     'almanac.pluto.az', 'almanac.pluto.alt', 'almanac.pluto.earth_distance',
     'almanac.proxima_centauri.az', 'almanac.proxima_centauri.alt',
     'almanac.proxima_centauri.earth_distance',
+    # The countdown row (8.1): every chip is client-side arithmetic
+    # against one of these event instants, pinned to epoch seconds per
+    # the 7.5/7.6 doctrine.  The next_* pairs always lie ahead, so the
+    # sunset/sunrise, darkness-begins/-ends and equinox/solstice chips
+    # are client-side min()s; loopdata's event expiry rolls each the
+    # moment it passes.  The
+    # meteor shower, supermoon and eclipse chains need weewx-skyfield
+    # 2.1 -- an almanac that cannot serve one omits it from
+    # loop-data.txt (loopdata logs once per field) and the page hides
+    # that chip.  The horizon=-18 spellings are byte-exact in the
+    # page's javascript: loop-data.txt keys are these strings verbatim.
+    'almanac.sun.next_setting.unix_epoch.raw',
+    'almanac.sun.next_rising.unix_epoch.raw',
+    'almanac(horizon=-18).sun.next_setting.unix_epoch.raw',
+    'almanac(horizon=-18).sun.next_rising.unix_epoch.raw',
+    'almanac.next_equinox.unix_epoch.raw',
+    'almanac.next_solstice.unix_epoch.raw',
+    'almanac.next_perihelion.unix_epoch.raw',
+    'almanac.next_aphelion.unix_epoch.raw',
+    'almanac.next_meteor_shower.peak.unix_epoch.raw',
+    'almanac.next_meteor_shower.label',
+    'almanac.next_supermoon.unix_epoch.raw',
+    'almanac.next_eclipse.unix_epoch.raw',
+    'almanac.next_eclipse_kind',
     # The satellite layer (8.0): weewx-skyfield 2.0's installer-default
     # satellites.  These iss/tiangong members double as the per-satellite
     # PATTERN: the migrator substitutes the configured [Skyfield]
@@ -256,6 +280,26 @@ _MIGRATION_NEW_FIELDS: List[str] = [
     'almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass',
     'almanac.tiangong.next_pass.set_azimuth.ordinal_compass',
     'almanac.tiangong.next_pass.visible',
+    # The comet layer (8.1): weewx-skyfield 2.1's installer-default
+    # comets.  The halley members double as the per-comet PATTERN
+    # exactly as the iss members do for satellites: the migrator
+    # substitutes the configured [Skyfield] [[Comets]] tags for them
+    # (via comet_fields), falling back to these defaults only when the
+    # configuration has no [[Comets]] section to follow.  az/alt/
+    # earth_distance place the dial's diamond like any planet; mag
+    # picks solid (naked-eye, <= 6.0) vs hollow -- an MPC row without
+    # g/k parameters serves no mag, which reads as hollow; perihelion
+    # (pinned -- the chip does date math) feeds a windowed countdown
+    # chip.  An elementless comet (MPC drops faded ones) serves null
+    # across its surface and the page renders absence.
+    'almanac.halley.az', 'almanac.halley.alt',
+    'almanac.halley.earth_distance',
+    'almanac.halley.mag', 'almanac.halley.label',
+    'almanac.halley.perihelion.unix_epoch.raw',
+    'almanac.hale_bopp.az', 'almanac.hale_bopp.alt',
+    'almanac.hale_bopp.earth_distance',
+    'almanac.hale_bopp.mag', 'almanac.hale_bopp.label',
+    'almanac.hale_bopp.perihelion.unix_epoch.raw',
 ]
 
 
@@ -298,7 +342,8 @@ def _migrate_one_field(field: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def migrate_loopdata_fields(fields: List[str],
-                            satellites: Optional[List[str]] = None
+                            satellites: Optional[List[str]] = None,
+                            comets: Optional[List[str]] = None
                             ) -> Tuple[List[str], Dict[str, Any]]:
     """Rewrite a pre-6.0 [LoopData] [[Include]] fields list: rewrite every
     celestial loop-field entry (including pre-3.0 PascalCase names) to its
@@ -306,15 +351,17 @@ def migrate_loopdata_fields(fields: List[str],
     order), drop moonWaxing (no equivalent; the sample report derives it)
     and the duplicates the rewrites create (keeping the first occurrence),
     and append the fields the current sample report needs.  The satellite
-    entries follow satellites -- the configuration's [Skyfield]
-    [[Satellites]] tags, in order; an empty list appends none.  None means
-    there was no [[Satellites]] section to follow (weewx-skyfield absent
-    or pre-2.0): the installer defaults are appended, provisioning for the
-    [[Satellites]] weewx-skyfield 2.0's installer injects.  Entries that are not
-    celestial loop fields are never touched -- a satellite entry already
-    on the line stays regardless of satellites.  Returns (new_fields, report)
-    where report maps 'renamed' to (old, new) pairs, 'dropped'/'added' to
-    field names, and 'notes' to human-readable caveats."""
+    and comet entries follow satellites and comets -- the configuration's
+    [Skyfield] [[Satellites]] and [[Comets]] tags, in order; an empty
+    list appends none.  None means there was no section to follow
+    (weewx-skyfield absent or too old): the installer defaults are
+    appended, provisioning for the sections weewx-skyfield's installer
+    injects ([[Satellites]] since 2.0, [[Comets]] since 2.1).  Entries
+    that are not celestial loop fields are never touched -- a satellite
+    or comet entry already on the line stays regardless of the lists.
+    Returns (new_fields, report) where report maps 'renamed' to
+    (old, new) pairs, 'dropped'/'added' to field names, and 'notes' to
+    human-readable caveats."""
     result: List[str] = []
     seen: set = set()
     renamed: List[Tuple[str, str]] = []
@@ -344,12 +391,21 @@ def migrate_loopdata_fields(fields: List[str],
         result.append(field)
     sat_tags = (list(_INSTALLER_DEFAULT_SATELLITES) if satellites is None
                 else list(satellites))
-    default_prefixes = tuple('almanac.%s.' % tag
-                             for tag in _INSTALLER_DEFAULT_SATELLITES)
+    comet_tags = (list(_INSTALLER_DEFAULT_COMETS) if comets is None
+                  else list(comets))
+    # Both families' installer defaults are stripped from the base list
+    # and re-appended per the configured (or defaulted) tag lists below --
+    # otherwise a deliberately emptied [[Satellites]] or [[Comets]] would
+    # get its defaults resurrected from the pattern entries.
+    default_prefixes = tuple(
+        'almanac.%s.' % tag
+        for tag in _INSTALLER_DEFAULT_SATELLITES + _INSTALLER_DEFAULT_COMETS)
     wanted = [f for f in _MIGRATION_NEW_FIELDS
               if not f.startswith(default_prefixes)]
     for tag in sat_tags:
         wanted.extend(satellite_fields(tag))
+    for tag in comet_tags:
+        wanted.extend(comet_fields(tag))
     for field in wanted:
         if field not in seen:
             seen.add(field)
@@ -363,28 +419,32 @@ def migrate_loopdata_fields(fields: List[str],
     if any_fullness:
         notes.append('almanac.moon.phase is a raw percent (e.g. 33.6), no '
                      'longer a formatted string; pages format it themselves.')
-    added_sat_tags = [tag for tag in sat_tags
+    for kind, tags, configured, section, verb in (
+            ('satellite', sat_tags, satellites, '[[Satellites]]',
+             '--add-satellite'),
+            ('comet', comet_tags, comets, '[[Comets]]', '--add-comet')):
+        added_tags = [tag for tag in tags
                       if any(f.startswith('almanac.%s.' % tag) for f in added)]
-    if added_sat_tags:
-        entries = ', '.join('almanac.%s.*' % tag for tag in added_sat_tags)
-        if satellites is None:
-            notes.append('The satellite entries (%s) are weewx-skyfield '
-                         "2.0's installer defaults, appended because the "
-                         'configuration has no [Skyfield] [[Satellites]] to '
-                         'follow; an almanac that cannot serve one omits it '
-                         'from loop-data.txt (one weewxd log line per field) '
-                         'and the sample page hides its satellite layer.'
-                         % entries)
-        else:
-            notes.append('The satellite entries (%s) follow your [Skyfield] '
-                         '[[Satellites]]; an almanac that cannot serve one '
-                         'omits it from loop-data.txt (one weewxd log line '
-                         'per field) and the sample page hides its satellite '
-                         'layer.' % entries)
-    elif satellites is not None and not sat_tags:
-        notes.append('[Skyfield] [[Satellites]] is empty, so no satellite '
-                     'fields were appended; --add-satellite configures a '
-                     'satellite end to end when you want one.')
+        if added_tags:
+            entries = ', '.join('almanac.%s.*' % tag for tag in added_tags)
+            if configured is None:
+                notes.append("The %s entries (%s) are weewx-skyfield's "
+                             'installer defaults, appended because the '
+                             'configuration has no [Skyfield] %s to follow; '
+                             'an almanac that cannot serve one omits it '
+                             'from loop-data.txt (one weewxd log line per '
+                             'field) and the sample page hides that layer.'
+                             % (kind, entries, section))
+            else:
+                notes.append('The %s entries (%s) follow your [Skyfield] '
+                             '%s; an almanac that cannot serve one omits it '
+                             'from loop-data.txt (one weewxd log line per '
+                             'field) and the sample page hides that layer.'
+                             % (kind, entries, section))
+        elif configured is not None and not tags:
+            notes.append('[Skyfield] %s is empty, so no %s fields were '
+                         'appended; %s configures a %s end to end when you '
+                         'want one.' % (section, kind, verb, kind))
     return result, {'renamed': renamed, 'dropped': dropped, 'added': added,
                     'notes': notes}
 
@@ -425,12 +485,25 @@ def _configured_satellites(config: Any) -> Optional[List[str]]:
         return None
 
 
+def _configured_comets(config: Any) -> Optional[List[str]]:
+    """The [Skyfield] [[Comets]] tags as a list, in configuration order --
+    the comet set the migrator provisions fields for.  None when the
+    configuration has no [[Comets]] section to follow (weewx-skyfield
+    absent or pre-2.1); a present-but-empty section is authoritative and
+    returns [], so a deliberately emptied comet set is never
+    resurrected."""
+    try:
+        return list(config['Skyfield']['Comets'].keys())
+    except (KeyError, AttributeError):
+        return None
+
+
 def migrate_loopdata_conf(config_path: str, output_path: str) -> Dict[str, Any]:
     """Rewrite config_path's [LoopData] [[Include]] fields entry
-    (see migrate_loopdata_fields; the satellite entries follow the
-    configuration's own [Skyfield] [[Satellites]]) and write the complete
-    configuration to output_path atomically (see _write_conf_atomically).
-    Returns the migration report."""
+    (see migrate_loopdata_fields; the satellite and comet entries follow
+    the configuration's own [Skyfield] [[Satellites]] and [[Comets]]) and
+    write the complete configuration to output_path atomically (see
+    _write_conf_atomically).  Returns the migration report."""
     import configobj
     config = configobj.ConfigObj(config_path, file_error=True, encoding='utf-8')
     try:
@@ -440,18 +513,21 @@ def migrate_loopdata_conf(config_path: str, output_path: str) -> Dict[str, Any]:
     if isinstance(fields, str):
         fields = [f.strip() for f in fields.split(',') if f.strip()]
     new_fields, report = migrate_loopdata_fields(list(fields),
-                                                 _configured_satellites(config))
+                                                 _configured_satellites(config),
+                                                 _configured_comets(config))
     config['LoopData']['Include']['fields'] = new_fields
     _write_conf_atomically(config, config_path, output_path)
     return report
 
 
 # ===============================================================================
-# The --add-satellite / --remove-satellite machinery.
+# The --add-satellite / --remove-satellite / --add-comet / --remove-comet
+# machinery.
 #
-# Adding a satellite by hand takes three separate weewx.conf edits -- the
-# [Skyfield] [[Satellites]] entry, nineteen [LoopData] [[Include]] fields
-# entries, and the display name under [StdReport] [[Defaults]]
+# Adding a satellite or a comet by hand takes three separate weewx.conf
+# edits -- the [Skyfield] [[Satellites]] (or [[Comets]]) entry, the
+# [LoopData] [[Include]] fields entries (nineteen per satellite, six per
+# comet), and the display name under [StdReport] [[Defaults]]
 # [[[Almanac]]].  These functions converge a configuration to the desired
 # state: every edit is independently idempotent, so any mixed starting
 # state (satellite already configured per weewx-skyfield's README, fields
@@ -461,25 +537,37 @@ def migrate_loopdata_conf(config_path: str, output_path: str) -> Dict[str, Any]:
 
 # A tag becomes a report tag, a loop-field segment and a config key, so it
 # must be a plain lowercase identifier.
-_SATELLITE_TAG_RE = re.compile(r'[a-z][a-z0-9_]*$')
+_TAG_RE = re.compile(r'[a-z][a-z0-9_]*$')
 
-# Body names the almanac already serves; a satellite tag shadowing one
-# would collide in every report tag and loop field.  sat_<number> is
-# likewise refused: it is weewx-skyfield's alternate spelling for a
-# satellite already listed under its own tag.
-_RESERVED_SATELLITE_TAGS = frozenset(
+# Body names the almanac already serves; a satellite or comet tag
+# shadowing one would collide in every report tag and loop field.
+# sat_<number> is likewise refused on the satellite side: it is
+# weewx-skyfield's alternate spelling for a satellite already listed
+# under its own tag.  Satellites and comets share the almanac.<tag>
+# namespace, so each family also refuses the other family's configured
+# tags and installer defaults (checked in add_satellite/add_comet, where
+# the configuration is in hand).
+_RESERVED_TAGS = frozenset(
     ['sun', 'moon', 'earth', 'proxima_centauri'] + _MIGRATION_PLANETS)
 
 # weewx-skyfield's installer defaults: weectl's conditional merge re-adds
-# a deleted default to [[Satellites]] on the next weewx-skyfield upgrade
-# (only there -- no installer touches the fields line), so removing one
-# earns a warning.  Also the migrator's fallback satellite set when the
-# configuration has no [[Satellites]] section to follow.
+# a deleted default to [[Satellites]]/[[Comets]] on the next
+# weewx-skyfield upgrade (only there -- no installer touches the fields
+# line), so removing one earns a warning.  Also the migrator's fallback
+# sets when the configuration has no section to follow.
 _INSTALLER_DEFAULT_SATELLITES = ('iss', 'tiangong')
+_INSTALLER_DEFAULT_COMETS = ('halley', 'hale_bopp')
 
-# Matches a fields entry belonging to a satellite tag, almanac arguments
-# allowed: almanac.<tag>.* and almanac(...).<tag>.*.
-def _satellite_entry_re(tag: str) -> 're.Pattern[str]':
+# An MPC comet designation: numbered periodic (1P, 220P) or provisional
+# (C/2023 A3, C/1995 O1), an optional fragment suffix on either
+# (C/1947 X1-B).  Letters, digits, slash, space and hyphen only -- never
+# a comma, so the [[Comets]] value cannot break the config grammar.
+_COMET_DESIGNATION_RE = re.compile(
+    r'(\d{1,4}[PDCXAI]|[PCDXAI]/\d{4} [A-Z]{1,2}\d*)(-[A-Z0-9]+)?$')
+
+# Matches a fields entry belonging to a satellite or comet tag, almanac
+# arguments allowed: almanac.<tag>.* and almanac(...).<tag>.*.
+def _almanac_entry_re(tag: str) -> 're.Pattern[str]':
     return re.compile(r'almanac(\([^)]*\))?\.%s\.' % re.escape(tag))
 
 
@@ -493,20 +581,53 @@ def satellite_fields(tag: str) -> List[str]:
             if field.startswith('almanac.iss.')]
 
 
+def comet_fields(tag: str) -> List[str]:
+    """The six [LoopData] [[Include]] fields entries the sample page reads
+    per comet: the almanac.halley.* members of _MIGRATION_NEW_FIELDS with
+    the tag substituted -- derived, not copied, so the page's comet
+    consumption keeps one source of truth."""
+    return [field.replace('almanac.halley.', 'almanac.%s.' % tag, 1)
+            for field in _MIGRATION_NEW_FIELDS
+            if field.startswith('almanac.halley.')]
+
+
 def _validate_satellite_tag(tag: str, adding: bool) -> None:
-    if not _SATELLITE_TAG_RE.match(tag):
+    if not _TAG_RE.match(tag):
         raise ValueError("Satellite tag '%s' must be a lowercase identifier: "
                          "a letter, then letters, digits or underscores "
                          "(e.g. zenit23088)." % tag)
     if not adding:
         return
-    if tag in _RESERVED_SATELLITE_TAGS:
+    if tag in _RESERVED_TAGS:
         raise ValueError("Satellite tag '%s' is a body name the almanac "
                          "already serves; choose another tag." % tag)
     if re.match(r'sat_[0-9]+$', tag):
         raise ValueError("Satellite tag '%s' is weewx-skyfield's alternate "
                          "spelling for a listed satellite; choose a plain "
                          "tag (e.g. zenit23088)." % tag)
+
+
+def _validate_comet_tag(tag: str, adding: bool) -> None:
+    if not _TAG_RE.match(tag):
+        raise ValueError("Comet tag '%s' must be a lowercase identifier: "
+                         "a letter, then letters, digits or underscores "
+                         "(e.g. halley)." % tag)
+    if adding and tag in _RESERVED_TAGS:
+        raise ValueError("Comet tag '%s' is a body name the almanac "
+                         "already serves; choose another tag." % tag)
+
+
+def _other_family_tags(config: Any, section: str,
+                       defaults: Tuple[str, ...]) -> set:
+    """The tags the OTHER family owns: its [Skyfield] section's keys plus
+    its installer defaults (which its installer will re-add on the next
+    upgrade, so they are taken even when currently absent)."""
+    tags = set(defaults)
+    try:
+        tags.update(config['Skyfield'][section].keys())
+    except (KeyError, AttributeError):
+        pass
+    return tags
 
 
 def _loopdata_fields(config: Any) -> Optional[List[str]]:
@@ -538,6 +659,12 @@ def add_satellite(config: Any, tag: str, norad: str,
     if not norad.isdigit():
         raise ValueError("NORAD catalog number '%s' must be all digits "
                          "(e.g. zenit23088=23088)." % norad)
+    if tag in _other_family_tags(config, 'Comets', _INSTALLER_DEFAULT_COMETS):
+        raise ValueError("Satellite tag '%s' is a comet tag (configured "
+                         "under [Skyfield] [[Comets]], or a weewx-skyfield "
+                         "installer default); satellites and comets share "
+                         "the almanac.<tag> namespace, so choose another "
+                         "tag." % tag)
     fields = _loopdata_fields(config)
     if fields is None:
         raise ValueError('The configuration has no [LoopData] [[Include]] '
@@ -619,7 +746,7 @@ def remove_satellite(config: Any, tag: str) -> Dict[str, Any]:
     if tag in satellites:
         norad = str(satellites.pop(tag))
         satellites_entry = 'removed'
-    entry_re = _satellite_entry_re(tag)
+    entry_re = _almanac_entry_re(tag)
     fields = _loopdata_fields(config)
     fields_removed: List[str] = []
     if fields is not None:
@@ -678,6 +805,171 @@ def remove_satellite_conf(config_path: str, output_path: str,
     return report
 
 
+def add_comet(config: Any, tag: str, designation: str,
+              name: Optional[str] = None) -> Dict[str, Any]:
+    """Converge config (a ConfigObj) to carry comet tag = designation: the
+    [Skyfield] [[Comets]] entry (added, or updated when the designation
+    differs -- the invocation is authoritative), the six fields entries
+    appended to [LoopData] [[Include]] fields (entries already present
+    are left in place), and, when name is given, the display name under
+    [StdReport] [[Defaults]] [[[Almanac]]] (an existing name is never
+    deleted by omitting --name).  Raises ValueError for an invalid or
+    reserved tag, a malformed MPC designation, or a configuration with no
+    [LoopData] [[Include]] fields entry.  Returns a report dict:
+    'comets_entry'/'name_entry' statuses, 'previous_designation',
+    'fields_added' and human-readable 'hints'."""
+    _validate_comet_tag(tag, adding=True)
+    if not _COMET_DESIGNATION_RE.match(designation):
+        raise ValueError("MPC designation '%s' must be a numbered periodic "
+                         "designation (1P, 220P) or a provisional one "
+                         "(C/2023 A3), fragment suffixes allowed "
+                         "(C/1947 X1-B).  Quote designations with a space: "
+                         '--add-comet a3="C/2023 A3".' % designation)
+    if tag in _other_family_tags(config, 'Satellites',
+                                 _INSTALLER_DEFAULT_SATELLITES):
+        raise ValueError("Comet tag '%s' is a satellite tag (configured "
+                         "under [Skyfield] [[Satellites]], or a "
+                         "weewx-skyfield installer default); satellites "
+                         "and comets share the almanac.<tag> namespace, so "
+                         "choose another tag." % tag)
+    fields = _loopdata_fields(config)
+    if fields is None:
+        raise ValueError('The configuration has no [LoopData] [[Include]] '
+                         'fields entry.  Install weewx-loopdata and run '
+                         '--migrate-loopdata-fields first; --add-comet '
+                         'only appends to an existing fields line.')
+    hints: List[str] = []
+    if 'Skyfield' not in config:
+        config['Skyfield'] = {}
+    if 'Comets' not in config['Skyfield']:
+        config['Skyfield']['Comets'] = {}
+    comets = config['Skyfield']['Comets']
+    previous = comets.get(tag)
+    previous_designation: Optional[str] = None
+    if previous is None:
+        comets[tag] = designation
+        comets_entry = 'added'
+    elif str(previous) == designation:
+        comets_entry = 'unchanged'
+    else:
+        previous_designation = str(previous)
+        comets[tag] = designation
+        comets_entry = 'updated'
+    present = set(fields)
+    fields_added = [f for f in comet_fields(tag) if f not in present]
+    if fields_added:
+        config['LoopData']['Include']['fields'] = fields + fields_added
+    if 'StdReport' not in config:
+        config['StdReport'] = {}
+    defaults = config['StdReport'].get('Defaults', {})
+    existing_name = defaults.get('Almanac', {}).get(tag)
+    if name is None:
+        name_entry = 'not given'
+        if existing_name is None:
+            hints.append("Until a report names it, %s renders its tag "
+                         "title-cased ('%s').  Re-run with --name, or add "
+                         "under [StdReport] [[Defaults]] [[[Almanac]]]: "
+                         "%s = <display name>."
+                         % (tag, tag.title(), tag))
+    elif existing_name == name:
+        name_entry = 'unchanged'
+    else:
+        if 'Defaults' not in config['StdReport']:
+            config['StdReport']['Defaults'] = {}
+        if 'Almanac' not in config['StdReport']['Defaults']:
+            config['StdReport']['Defaults']['Almanac'] = {}
+        config['StdReport']['Defaults']['Almanac'][tag] = name
+        name_entry = 'added' if existing_name is None else 'updated'
+    hints.append('All comets share one Minor Planet Center element file, '
+                 'fetched every two days -- adding a comet costs no extra '
+                 'downloads, but a comet the MPC has dropped serves no '
+                 'values and the page renders it absent.')
+    hints.append("Restart weewxd: it reads the comet's orbital elements "
+                 'from the shared MPC file (fetching it first if missing '
+                 'or stale), and the comet appears on the Celestial page '
+                 'from the next report cycle.')
+    return {'comets_entry': comets_entry,
+            'previous_designation': previous_designation,
+            'fields_added': fields_added,
+            'name_entry': name_entry,
+            'hints': hints}
+
+
+def remove_comet(config: Any, tag: str) -> Dict[str, Any]:
+    """Converge config (a ConfigObj) to carry no comet tag: deletes the
+    [Skyfield] [[Comets]] entry, every fields entry reading the comet
+    (almanac.<tag>.* in any spelling, almanac arguments included), and
+    the [StdReport] [[Defaults]] [[[Almanac]]] display name.  Each piece
+    is removed if present -- removing an already-absent comet is a no-op,
+    not an error.  Returns a report dict: 'comets_entry'/'name_entry'
+    statuses, the removed entry's 'designation', 'fields_removed' and
+    human-readable 'hints'."""
+    _validate_comet_tag(tag, adding=False)
+    hints: List[str] = []
+    designation: Optional[str] = None
+    comets_entry = 'absent'
+    try:
+        comets = config['Skyfield']['Comets']
+    except KeyError:
+        comets = {}
+    if tag in comets:
+        designation = str(comets.pop(tag))
+        comets_entry = 'removed'
+    entry_re = _almanac_entry_re(tag)
+    fields = _loopdata_fields(config)
+    fields_removed: List[str] = []
+    if fields is not None:
+        kept = [f for f in fields if not entry_re.match(f)]
+        fields_removed = [f for f in fields if entry_re.match(f)]
+        if fields_removed:
+            config['LoopData']['Include']['fields'] = kept
+    name_entry = 'absent'
+    try:
+        almanac_names = config['StdReport']['Defaults']['Almanac']
+    except KeyError:
+        almanac_names = {}
+    if tag in almanac_names:
+        del almanac_names[tag]
+        name_entry = 'removed'
+    if tag in _INSTALLER_DEFAULT_COMETS:
+        hints.append('%s is a weewx-skyfield installer default: the next '
+                     'weectl extension install of weewx-skyfield re-adds it '
+                     'to [[Comets]] (only -- the fields line stays as you '
+                     'left it).  Re-run --remove-comet %s afterwards.'
+                     % (tag, tag))
+    hints.append('Restart weewxd to pick up the change.')
+    return {'comets_entry': comets_entry,
+            'designation': designation,
+            'fields_removed': fields_removed,
+            'name_entry': name_entry,
+            'hints': hints}
+
+
+def add_comet_conf(config_path: str, output_path: str, tag: str,
+                   designation: str,
+                   name: Optional[str] = None) -> Dict[str, Any]:
+    """add_comet against the configuration at config_path, written to
+    output_path atomically (see _write_conf_atomically).  Returns the
+    report."""
+    import configobj
+    config = configobj.ConfigObj(config_path, file_error=True, encoding='utf-8')
+    report = add_comet(config, tag, designation, name)
+    _write_conf_atomically(config, config_path, output_path)
+    return report
+
+
+def remove_comet_conf(config_path: str, output_path: str,
+                      tag: str) -> Dict[str, Any]:
+    """remove_comet against the configuration at config_path, written to
+    output_path atomically (see _write_conf_atomically).  Returns the
+    report."""
+    import configobj
+    config = configobj.ConfigObj(config_path, file_error=True, encoding='utf-8')
+    report = remove_comet(config, tag)
+    _write_conf_atomically(config, config_path, output_path)
+    return report
+
+
 if __name__ == '__main__':
 
     import configobj
@@ -708,7 +1000,9 @@ if __name__ == '__main__':
        python -m user.celestial --version
        python -m user.celestial --migrate-loopdata-fields [--config=<weewx-config-file>] (--output=FILE | --in-place | --print-fields-value)
        python -m user.celestial --add-satellite TAG=NORAD [--name=NAME] [--config=<weewx-config-file>] (--output=FILE | --in-place)
-       python -m user.celestial --remove-satellite TAG [--config=<weewx-config-file>] (--output=FILE | --in-place)"""
+       python -m user.celestial --remove-satellite TAG [--config=<weewx-config-file>] (--output=FILE | --in-place)
+       python -m user.celestial --add-comet TAG=DESIGNATION [--name=NAME] [--config=<weewx-config-file>] (--output=FILE | --in-place)
+       python -m user.celestial --remove-comet TAG [--config=<weewx-config-file>] (--output=FILE | --in-place)"""
 
     parser = optparse.OptionParser(usage=usage)
     parser.add_option('--version', action='store_true',
@@ -721,9 +1015,9 @@ if __name__ == '__main__':
                            'to its weewx-loopdata almanac equivalent (keeping the line\'s '
                            'order), drop moonWaxing and the duplicates the rewrites create, '
                            'and append the fields the current sample report needs.  The '
-                           'satellite entries follow the configuration\'s [Skyfield] '
-                           '[[Satellites]] (weewx-skyfield\'s installer defaults when there '
-                           'is no [[Satellites]] section to follow).  '
+                           'satellite and comet entries follow the configuration\'s '
+                           '[Skyfield] [[Satellites]] and [[Comets]] (weewx-skyfield\'s '
+                           'installer defaults when there is no section to follow).  '
                            'Non-celestial fields are never touched.  Use with --config and '
                            'exactly one of --output, --in-place or --print-fields-value.')
     parser.add_option('--add-satellite', dest='add_satellite', type=str, metavar='TAG=NORAD',
@@ -735,14 +1029,30 @@ if __name__ == '__main__':
                            'already present are kept, and re-running with the same TAG '
                            'updates the number or name in place.  Use with --config and '
                            'exactly one of --output or --in-place.')
-    parser.add_option('--name', dest='satellite_name', type=str, metavar='NAME',
-                      help='With --add-satellite: the display name reports show for the '
-                           'satellite.  Without it the satellite renders its tag title-cased '
-                           'until a report names it.')
+    parser.add_option('--name', dest='display_name', type=str, metavar='NAME',
+                      help='With --add-satellite or --add-comet: the display name reports '
+                           'show for it.  Without it the tag renders title-cased until a '
+                           'report names it.')
     parser.add_option('--remove-satellite', dest='remove_satellite', type=str, metavar='TAG',
                       help='Remove an earth satellite from the configuration: deletes TAG '
                            'from [Skyfield] [[Satellites]], every almanac.TAG.* entry from '
                            'the [LoopData] [[Include]] fields line, and TAG\'s [StdReport] '
+                           '[[Defaults]] [[[Almanac]]] display name -- each if present.  Use '
+                           'with --config and exactly one of --output or --in-place.')
+    parser.add_option('--add-comet', dest='add_comet', type=str, metavar='TAG=DESIGNATION',
+                      help='Add a comet to the configuration, one per run: writes '
+                           'TAG = DESIGNATION (an MPC designation, e.g. 1P or "C/2023 A3" '
+                           '-- quote one with a space) under [Skyfield] [[Comets]], appends '
+                           'the six [LoopData] [[Include]] fields entries the sample page '
+                           'reads, and (with --name) writes the display name under '
+                           '[StdReport] [[Defaults]] [[[Almanac]]].  Every edit is '
+                           'idempotent: pieces already present are kept, and re-running '
+                           'with the same TAG updates the designation or name in place.  '
+                           'Use with --config and exactly one of --output or --in-place.')
+    parser.add_option('--remove-comet', dest='remove_comet', type=str, metavar='TAG',
+                      help='Remove a comet from the configuration: deletes TAG from '
+                           '[Skyfield] [[Comets]], every almanac.TAG.* entry from the '
+                           '[LoopData] [[Include]] fields line, and TAG\'s [StdReport] '
                            '[[Defaults]] [[[Almanac]]] display name -- each if present.  Use '
                            'with --config and exactly one of --output or --in-place.')
     parser.add_option('--output', dest='output_file', type=str, metavar='FILE',
@@ -762,12 +1072,14 @@ if __name__ == '__main__':
         exit(0)
 
     if sum([bool(options.migrate), bool(options.add_satellite),
-            bool(options.remove_satellite)]) > 1:
+            bool(options.remove_satellite), bool(options.add_comet),
+            bool(options.remove_comet)]) > 1:
         log.error('Specify only one of --migrate-loopdata-fields, '
-                  '--add-satellite or --remove-satellite.')
+                  '--add-satellite, --remove-satellite, --add-comet or '
+                  '--remove-comet.')
         exit(1)
-    if options.satellite_name and not options.add_satellite:
-        log.error('--name only applies with --add-satellite.')
+    if options.display_name and not (options.add_satellite or options.add_comet):
+        log.error('--name only applies with --add-satellite or --add-comet.')
         exit(1)
 
     def resolve_output(config_path):
@@ -795,7 +1107,8 @@ if __name__ == '__main__':
             if isinstance(fields, str):
                 fields = [f.strip() for f in fields.split(',') if f.strip()]
             new_fields, report = migrate_loopdata_fields(
-                list(fields), _configured_satellites(migrate_dict))
+                list(fields), _configured_satellites(migrate_dict),
+                _configured_comets(migrate_dict))
             print(', '.join(new_fields))
         else:
             migrate_output = resolve_output(migrate_config)
@@ -813,59 +1126,85 @@ if __name__ == '__main__':
             log.info('NOTE: %s' % note)
         exit(0)
 
-    if options.add_satellite or options.remove_satellite:
-        sat_config = options.config_file if options.config_file else '/home/weewx/weewx.conf'
+    if (options.add_satellite or options.remove_satellite
+            or options.add_comet or options.remove_comet):
+        edit_config = options.config_file if options.config_file else '/home/weewx/weewx.conf'
         if sum([bool(options.output_file), bool(options.in_place)]) != 1 or options.print_fields:
             log.error('Specify exactly one of --output FILE or --in-place.')
             exit(1)
-        config = get_configuration(sat_config)
+        config = get_configuration(edit_config)
         try:
             if options.add_satellite:
-                sat_tag, sep, sat_norad = options.add_satellite.partition('=')
-                sat_tag = sat_tag.strip()
-                sat_norad = sat_norad.strip()
-                if not sep or not sat_tag or not sat_norad:
+                edit_tag, sep, edit_value = options.add_satellite.partition('=')
+                edit_tag = edit_tag.strip()
+                edit_value = edit_value.strip()
+                if not sep or not edit_tag or not edit_value:
                     raise ValueError('--add-satellite takes TAG=NORAD '
                                      '(e.g. --add-satellite zenit23088=23088).')
-                report = add_satellite(config, sat_tag, sat_norad,
-                                       options.satellite_name)
+                report = add_satellite(config, edit_tag, edit_value,
+                                       options.display_name)
+            elif options.remove_satellite:
+                edit_tag = options.remove_satellite.strip()
+                report = remove_satellite(config, edit_tag)
+            elif options.add_comet:
+                edit_tag, sep, edit_value = options.add_comet.partition('=')
+                edit_tag = edit_tag.strip()
+                edit_value = edit_value.strip()
+                if not sep or not edit_tag or not edit_value:
+                    raise ValueError('--add-comet takes TAG=DESIGNATION '
+                                     '(e.g. --add-comet halley=1P, or '
+                                     '--add-comet a3="C/2023 A3" -- quote a '
+                                     'designation with a space).')
+                report = add_comet(config, edit_tag, edit_value,
+                                   options.display_name)
             else:
-                sat_tag = options.remove_satellite.strip()
-                report = remove_satellite(config, sat_tag)
+                edit_tag = options.remove_comet.strip()
+                report = remove_comet(config, edit_tag)
         except ValueError as e:
             log.error(str(e))
             exit(1)
-        sat_output = resolve_output(sat_config)
-        _write_conf_atomically(config, sat_config, sat_output)
-        log.info('Wrote %s' % sat_output)
-        if options.add_satellite:
-            if report['satellites_entry'] == 'added':
-                log.info('added  [Skyfield] [[Satellites]] %s = %s' % (sat_tag, sat_norad))
-            elif report['satellites_entry'] == 'updated':
-                log.info('updated  [Skyfield] [[Satellites]] %s = %s (was %s)'
-                         % (sat_tag, sat_norad, report['previous_norad']))
+        edit_output = resolve_output(edit_config)
+        _write_conf_atomically(config, edit_config, edit_output)
+        log.info('Wrote %s' % edit_output)
+        if options.add_satellite or options.add_comet:
+            section = '[[Satellites]]' if options.add_satellite else '[[Comets]]'
+            entry = report['satellites_entry' if options.add_satellite
+                           else 'comets_entry']
+            previous = report['previous_norad' if options.add_satellite
+                              else 'previous_designation']
+            if entry == 'added':
+                log.info('added  [Skyfield] %s %s = %s' % (section, edit_tag, edit_value))
+            elif entry == 'updated':
+                log.info('updated  [Skyfield] %s %s = %s (was %s)'
+                         % (section, edit_tag, edit_value, previous))
             else:
-                log.info('kept  [Skyfield] [[Satellites]] %s = %s (already present)'
-                         % (sat_tag, sat_norad))
+                log.info('kept  [Skyfield] %s %s = %s (already present)'
+                         % (section, edit_tag, edit_value))
             for name in report['fields_added']:
                 log.info('added  %s' % name)
             if not report['fields_added']:
-                log.info('fields line already complete for %s' % sat_tag)
+                log.info('fields line already complete for %s' % edit_tag)
             if report['name_entry'] in ('added', 'updated'):
                 log.info('%s  [StdReport] [[Defaults]] [[[Almanac]]] %s = %s'
-                         % (report['name_entry'], sat_tag, options.satellite_name))
+                         % (report['name_entry'], edit_tag, options.display_name))
             elif report['name_entry'] == 'unchanged':
                 log.info('kept  [StdReport] [[Defaults]] [[[Almanac]]] %s (already named)'
-                         % sat_tag)
+                         % edit_tag)
         else:
-            if report['satellites_entry'] == 'removed':
-                log.info('removed  [Skyfield] [[Satellites]] %s = %s' % (sat_tag, report['norad']))
+            section = '[[Satellites]]' if options.remove_satellite else '[[Comets]]'
+            entry = report['satellites_entry' if options.remove_satellite
+                           else 'comets_entry']
+            removed_value = report['norad' if options.remove_satellite
+                                   else 'designation']
+            if entry == 'removed':
+                log.info('removed  [Skyfield] %s %s = %s'
+                         % (section, edit_tag, removed_value))
             else:
-                log.info('no [Skyfield] [[Satellites]] entry for %s' % sat_tag)
+                log.info('no [Skyfield] %s entry for %s' % (section, edit_tag))
             for name in report['fields_removed']:
                 log.info('removed  %s' % name)
             if report['name_entry'] == 'removed':
-                log.info('removed  [StdReport] [[Defaults]] [[[Almanac]]] %s' % sat_tag)
+                log.info('removed  [StdReport] [[Defaults]] [[[Almanac]]] %s' % edit_tag)
         for note in report['hints']:
             log.info('NOTE: %s' % note)
         exit(0)

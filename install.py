@@ -40,7 +40,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "8.0",
+            version = "8.1",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
@@ -98,24 +98,28 @@ class CelestialInstaller(ExtensionInstaller):
             ])
 
     def configure(self, engine):
-        """Compare the station's [LoopData] [[Include]] fields line with
-        what the sample page reads and, when entries are missing (or
-        pre-6.0 names linger), print the --migrate-loopdata-fields
-        commands that fix it.  A hint only: weectl's conditional merge
-        cannot append into another extension's comma-list value, so the
-        installer never edits [LoopData] itself.  The bundled migrator
-        runs in memory as the oracle -- one source of truth for the field
-        set, the configuration's own [Skyfield] [[Satellites]] included.
-        Never modifies the configuration (always returns False), and
-        never fails the install."""
+        """Bring the station's [LoopData] [[Include]] fields line up to
+        date with what the sample page reads.  APPEND-ONLY: entries the
+        page reads that are missing from the line are appended in place
+        (an append cannot break another page's consumption of the same
+        line; weectl saves the modified configuration and keeps its own
+        backup) -- existing entries are never renamed, removed or
+        reordered.  The migrator's destructive half (pre-6.0 renames,
+        drops) stays behind the human-reviewed --migrate-loopdata-fields
+        flow and is only hinted.  The bundled migrator runs in memory as
+        the oracle -- one source of truth for the field set, the
+        configuration's own [Skyfield] [[Satellites]] and [[Comets]]
+        included.  Honors weectl's dry run.  Returns True exactly when
+        the configuration was modified; any failure degrades to a
+        could-not-check line, never a failed install."""
         try:
-            self._print_fields_hint(engine)
+            return self._update_fields(engine)
         except Exception as e:
             engine.printer.out('Could not check the [LoopData] fields line '
                                '(%s); the README shows what the page reads.' % e)
-        return False
+            return False
 
-    def _print_fields_hint(self, engine):
+    def _update_fields(self, engine):
         celestial = self._load_bundled_celestial()
         config = engine.config_dict
         try:
@@ -127,39 +131,63 @@ class CelestialInstaller(ExtensionInstaller):
                 'install weewx-loopdata, then run the bundled '
                 '--migrate-loopdata-fields utility to write the fields line '
                 '(the README shows the commands).')
-            return
+            return False
         if isinstance(fields, str):
             fields = [f.strip() for f in fields.split(',') if f.strip()]
         _, report = celestial.migrate_loopdata_fields(
-            list(fields), celestial._configured_satellites(config))
-        gaps = []
+            list(fields), celestial._configured_satellites(config),
+            celestial._configured_comets(config))
+        modified = False
         if report['added']:
-            gaps.append('is missing %d entries the page reads'
-                        % len(report['added']))
+            if getattr(engine, 'dry_run', False):
+                engine.printer.out(
+                    'Would append %d entries the page reads to [LoopData] '
+                    '[[Include]] fields (dry run; existing entries are '
+                    'never touched).' % len(report['added']))
+            else:
+                config['LoopData']['Include']['fields'] = (
+                    list(fields) + list(report['added']))
+                engine.printer.out(
+                    'Appended %d entries the page reads to [LoopData] '
+                    '[[Include]] fields (append-only: existing entries are '
+                    'never renamed, removed or reordered):'
+                    % len(report['added']))
+                for name in report['added']:
+                    engine.printer.out('    ' + name)
+                engine.printer.out(
+                    'Restart weewxd so weewx-loopdata reloads the line.')
+                modified = True
         if report['renamed']:
-            gaps.append('carries %d entries with outdated spellings'
-                        % len(report['renamed']))
-        if not gaps:
-            return
-        config_path = getattr(engine, 'config_path', '/home/weewx/weewx.conf')
-        # The user package's parent: WEEWX_ROOT/bin, exactly where
-        # _gen_file_paths just put this extension's 'bin/user' files.
-        bin_dir = os.path.abspath(os.path.join(
-            engine.root_dict.get('WEEWX_ROOT', '/home/weewx'), 'bin'))
-        engine.printer.out(
-            'Note: the [LoopData] [[Include]] fields line %s.  This installer '
-            'never edits [LoopData]; the bundled migrator updates the line in '
-            'one idempotent pass:' % ' and '.join(gaps))
-        engine.printer.out('    cd %s' % bin_dir)
-        engine.printer.out('    %s -m user.celestial --migrate-loopdata-fields '
-                           '--config %s --output /tmp/weewx.conf.migrated'
-                           % (sys.executable, config_path))
-        engine.printer.out('    git diff --no-index --word-diff %s '
-                           '/tmp/weewx.conf.migrated' % config_path)
-        engine.printer.out('Review the changes (the utility lists each one; '
-                           'the word-diff shows them in place -- a plain diff '
-                           'is unreadable on one long fields line), then move '
-                           'the file into place.  See the README for detail.')
+            config_path = getattr(engine, 'config_path', '/home/weewx/weewx.conf')
+            # The user package's parent: WEEWX_ROOT/bin, exactly where
+            # _gen_file_paths just put this extension's 'bin/user' files.
+            bin_dir = os.path.abspath(os.path.join(
+                engine.root_dict.get('WEEWX_ROOT', '/home/weewx'), 'bin'))
+            engine.printer.out(
+                'Note: the [LoopData] [[Include]] fields line carries %d '
+                'entries with outdated spellings.  Renames deserve review, '
+                'so this installer never applies them; the bundled migrator '
+                'updates the line in one idempotent pass:'
+                % len(report['renamed']))
+            # On a deb/rpm package install WeeWX's own code lives in
+            # /usr/share/weewx, on sys.path only because /usr/bin/weectl
+            # exports PYTHONPATH -- a pasted bare command dies importing
+            # weewx.  Carry the running weewx's location explicitly;
+            # redundant on venv installs, essential on package installs.
+            weewx_dir = os.path.dirname(os.path.dirname(
+                os.path.abspath(weewx.__file__)))
+            engine.printer.out('    cd %s' % bin_dir)
+            engine.printer.out('    PYTHONPATH=%s %s -m user.celestial '
+                               '--migrate-loopdata-fields '
+                               '--config %s --output /tmp/weewx.conf.migrated'
+                               % (weewx_dir, sys.executable, config_path))
+            engine.printer.out('    git diff --no-index --word-diff %s '
+                               '/tmp/weewx.conf.migrated' % config_path)
+            engine.printer.out('Review the changes (the utility lists each one; '
+                               'the word-diff shows them in place -- a plain diff '
+                               'is unreadable on one long fields line), then move '
+                               'the file into place.  See the README for detail.')
+        return modified
 
     @staticmethod
     def _load_bundled_celestial():
