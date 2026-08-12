@@ -13,6 +13,9 @@
 ## weewx.almanac feeds the footer's identity check (see there).
 #import weewx.almanac
 #import time
+## datetime.date differences the pass rows' whole-day countdowns (see
+## the satellite roster below): calendar days, never elapsed seconds.
+#import datetime
 <!DOCTYPE html>
 <html lang="$lang">
   <head>
@@ -587,10 +590,20 @@
           #set $sat_when = $gettext('in {m} min').format(m=max(1, int($sat_delta // 60)))
           #else if $sat_delta < 86400
           #set $sat_when = $gettext('in {h} h').format(h=int(round($sat_delta / 3600)))
-          #else if int(-(-$sat_delta // 86400)) == 1
-          #set $sat_when = $gettext('in {n} day').format(n=1)
           #else
-          #set $sat_when = $gettext('in {n} days').format(n=int(-(-$sat_delta // 86400)))
+          ## Whole days is a CALENDAR-day difference, not elapsed seconds
+          ## divided down: the count stands on the same line as the pass's
+          ## own date, and a count reckoned any other way contradicts the
+          ## date beside it twice a day -- rounding up calls a pass later
+          ## this evening "in 1 day" (Jacques Terrettaz's report against
+          ## weewx-skyfield's chips, the 2026-08-12 partial solar eclipse,
+          ## issue #6), rounding down calls one just past midnight
+          ## "today".  Differencing the two local dates is DST-correct
+          ## for free; the floor at 1 is the fall-back Sunday's belt and
+          ## braces, where 24 elapsed hours can land back on today.  The
+          ## live layer's satWhen reckons identically.
+          #set $sat_days = max(1, (datetime.date.fromtimestamp($sat_pass.rise.raw) - datetime.date.fromtimestamp($almanac.time_ts)).days)
+          #set $sat_when = $gettext('in {n} day').format(n=1) if $sat_days == 1 else $gettext('in {n} days').format(n=$sat_days)
           #end if
           #set $sat_line = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($sat_pass.rise.raw)) + ' · ' + $sat_when
           #set $sat_sub = $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min').format(rise=str($sat_pass.rise_azimuth.ordinal_compass), alt='%.0f' % $sat_pass.max_altitude.raw, culm=str($sat_pass.culmination_azimuth.ordinal_compass), set=str($sat_pass.set_azimuth.ordinal_compass), m='%d' % round($sat_pass.duration.raw / 60))
@@ -610,10 +623,10 @@
           #set $any_when = $gettext('in {m} min').format(m=max(1, int($any_delta // 60)))
           #else if $any_delta < 86400
           #set $any_when = $gettext('in {h} h').format(h=int(round($any_delta / 3600)))
-          #else if int(-(-$any_delta // 86400)) == 1
-          #set $any_when = $gettext('in {n} day').format(n=1)
           #else
-          #set $any_when = $gettext('in {n} days').format(n=int(-(-$any_delta // 86400)))
+          ## Calendar days, exactly as the visible-pass row above.
+          #set $any_days = max(1, (datetime.date.fromtimestamp($any_pass.rise.raw) - datetime.date.fromtimestamp($almanac.time_ts)).days)
+          #set $any_when = $gettext('in {n} day').format(n=1) if $any_days == 1 else $gettext('in {n} days').format(n=$any_days)
           #end if
           #set $any_line = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($any_pass.rise.raw)) + ' · ' + $any_when
           #set $any_sub = $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min').format(rise=str($any_pass.rise_azimuth.ordinal_compass), alt='%.0f' % $any_pass.max_altitude.raw, culm=str($any_pass.culmination_azimuth.ordinal_compass), set=str($any_pass.set_azimuth.ordinal_compass), m='%d' % round($any_pass.duration.raw / 60))

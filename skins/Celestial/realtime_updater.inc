@@ -958,6 +958,19 @@
             dot: svgEl('circle', {r: 4, 'class': 'satdot'}, g),
             lab: svgEl('text', {'class': 'satlab'}, g)};
   }
+  function localDayNum(ts) {
+    // The instant's DISPLAY-ZONE calendar date, as a day number to
+    // difference.  Never new Date(...).getDate(): that reckons in the
+    // BROWSER's zone, and this page renders in the station's.
+    var parts = new Intl.DateTimeFormat('en-US',
+      tzOptions({year: 'numeric', month: '2-digit', day: '2-digit'}))
+      .formatToParts(new Date(ts * 1000));
+    var v = {};
+    for (var i = 0; i < parts.length; i++) {
+      v[parts[i].type] = parts[i].value;
+    }
+    return Math.floor(Date.UTC(v.year, v.month - 1, v.day) / 86400000);
+  }
   function satWhen(riseTs, setTs, nowTs) {
     if (setTs !== null && riseTs <= nowTs && nowTs < setTs) {
       return T['overhead now'];
@@ -974,7 +987,19 @@
     if (delta < 86400) {
       return fmt('in {h} h', {h: Math.round(delta / 3600)});
     }
-    var n = Math.ceil(delta / 86400);
+    // Whole days is a CALENDAR-day difference, not elapsed seconds
+    // divided down: renderPassRow puts this count on the same line as
+    // the pass's own date (fmtDayHM), and a count reckoned any other
+    // way contradicts the date beside it twice a day -- rounding up
+    // calls a pass later this evening 'in 1 day' (Jacques Terrettaz's
+    // report against weewx-skyfield's chips, the 2026-08-12 partial
+    // solar eclipse, issue #6), rounding down calls one just past
+    // midnight 'today'.  Differencing the two local dates also costs
+    // nothing to be DST-correct: the day a clock shifts is still one
+    // day.  The floor at 1 is that Sunday's belt and braces -- 24
+    // elapsed hours can land back on today's date, and this branch
+    // has already ruled out anything under a day.
+    var n = Math.max(1, localDayNum(riseTs) - localDayNum(nowTs));
     return n === 1 ? fmt('in {n} day', {n: 1}) : fmt('in {n} days', {n: n});
   }
   function fmtDayHM(ts) {

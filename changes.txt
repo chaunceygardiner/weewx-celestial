@@ -1,10 +1,29 @@
 weewx-celestial change history
 ------------------------------
 
-8.2 (in progress)
------------------
-- Documentation only so far: the shipped extension is unchanged, so
-  there is nothing to install and no reason to upgrade for these.
+8.1.1 (2026/08/12)
+------------------
+- A satellite pass row's whole-day countdown now counts CALENDAR days,
+  so it can no longer contradict the date standing on its own line.  A
+  pass 26 hours out, tomorrow morning, read "Jun 21 03:59 · in 2 days":
+  the count was elapsed seconds rounded up, and rounding up calls
+  anything still ahead of the clock a whole day.  Rounding down only
+  moves the disagreement past midnight, so the count is now the
+  difference between the two calendar dates, in the report's display
+  timezone -- which is also right across a daylight-saving change,
+  where 23 and 25 elapsed hours are each still one day.  Both the
+  report-time first paint and the live layer are corrected, and they
+  reckon identically.  Countdowns under a day are deliberately
+  unchanged: "in 20 min" is what a go-watch reader wants, whichever
+  side of midnight the pass falls on.  Jacques Terrettaz found this
+  arithmetic in weewx-skyfield's countdown chips -- the morning of the
+  2026-08-12 partial solar eclipse read "in 1 day" beside that day's
+  own date (weewx-skyfield issue #6, fixed in its 2.1.2) -- and this
+  page carried its own copy.  The countdown row's chips are not
+  affected: a days-hours-minutes duration makes no claim about a
+  calendar date.
+- Everything else in this entry is documentation: nothing else in the
+  shipped extension changes.
 - The user manual is rebuilt and roughly doubled: twelve pages with a
   real sidebar and full-text search, at
   https://chaunceygardiner.github.io/weewx-celestial/.  Seven pages

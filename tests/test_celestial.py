@@ -509,6 +509,42 @@ class TestSampleSkinRenders:
         assert 'id="skygp"' in html and 'id="domecp"' in html
         assert 'id="skyg"' in html and 'id="domec"' in html
 
+    def test_pass_row_day_count_is_calendar_days(self, wxskyfield_sat_sky):
+        """A pass row's whole-day countdown stands on the same line as the
+        pass's own date, so it counts LOCAL CALENDAR DAYS -- the way the
+        person reading that date counts.  Elapsed seconds divided down
+        disagree with the date beside them twice a day: rounding up calls
+        a pass 26 hours out "in 2 days" when it falls tomorrow (Jacques
+        Terrettaz's report against weewx-skyfield's countdown chips, the
+        2026-08-12 partial solar eclipse, issue #6), and rounding down
+        calls one 32 hours out "in 1 day" when it falls the day after.
+        The fixture's Jun 21 03:59 PDT visible pass is both boundaries,
+        seen from two different mornings."""
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+
+            def line(now_ts):
+                alm = weewx.almanac.Almanac(now_ts, LATITUDE, LONGITUDE,
+                                            altitude=ALTITUDE_M,
+                                            formatter=weewx.units.get_default_formatter())
+                rise = alm.iss.next_visible_pass.rise.raw
+                assert abs(rise - 1750503568) < 1, 'fixture pass moved'
+                return self.cell(self.render(alm, sky_page=make_sky_page()), 'sat-line-iss')
+
+            # Jun 20 02:00 PDT: the pass is 26 hours out and TOMORROW.
+            tomorrow = line(1750410000)
+            assert 'Jun 21 03:59' in tomorrow
+            assert 'in 1 day' in tomorrow
+            # Jun 19 20:00 PDT: 32 hours out, and the day after tomorrow.
+            two_days = line(1750388400)
+            assert 'Jun 21 03:59' in two_days
+            assert 'in 2 days' in two_days
+            # Under a day the row keeps its finer elapsed-time resolution:
+            # that is what a go-watch reader wants, whichever side of
+            # midnight the pass falls on.
+            assert 'in 16 h' in line(1750446000)          # Jun 20 12:00 PDT
+
     def test_renders_with_comets(self, wxskyfield_comet_almanac):
         """Comets configured (the skyfield 2.1 fixture MPC rows): the
         Geocentric roster gains one guarded row per comet (Halley's cells
@@ -1085,6 +1121,79 @@ class TestSampleSkinRenders:
         # visible.
         assert 'Jun 21' in out['anyline']
         assert 'not visible' in out['anysub']
+
+    def test_pass_countdown_day_count_in_a_real_browser(self, wxskyfield_almanac,
+                                                        tmp_path):
+        """satWhen's whole-day countdown, run where it runs: the live twin
+        of test_pass_row_day_count_is_calendar_days.  The count sits on the
+        same line as the pass's date (fmtDayHM), so it is a LOCAL CALENDAR
+        day difference -- the boundaries below are exactly the two cases
+        elapsed-seconds arithmetic gets wrong, rounding up (26 hours out
+        but tomorrow) and rounding down (47 hours out but three dates
+        along).  The browser here deliberately sits in Auckland while the
+        page displays America/Los_Angeles: the 40-hour case reads two days
+        in the station's zone and one in the browser's, so it fails if the
+        reckoning ever slips to new Date(...).getDate().  Skips when the
+        playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        # The fall-back Sunday, where 24 elapsed hours land back on the
+        # same date and the floor at 1 keeps the row off "in 0 days".
+        fall_back = time.mktime((2026, 11, 1, 0, 30, 0, 0, 0, -1))
+        cases = [(TIME_TS, 26 * 3600),        # tomorrow, though 26 hours out
+                 (TIME_TS, 47 * 3600),        # two dates along, though under 48 h
+                 (TIME_TS, 40 * 3600),        # two in Los Angeles, one in Auckland
+                 (fall_back, 24 * 3600),      # a 25-hour day is still one day
+                 (TIME_TS, 3 * 3600),         # under a day: elapsed time, by design
+                 (TIME_TS, 600)]
+
+        (tmp_path / 'index.html').write_text(
+            self.render(wxskyfield_almanac, sky_page=make_sky_page()))
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            "    ctx = browser.new_context(timezone_id='Pacific/Auckland')\n"
+            '    page = ctx.new_page()\n'
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            "    when = page.evaluate('%s.map("
+            'function(c) { return satWhen(c[0] + c[1], null, c[0]); })\')\n'
+            '    browser.close()\n'
+            "print(json.dumps(when))\n" % (port, jsonlib.dumps(cases)))
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        assert jsonlib.loads(proc.stdout) == ['in 1 day', 'in 2 days', 'in 2 days',
+                                              'in 1 day', 'in 3 h', 'in 10 min']
 
     def test_tap_tooltips_in_a_real_browser(self, wxskyfield_sat_almanac, tmp_path):
         """Tap tooltips (sky.js, copied from weewx-skyfield) on all three
