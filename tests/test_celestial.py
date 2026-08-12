@@ -3494,3 +3494,668 @@ class TestInstallerFieldsHint:
             {'LoopData': {'Include': {'fields': 3.14}}})
         assert self._installer().configure(engine) is False
         assert any('Could not check' in line for line in engine.printer.lines)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# The manual, pinned to the code.
+#
+# docs/ is hand-written prose that restates machine-readable facts: the
+# fields the skin consumes, the per-satellite and per-comet patterns,
+# and the skin's own [Texts] dictionary.  A hand-maintained copy of a
+# generated fact drifts silently -- 8.1 shipped an i18n.md dictionary
+# with one wrong string and one missing one, and nothing noticed until
+# a human read both files side by side.  These audits fail when the
+# manual and the code disagree, in EITHER direction: a field the code
+# gained and the docs missed, and a field the docs still promise after
+# the code dropped it.  The second is the one that bites at a release.
+# ─────────────────────────────────────────────────────────────────────
+
+DOCS_DIR = os.path.join(REPO_ROOT, 'docs')
+
+# The bodies the Geocentric dial places, in _MIGRATION_NEW_FIELDS order.
+# Named here so the countdown-chip audit can subtract them; the skin's
+# own count is pinned separately by the render tests.
+_DIAL_BODIES = ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+                'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri')
+
+# The installer's default satellite and comet tags -- what the shipped
+# fields line (and therefore the manual's copy of it) is written for.
+_DEFAULT_SAT_TAGS   = ('iss', 'tiangong')
+_DEFAULT_COMET_TAGS = ('halley', 'hale_bopp')
+
+
+def _doc_text(name):
+    with open(os.path.join(DOCS_DIR, name), encoding='utf-8') as f:
+        return f.read()
+
+
+def _fenced_blocks(text):
+    """Every fenced code block's body, in document order."""
+    return re.findall(r'^```[a-z]*\n(.*?)^```', text, re.S | re.M)
+
+
+def _block_containing(text, needle, without=None):
+    """The one fenced block carrying `needle` (and not `without`)."""
+    hits = [b for b in _fenced_blocks(text)
+            if needle in b and (without is None or without not in b)]
+    assert len(hits) == 1, (
+        'expected exactly one fenced block containing %r%s, found %d'
+        % (needle, '' if without is None else ' and not %r' % without,
+           len(hits)))
+    return hits[0]
+
+
+def _fields_in(block):
+    """The field entries in a block, in order: the fields line grammar is
+    a bare comma-separated list, so split on commas and drop whitespace
+    (the manual wraps the per-tag patterns across lines for legibility)."""
+    return [entry.strip() for entry in block.replace('\n', ' ').split(',')
+            if entry.strip()]
+
+
+def _heading_anchor(text):
+    """kramdown's auto_id for a heading: inline markup stripped,
+    lowercased, characters outside [a-z0-9 _-] dropped, then spaces (not
+    runs of them -- one hyphen per space) turned into hyphens.  Pinned
+    against the real generated ids by test_anchor_rule_matches_kramdown."""
+    t = re.sub(r'`([^`]*)`', r'\1', text)
+    t = re.sub(r'\*\*?([^*]*)\*\*?', r'\1', t)
+    t = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', t)
+    t = t.strip().lower()
+    t = ''.join(c for c in t if c.isalnum() or c in ' _-')
+    return t.replace(' ', '-')
+
+
+def _headings(text):
+    """Every heading in a markdown page, code fences excluded."""
+    out, in_fence = [], False
+    for line in text.splitlines():
+        if line.startswith('```'):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = re.match(r'^#{1,6}\s+(.*?)\s*$', line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def _ini_pairs(text):
+    """The quoted key = value pairs of a [Texts]-style block, in order."""
+    pairs = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith('#'):
+            continue
+        m = re.match(r'''^("[^"]*"|'[^']*')\s*=\s*("[^"]*"|'[^']*')\s*$''', s)
+        if m:
+            pairs.append((m.group(1)[1:-1], m.group(2)[1:-1]))
+    return pairs
+
+
+class TestManualInStepWithCode:
+    """The manual's machine-checkable claims, pinned to the code that
+    makes them true.  Every audit compares in BOTH directions."""
+
+    # ── the extractors themselves ────────────────────────────────────
+    # A green audit that silently parses nothing is worse than no audit,
+    # so each extractor is pinned to landmarks and a plausible size
+    # before it is trusted to compare anything.
+
+    def test_extractors_find_what_they_claim_to_find(self):
+        page = _doc_text('fields-reference.md')
+        line = _fields_in(_block_containing(page, 'current.dateTime.raw'))
+        assert len(line) == len(celestial._MIGRATION_NEW_FIELDS), (
+            'the complete-line block parsed to %d entries' % len(line))
+        assert 'almanac.sun.az' in line and 'almanac.hale_bopp.mag' in line
+
+        texts = _ini_pairs(_block_containing(_doc_text('i18n-dictionary.md'), '"LIVE"'))
+        assert len(texts) > 70, 'the dictionary block parsed to %d entries' % len(texts)
+        assert ('LIVE', 'LIVE') in texts
+
+        heads = _headings(_doc_text('reading-the-page.md'))
+        assert 'The Geocentric' in heads and 'The sky dome' in heads
+
+    def test_anchor_rule_matches_kramdown(self):
+        """Landmarks read off the site jekyll actually generated -- the
+        rule is subtle (one hyphen per SPACE, so punctuation between two
+        words leaves a double hyphen) and worth pinning by example."""
+        assert _heading_anchor('The header, and the badge that tells the truth') \
+            == 'the-header-and-the-badge-that-tells-the-truth'
+        assert _heading_anchor('### Satellites (19 entries each)'.lstrip('# ')) \
+            == 'satellites-19-entries-each'
+        assert _heading_anchor('The chart — `name`') == 'the-chart--name'
+        assert _heading_anchor('The almanac tiers') == 'the-almanac-tiers'
+
+    # ── the fields reference ─────────────────────────────────────────
+
+    def test_fields_reference_line_matches_migration_field_set(self):
+        """docs/fields-reference.md's complete line IS the field set the
+        migrator appends -- same entries, same order.  Both directions:
+        an entry the code gained, and an entry the docs still promise."""
+        documented = _fields_in(
+            _block_containing(_doc_text('fields-reference.md'),
+                              'current.dateTime.raw'))
+        shipped = list(celestial._MIGRATION_NEW_FIELDS)
+        assert set(documented) - set(shipped) == set(), (
+            'the manual documents fields the skin does not read: %s'
+            % sorted(set(documented) - set(shipped)))
+        assert set(shipped) - set(documented) == set(), (
+            'the skin reads fields the manual does not document: %s'
+            % sorted(set(shipped) - set(documented)))
+        assert documented == shipped, (
+            'same fields, different order -- the manual line is meant to '
+            'be pasted, so it must match what the migrator writes')
+
+    def test_fields_reference_per_tag_patterns(self):
+        """The nineteen-entry satellite and six-entry comet patterns are
+        the code's own, with the tag substituted."""
+        page = _doc_text('fields-reference.md')
+        sat = _fields_in(_block_containing(
+            page, 'almanac.iss.next_pass.visible',
+            without='current.dateTime.raw'))
+        assert sat == celestial.satellite_fields('iss')
+        comet = _fields_in(_block_containing(
+            page, 'almanac.halley.mag', without='current.dateTime.raw'))
+        assert comet == celestial.comet_fields('halley')
+
+    def test_fields_reference_countdown_table_is_complete(self):
+        """Every event field the chips run on appears in the countdown
+        table, and nothing else does."""
+        page = _doc_text('fields-reference.md')
+        section = page.split('### The countdown chips', 1)[1].split('###', 1)[0]
+        tabled = set()
+        for line in section.splitlines():
+            if line.startswith('|'):
+                tabled.update(re.findall(r'`([^`]+)`', line))
+
+        accounted = {'current.dateTime.raw'}
+        for body in _DIAL_BODIES:
+            accounted.update('almanac.%s.%s' % (body, m)
+                             for m in ('az', 'alt', 'earth_distance'))
+        accounted.update(('almanac.moon.phase',
+                          'almanac.next_full_moon.unix_epoch.raw',
+                          'almanac.next_new_moon.unix_epoch.raw'))
+        for tag in _DEFAULT_SAT_TAGS:
+            accounted.update(celestial.satellite_fields(tag))
+        for tag in _DEFAULT_COMET_TAGS:
+            accounted.update(celestial.comet_fields(tag))
+        expected = set(celestial._MIGRATION_NEW_FIELDS) - accounted
+
+        assert tabled == expected, (
+            'countdown table vs the event fields the skin reads:\n'
+            '  missing from the table: %s\n'
+            '  in the table but not read: %s'
+            % (sorted(expected - tabled), sorted(tabled - expected)))
+
+    # ── the translation dictionary ───────────────────────────────────
+
+    def test_translation_dictionary_matches_en_conf(self):
+        """docs/i18n.md prints lang/en.conf's [Texts] as shipped, so it
+        must BE lang/en.conf's [Texts] -- keys, values and order."""
+        with open(os.path.join(REPO_ROOT, 'skins', 'Celestial', 'lang',
+                               'en.conf'), encoding='utf-8') as f:
+            en = f.read()
+        section = re.split(r'^\[[A-Za-z]', re.split(r'^\[Texts\]\s*$', en,
+                                                    flags=re.M)[1],
+                           flags=re.M)[0]
+        shipped = _ini_pairs(section)
+        documented = _ini_pairs(
+            _block_containing(_doc_text('i18n-dictionary.md'), '"LIVE"'))
+
+        s_keys = [k for k, _ in shipped]
+        d_keys = [k for k, _ in documented]
+        assert set(s_keys) - set(d_keys) == set(), (
+            'strings the skin renders that the manual omits: %s'
+            % sorted(set(s_keys) - set(d_keys)))
+        assert set(d_keys) - set(s_keys) == set(), (
+            'strings the manual documents that the skin does not render: %s'
+            % sorted(set(d_keys) - set(s_keys)))
+        assert documented == shipped, (
+            'the dictionary differs from en.conf in value or order')
+
+    def test_translation_status_table_matches_shipped_lang_files(self):
+        """docs/i18n.md's status table has a row per shipped translation
+        -- and en.conf, the reference dictionary, is not a translation, so
+        it must NOT have one.  A new lang file with no row ships
+        uncredited and unlabelled; a row whose file is gone credits a
+        language the skin no longer speaks.  The spelled-out count in the
+        lead sentence is pinned to the same set."""
+        page = _doc_text('i18n.md')
+        tabled = [m for m in re.findall(
+            r'^\|[^|]+\|\s*`lang/(\w+)\.conf`\s*\|', page, flags=re.M)]
+        shipped = {f[:-5] for f in os.listdir(
+            os.path.join(REPO_ROOT, 'skins', 'Celestial', 'lang'))
+            if f.endswith('.conf')} - {'en'}
+
+        assert len(tabled) == len(set(tabled)), \
+            'a language is tabled twice: %s' % tabled
+        assert set(tabled) == shipped, (
+            'languages shipped but not tabled: %s; tabled but not shipped: %s'
+            % (sorted(shipped - set(tabled)), sorted(set(tabled) - shipped)))
+        assert 'en' not in tabled, \
+            'en.conf is the reference dictionary, not a translation'
+
+        words = {8: 'Eight', 9: 'Nine', 10: 'Ten', 11: 'Eleven', 12: 'Twelve'}
+        assert '**%s translations ship with the skin**' % words[len(shipped)] \
+            in page, ('the lead sentence does not say %s translations'
+                      % words[len(shipped)])
+
+        # Each row LEADS with its review status, in one of three
+        # vocabularies: 'Reviewed' (a native speaker read this skin's own
+        # strings), 'Partly reviewed' (only the vocabulary shared with
+        # weewx-skyfield, reviewed over there) or 'Beta'.  An untouched
+        # Beta row for a language since signed off is the drift that
+        # matters most here, and prose in the status cell instead of one
+        # of these words is how that starts.
+        #
+        # A review is also DATED: every one of these files grows with each
+        # release that adds strings, so an undated "reviewed" claims a
+        # review of a file larger than the one anybody read.  Nothing can
+        # check that the date is the right one -- only that a claim of
+        # review carries the release it was made against.
+        for row in re.findall(r'^\|[^|]+\|\s*`lang/\w+\.conf`\s*\|([^|]*)\|',
+                              page, flags=re.M):
+            row = row.strip()
+            assert row.startswith(('Reviewed', 'Partly reviewed', 'Beta')), \
+                'a language row does not lead with its review status: %r' % row
+            if not row.startswith('Beta'):
+                assert re.match(r'(Partly r|R)eviewed as of \d+\.\d+ ', row), \
+                    'a review is claimed without the release it was made '\
+                    'against: %r' % row
+
+    # ── the manual's own links ───────────────────────────────────────
+
+    def test_internal_links_and_anchors_resolve(self):
+        """Every .md link and #anchor between manual pages resolves.
+        Moving prose between pages is exactly what breaks these, and
+        nothing else notices until a reader clicks."""
+        pages = sorted(f for f in os.listdir(DOCS_DIR) if f.endswith('.md'))
+        anchors = {}
+        for name in pages:
+            text = _doc_text(name)
+            anchors[name] = {_heading_anchor(h) for h in _headings(text)}
+
+        broken = []
+        for name in pages:
+            for target in re.findall(r'\]\((?!https?:|mailto:)([^)\s]+)\)',
+                                     _doc_text(name)):
+                path, _, anchor = target.partition('#')
+                page = name if path == '' else path
+                if not page.endswith('.md'):
+                    continue          # images and other assets
+                if page not in anchors:
+                    broken.append('%s -> %s (no such page)' % (name, target))
+                elif anchor and anchor not in anchors[page]:
+                    broken.append('%s -> %s (no such anchor)' % (name, target))
+        assert not broken, 'broken manual links:\n  ' + '\n  '.join(broken)
+
+    # ── the report's options ─────────────────────────────────────────
+    # Three sources that must agree: what skin.conf DECLARES (with its
+    # default), what the templates READ, and what the manual DOCUMENTS.
+    # The disagreements are what matter, and each direction catches a
+    # different bug -- an option read but never declared has no default
+    # and silently breaks the page when a station omits it; an option
+    # documented but neither declared nor read is a promise that does
+    # nothing, which is the direction users report as a bug.
+
+    # Read by the templates but deliberately NOT declared in skin.conf.
+    # Every one is guarded with $Extras.has_key, so absence is a
+    # supported state rather than a missing default:
+    _UNDECLARED_BY_DESIGN = {
+        # Commented out in skin.conf on purpose: with no setting, the
+        # STATION's zone is auto-detected at report time, which is the
+        # behaviour remote viewers of a public page want.
+        'time_zone',
+        # Optional overrides of the page heading and the HTML <title>;
+        # absent, the skin composes both from the station's location.
+        'title', 'meta_title',
+    }
+
+    # Declared in skin.conf but not a user-facing setting:
+    _NOT_A_USER_OPTION = {
+        # The version tag appended to the celestial.css and sky.js URLs
+        # so browsers refetch them after an upgrade.  Bumped by the
+        # release process, never by a station.
+        'version',
+    }
+
+    # Documented as report options but not `[Extras]` keys at all:
+    _CORE_REPORT_OPTIONS = {
+        # WeeWX's own per-report option, merged from the lang file; it
+        # belongs in the manual but is not this skin's to declare.
+        'lang',
+    }
+
+    def _declared_options(self):
+        """{option: default} from the shipped skin.conf's [Extras]."""
+        path = os.path.join(REPO_ROOT, 'skins', 'Celestial', 'skin.conf')
+        with open(path, encoding='utf-8') as f:
+            body = f.read().split('[Extras]', 1)[1]
+        body = re.split(r'^\[', body, flags=re.M)[0]
+        out = {}
+        for line in body.splitlines():
+            s = line.strip()
+            if not s or s.startswith('#'):
+                continue
+            m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$', s)
+            if m:
+                out[m.group(1)] = m.group(2).strip('\'"')
+        return out
+
+    def _read_options(self):
+        """The $Extras keys the shipped templates actually consult."""
+        found = set()
+        for name in ('index.html.tmpl', 'realtime_updater.inc'):
+            path = os.path.join(REPO_ROOT, 'skins', 'Celestial', name)
+            with open(path, encoding='utf-8') as f:
+                text = f.read()
+            found.update(re.findall(r'\$Extras\.has_key\(\s*[\'"]([A-Za-z_]\w*)', text))
+            found.update(re.findall(r'\$Extras\.([A-Za-z_]\w*)', text))
+        return found - {'has_key'}
+
+    def _documented_options(self):
+        """{option: documented default} from the Configuration page: the
+        sample [Extras] block, plus every option bullet."""
+        page = _doc_text('configuration.md')
+        sample = _block_containing(page, 'CelestialReport')
+        # Only the [[[Extras]]] sub-block: the lines above it (HTML_ROOT,
+        # enable, skin) are WeeWX's own report keys, not this skin's
+        # options, and are shown for context.
+        assert '[[[Extras]]]' in sample, 'sample config lost its [[[Extras]]]'
+        extras = sample.split('[[[Extras]]]', 1)[1]
+        documented = {}
+        for line in extras.splitlines():
+            m = re.match(r'^\s+([a-z_]+)\s*=\s*(.*?)\s*$', line)
+            if m:
+                documented[m.group(1)] = m.group(2).strip('\'"')
+        for m in re.finditer(r'^- `([a-z_]+)`', page, re.M):
+            documented.setdefault(m.group(1), None)
+        for m in re.finditer(r'^- `([a-z_]+)` / `([a-z_]+)`', page, re.M):
+            documented.setdefault(m.group(1), None)
+            documented.setdefault(m.group(2), None)
+        return documented
+
+    def test_option_extractors_find_what_they_claim_to_find(self):
+        """Landmarks and plausible sizes, so a pattern that stops
+        matching fails loudly instead of passing empty."""
+        declared, read, documented = (self._declared_options(),
+                                      self._read_options(),
+                                      self._documented_options())
+        for landmark in ('loop_data_file', 'refresh_rate', 'expiration_time'):
+            assert landmark in declared, landmark
+            assert landmark in read, landmark
+            assert landmark in documented, landmark
+        assert len(declared) >= 5 and len(read) >= 6 and len(documented) >= 6
+
+    def test_every_option_read_has_a_default_or_is_guarded(self):
+        """An option the templates read but skin.conf never declares has
+        no default -- unless its absence is a supported state."""
+        undeclared = (self._read_options() - set(self._declared_options())
+                      - self._UNDECLARED_BY_DESIGN)
+        assert undeclared == set(), (
+            'read by the skin but not declared in skin.conf, and not in '
+            'the by-design exemption list: %s' % sorted(undeclared))
+
+    def test_every_shipped_option_is_documented(self):
+        undocumented = (set(self._declared_options())
+                        - set(self._documented_options())
+                        - self._NOT_A_USER_OPTION)
+        assert undocumented == set(), (
+            'shipped in skin.conf but missing from the Configuration '
+            'page: %s' % sorted(undocumented))
+
+    def test_no_option_is_documented_that_does_nothing(self):
+        phantom = (set(self._documented_options())
+                   - set(self._declared_options()) - self._read_options()
+                   - self._CORE_REPORT_OPTIONS)
+        assert phantom == set(), (
+            'documented but neither declared nor read by the skin -- the '
+            'manual promises an option that does nothing: %s' % sorted(phantom))
+
+    def test_documented_defaults_match_the_shipped_ones(self):
+        """The Configuration page's sample block is what a fresh install
+        gets, so its values must be skin.conf's."""
+        declared, documented = self._declared_options(), self._documented_options()
+        wrong = {name: (value, declared[name])
+                 for name, value in documented.items()
+                 if value is not None and name in declared
+                 and value != declared[name]}
+        assert wrong == {}, (
+            'documented default != shipped default (documented, shipped): %s'
+            % wrong)
+
+    # ── the manual's page furniture ──────────────────────────────────
+    # Every page carries the same two-line header under its H1: the
+    # in-body link to the full manual and to the GitHub project, then a
+    # rule.  The links are there for a reason John cares about -- the
+    # MANUAL ranks in search results and the repository does not, so
+    # every page needs a body-text way back to the project; sidebar
+    # chrome does not count, and neither does it exist for someone
+    # reading the .md on github.com or in the release zip.  This is the
+    # one kind of drift no content audit can see: identical furniture on
+    # every page, until it silently isn't (weewx-skyfield's i18n page
+    # was missing its rule from 1.12 until 2026-08-11).
+
+    # Home states the same two destinations as just-the-docs buttons
+    # instead of the prose line, so the backlink is present without
+    # printing the same URL twice on one screen.  Pinned below rather
+    # than merely exempted.
+    _NO_LINK_LINE = {'index.md'}
+
+    _MANUAL_URL = 'https://chaunceygardiner.github.io/weewx-celestial/'
+    _PROJECT_URL = 'https://github.com/chaunceygardiner/weewx-celestial'
+    _ISSUES_URL = 'https://github.com/chaunceygardiner/weewx-celestial/issues'
+
+    def test_every_page_carries_the_manual_and_project_links(self):
+        pages = sorted(f for f in os.listdir(DOCS_DIR) if f.endswith('.md'))
+        assert len(pages) >= 10, 'only %d pages found' % len(pages)
+        for name in pages:
+            text = _doc_text(name)
+            # Home IS the manual's front page; a link to itself would be
+            # furniture without a destination.  Every other page carries
+            # both, so a reader who arrives from a search result can get
+            # to the whole manual and to the project.
+            if name not in self._NO_LINK_LINE:
+                assert self._MANUAL_URL in text, '%s: no link to the manual' % name
+            assert self._PROJECT_URL in text, '%s: no link to the project' % name
+            assert self._ISSUES_URL in text, '%s: no link to the issue tracker' % name
+
+    def test_link_line_is_followed_by_a_blank_line_then_a_rule(self):
+        """The blank line is load-bearing and is its own assertion: a
+        `---` directly under the link line is not a missing rule, it is
+        a setext heading -- kramdown turns the navigation furniture into
+        an H2, which lands in the same heading space the link audit
+        validates anchors against."""
+        checked = 0
+        for name in sorted(f for f in os.listdir(DOCS_DIR)
+                           if f.endswith('.md') and f not in self._NO_LINK_LINE):
+            lines = _doc_text(name).split('\n')
+            idx = [i for i, l in enumerate(lines)
+                   if l.startswith('[weewx-celestial manual]')]
+            assert len(idx) == 1, '%s: expected one link line, found %d' % (name, len(idx))
+            i = idx[0]
+            assert lines[i - 2].startswith('# ') and lines[i - 1].strip() == '', (
+                '%s: the link line belongs under the H1, one blank line down'
+                % name)
+            assert lines[i + 1].strip() == '', (
+                '%s: no blank line under the link line -- `---` directly '
+                'beneath it would make the link line a setext H2, not a rule'
+                % name)
+            assert lines[i + 2].strip() == '---', (
+                '%s: the link line is not followed by a rule' % name)
+            checked += 1
+        assert checked >= 9, 'only %d pages checked for furniture' % checked
+
+    def test_home_states_the_same_two_destinations(self):
+        """Home's exemption from the link line is a different shape, not
+        a missing backlink."""
+        home = _doc_text('index.md')
+        assert '](%s){: .btn' % self._PROJECT_URL in home, (
+            'Home no longer offers the project as a button; either restore '
+            'it or give Home the standard link line')
+        assert self._MANUAL_URL in home or 'permalink: /' in home
+
+    # ── the installer's stanza ───────────────────────────────────────
+    # The Configuration page opens by printing the [[CelestialReport]]
+    # stanza a fresh install writes.  That is a falsifiable claim about
+    # a DIFFERENT file (install.py's config dict), and nothing else keeps
+    # it true: skin.conf's defaults and the installer's are separate
+    # sources that happen to agree today.  Credit to the weewx-loopdata
+    # session, which found its own manual promising values its installer
+    # does not write.
+
+    def _installer_config_pairs(self):
+        """install.py's config dict, flattened to leaf key/value pairs.
+        Parsed with ast rather than imported: install.py imports weecfg
+        at module scope, which a bare test run may not have."""
+        import ast
+        with open(os.path.join(REPO_ROOT, 'install.py'), encoding='utf-8') as f:
+            tree = ast.parse(f.read())
+        found = [node.value for node in ast.walk(tree)
+                 if isinstance(node, ast.keyword) and node.arg == 'config']
+        assert len(found) == 1, 'expected one config= in install.py, found %d' % len(found)
+        config = ast.literal_eval(found[0])
+
+        pairs = {}
+        def flatten(d):
+            for key, value in d.items():
+                if isinstance(value, dict):
+                    flatten(value)
+                else:
+                    assert key not in pairs, 'duplicate leaf key %r' % key
+                    pairs[key] = value
+        flatten(config)
+        return pairs
+
+    def _documented_stanza_pairs(self):
+        """Every key = value in the Configuration page's sample stanza,
+        at any nesting level -- the report's own keys included, unlike
+        _documented_options, which is deliberately Extras-only."""
+        sample = _block_containing(_doc_text('configuration.md'), 'CelestialReport')
+        pairs = {}
+        for line in sample.splitlines():
+            m = re.match(r'^\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$', line)
+            if m:
+                pairs[m.group(1)] = m.group(2).strip('\'"')
+        return pairs
+
+    def test_installer_stanza_extractors_find_what_they_claim(self):
+        shipped = self._installer_config_pairs()
+        documented = self._documented_stanza_pairs()
+        assert len(shipped) >= 7, 'install.py parsed to %d leaf pairs' % len(shipped)
+        for landmark in ('HTML_ROOT', 'skin', 'loop_data_file', 'refresh_rate'):
+            assert landmark in shipped, landmark
+            assert landmark in documented, landmark
+
+    def test_manual_prints_the_stanza_the_installer_writes(self):
+        """Every key/value a fresh install writes appears verbatim in the
+        Configuration page's sample, and the sample invents nothing."""
+        shipped = self._installer_config_pairs()
+        documented = self._documented_stanza_pairs()
+
+        missing = {k: v for k, v in shipped.items() if k not in documented}
+        assert missing == {}, (
+            'the installer writes these, and the manual\'s sample stanza '
+            'does not show them: %s' % missing)
+
+        wrong = {k: (documented[k], str(v)) for k, v in shipped.items()
+                 if k in documented and documented[k] != str(v)}
+        assert wrong == {}, (
+            'sample stanza disagrees with what the installer writes '
+            '(documented, installed): %s' % wrong)
+
+        invented = set(documented) - set(shipped)
+        assert invented == set(), (
+            'the sample stanza shows settings a fresh install does not '
+            'write: %s' % sorted(invented))
+
+    # ── absolute links to the published site ─────────────────────────
+    # GitHub Pages serves what jekyll BUILDS: `installation.html`, not
+    # `installation/index.html`.  So /installation.html is 200 and
+    # /installation/ is 404, and a natural-looking trailing-slash URL in
+    # the README is a dead link on the project's front page that no
+    # between-pages link audit can see.  Credit to the weewx-skyfield
+    # session, which shipped twelve of them and measured it.
+
+    _SITE = 'https://chaunceygardiner.github.io/weewx-celestial/'
+
+    def _absolute_site_links(self):
+        """Every absolute link to one of these three published manuals,
+        with the file it names."""
+        sources = {'README.md': os.path.join(REPO_ROOT, 'README.md'),
+                   'changes.txt': os.path.join(REPO_ROOT, 'changes.txt'),
+                   'install.py': os.path.join(REPO_ROOT, 'install.py')}
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if name.endswith('.md'):
+                sources[name] = os.path.join(DOCS_DIR, name)
+        found = []
+        for name, path in sources.items():
+            with open(path, encoding='utf-8') as f:
+                text = f.read()
+            for url in re.findall(
+                    r'https://chaunceygardiner\.github\.io/[^\s)"\'<>]+', text):
+                found.append((name, url.rstrip('.,')))
+        return found
+
+    def test_published_links_are_the_root_or_end_in_html(self):
+        """A path that is neither the site root nor an .html file is the
+        trailing-slash 404, or relies on Pages' extensionless fallback
+        rather than a file that was built."""
+        assert len(self._absolute_site_links()) >= 15, 'extractor found too few links'
+        bad = []
+        for name, url in self._absolute_site_links():
+            path = url.split('github.io/', 1)[1]
+            page = path.split('/', 1)[1] if '/' in path else ''
+            if page == '' or url.endswith('.html'):
+                continue
+            bad.append('%s -> %s' % (name, url))
+        assert not bad, (
+            'links to a published manual must be the site root or end in '
+            '.html; these will 404 or depend on a fallback:\n  '
+            + '\n  '.join(bad))
+
+    def test_links_to_our_own_manual_name_pages_that_exist(self):
+        """An .html URL into celestial's own manual must correspond to a
+        page in docs/ -- otherwise it is well-formed and still dead."""
+        pages = {f[:-3] + '.html' for f in os.listdir(DOCS_DIR) if f.endswith('.md')}
+        pages.add('index.html')
+        missing = []
+        for name, url in self._absolute_site_links():
+            if not url.startswith(self._SITE) or not url.endswith('.html'):
+                continue
+            page = url[len(self._SITE):]
+            if page not in pages:
+                missing.append('%s -> %s (no docs/%s)'
+                               % (name, url, page[:-5] + '.md'))
+        assert not missing, 'dead links into our own manual:\n  ' + '\n  '.join(missing)
+
+    def test_home_names_the_shipped_version(self):
+        """Home tells a visitor which version the manual documents, and
+        that claim is about celestial.py -- so it cannot be left behind
+        by a release."""
+        home = _doc_text('index.md')
+        m = re.search(r'^This manual documents weewx-celestial \*\*([0-9.]+)\*\*',
+                      home, re.M)
+        assert m, 'Home no longer states which version it documents'
+        assert m.group(1) == celestial.CELESTIAL_VERSION, (
+            'Home says %s, the extension is %s'
+            % (m.group(1), celestial.CELESTIAL_VERSION))
+
+    def test_readme_offers_the_same_three_destinations_as_home(self):
+        """The README is the project's front door for anyone arriving
+        from GitHub, so it carries the manual, the download and the
+        issue tracker up top -- the mirror of Home's three buttons.
+        GitHub markdown cannot render buttons (no CSS), so the shape is
+        a bold link row; what is pinned here is the DESTINATIONS."""
+        with open(os.path.join(REPO_ROOT, 'README.md'), encoding='utf-8') as f:
+            head = f.read().split('\n## ', 1)[0]   # above the first section
+        for label, url in (
+                ('the manual', self._MANUAL_URL),
+                ('the release zip',
+                 'https://github.com/chaunceygardiner/weewx-celestial/'
+                 'releases/latest/download/weewx-celestial.zip'),
+                ('the issue tracker', self._ISSUES_URL)):
+            assert url in head, (
+                'the README does not link %s above its first section' % label)

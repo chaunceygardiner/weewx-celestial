@@ -1,6 +1,83 @@
 weewx-celestial change history
 ------------------------------
 
+8.2 (in progress)
+-----------------
+- Documentation only so far: the shipped extension is unchanged, so
+  there is nothing to install and no reason to upgrade for these.
+- The user manual is rebuilt and roughly doubled: twelve pages with a
+  real sidebar and full-text search, at
+  https://chaunceygardiner.github.io/weewx-celestial/.  Seven pages
+  are new.  "Reading the page" is the key to the picture -- every badge
+  state and what to do about it, the countdown chips (always-on versus
+  the windowed guests, and why a chip you never see is not a fault),
+  the dial's conventions and the comet vocabulary, the dome's marker
+  states, and the fact that the dial faces east-RIGHT while the dome
+  faces east-LEFT, deliberately, because a plan view and a view of the
+  sky disagree about east.  "Troubleshooting" catalogues fifteen
+  symptoms, each with the command that confirms it.  "How the page
+  stays live" explains the three clocks behind the page for anyone
+  deciding how much to trust a moving number.  "Fields reference" is
+  now the one canonical list of what the skin reads, grouped by what
+  each family feeds; "Satellites and comets" gathers the three
+  weewx.conf edits each one takes, previously told in three places;
+  and "Upgrading" splits the 7.x, 6.x and 5.x paths out of the
+  installation page, which in turn gains a "Verify it" section.
+- "The Geocentric in your skin" is rewritten as "In your own skin",
+  covering the countdown row and the comet layer alongside the dial,
+  and stating plainly why the sky dome and the Next Visible Pass panel
+  are not a copyable interface: they are a private, in-step
+  integration with weewx-skyfield whose internals change between
+  releases.  The supported routes are named instead -- run the bundled
+  page as it stands, or build on weewx-skyfield's own documented tags.
+- The README is now a landing page: what the extension is, a three-step
+  install, and a "where to find things" table pointing into the manual,
+  rather than a second copy of it that could drift.  Two sections that
+  had already drifted (the 6.x upgrade notes, still describing 7.0, and
+  a weewx-skyfield version requirement that disagreed with the manual)
+  are gone rather than fixed in place.
+- The translation manual's reference dictionary is corrected: as
+  shipped in 8.1 it printed one string the skin does not render and
+  omitted one it does.  It is now identical to the skin's lang/en.conf,
+  and a test keeps it that way.  The dictionary moves to a page of its
+  own, so the translating instructions are no longer buried under 78
+  strings; the Translations page also shows the Danish and Italian
+  captures and links the other four.
+- The Translations page now carries a per-language status table, and
+  the translators' names with it: Christian (peters77) for the German
+  and Jacques Terrettaz for the French -- both of whom reviewed the
+  vocabulary these files share with weewx-skyfield, over in that
+  extension -- beside Gert Andersen, who wrote the Danish entire.  The
+  table states which review each file actually received, which
+  sharpens what 7.2 and 7.7 claimed: the German and French are PARTLY
+  reviewed -- the shared vocabulary yes, this skin's own strings (the
+  page title, the badge states, the roster and countdown wording, the
+  dome panel's eyebrow and install hint, the comet strings) not yet, in
+  any language but Danish.  Each review is also DATED -- German as of
+  7.2, French as of 7.7, Danish as of 7.8 -- because every one of these
+  files has grown since it was read: 8.0 added the dome, satellite and
+  pass strings and 8.1 the countdown row, the comets and the meteor
+  showers, in every language, and an undated "reviewed" would claim a
+  review of a file larger than the one anybody read.  Nothing about the
+  shipped files changes; only the claim made for them.
+- The test suite gains twenty-one documentation audits, so the manual
+  can no longer disagree with the code on anything mechanical: the
+  fields reference against the migrator's field set (entries and
+  order), the per-satellite and per-comet patterns against the code
+  that generates them, the countdown table against the event fields
+  the skin actually reads, the translation dictionary against
+  lang/en.conf and the language table against the shipped lang files,
+  every internal manual link and anchor, and the report's
+  options across three sources -- what skin.conf declares, what the
+  templates read, and what the manual documents, including whether the
+  documented defaults are the shipped ones.  The Configuration page's
+  opening sample is checked against install.py's own config dict, since
+  "what a fresh install writes" is a claim about a different file
+  entirely.  A last pair checks the
+  page furniture every page shares -- the in-body links back to the
+  manual and the project, and the rule under them -- which is the one
+  kind of drift no content audit can see.
+
 8.1 2026/08/10
 -----------------
 - The installer now updates the [LoopData] [[Include]] fields line

@@ -1,23 +1,61 @@
 ---
-title: weewx-celestial — Watch the sky move
+title: Home
+layout: default
+nav_order: 1
+permalink: /
 description: A live celestial page for WeeWX — countdown central, the Geocentric panel with comets, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart — updating on every loop packet via weewx-loopdata almanac fields.
 ---
 
-# weewx-celestial
+# weewx-celestial — Watch the sky move
 
 **Watch the sky move** — a live celestial page for WeeWX, updating on
 every loop packet.
 
-[Installation](installation.md) ·
-[Configuration](configuration.md) ·
-[The Geocentric in your skin](own-skin.md) ·
-[Translating (i18n)](i18n.md) ·
-[GitHub project](https://github.com/chaunceygardiner/weewx-celestial)
+[View on GitHub](https://github.com/chaunceygardiner/weewx-celestial){: .btn .btn-primary }
+[Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
+[Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
----
+This manual documents weewx-celestial **8.1**, the current release.
 
-weewx-celestial ships a live celestial page (the bundled `Celestial` skin)
-built from three panels under a countdown row:
+## Start here
+
+- **[Installation](installation.md)** — install it, wire weewx-loopdata's
+  output to where the page looks, and verify the feed.  Coming from an
+  earlier version instead?  [Upgrading](upgrading.md).
+- **[Reading the page](reading-the-page.md)** — what every mark, color
+  and phrase on the page means.  Start here once it is running.
+- **[Configuration](configuration.md)** — the report's options, and how
+  the page degrades across almanac tiers.
+- **[Satellites and comets](satellites-and-comets.md)** — watch more than
+  the installer's defaults, in one command each.
+- **[Troubleshooting](troubleshooting.md)** — symptom first: the badge's
+  error states, missing panels, missing chips, a page that will not go
+  live.
+
+## What it is
+
+weewx-celestial adds one page to your WeeWX site: **the sky over your
+station as it stands this second**.  Where the sun, moon and eight planets
+are — the compass bearing of each, how far away it is, whether it is up or
+below the horizon.  Which stars and constellations are overhead.  Which
+satellites are crossing right now, and when the next one will be bright
+enough to walk outside and see.  Where each comet you follow has got to.
+And how long you have until sunset, until astronomical darkness, until the
+next meteor shower's peak.
+
+Not a calculator you go to with a question, and not an almanac table: a
+page you leave open, on which everything moves.
+
+It is the bundled `Celestial` skin: a row of countdown chips over three
+panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
+chart.  Here it is entire, in the bundled sample report (Palo Alto, a July
+evening at 9:12 PM — the first-quarter moon high in the southwest trailing
+its wake, Mercury and Mars in the west, the freshly set sun dashed below the
+horizon, Proxima Centauri alone at the rim, and every odometer ticking):
+
+![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
+
+Panel by panel:
 
 **Countdown central** (new in 8.1) — ticking countdown chips at the
 top of the page: the soonest visible satellite pass ("ISS · appears in
@@ -115,13 +153,6 @@ motion from consecutive packets and advances the readouts every second —
 re-anchoring to truth on the next packet, and freezing rather than
 inventing data if the feed goes stale.
 
-The bundled sample report (Palo Alto, a July evening at 9:12 PM — the
-first-quarter moon high in the southwest trailing its wake, Mercury and
-Mars in the west, the freshly set sun dashed below the horizon, Proxima
-Centauri alone at the rim, and every odometer ticking):
-
-![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
-
 ## How it works
 
 The live values are **weewx-loopdata almanac fields**: report almanac tags
@@ -137,27 +168,21 @@ What installs:
 - The `Celestial` skin (the sample report), registered as
   `CelestialReport`.
 - The `--migrate-loopdata-fields` command-line utility (see
-  [upgrading](installation.md#upgrading-from-5x-or-earlier)), and the
+  [upgrading](upgrading.md#upgrading-from-5x-or-earlier)), and the
   `--add-satellite`/`--remove-satellite` and
   `--add-comet`/`--remove-comet` utilities that make (or unmake) every
   weewx.conf edit a satellite or comet takes in one command (see
-  [Adding and removing satellites](configuration.md#adding-and-removing-satellites)
-  and [comets](configuration.md#adding-and-removing-comets)).
+  [Adding and removing satellites](satellites-and-comets.md#adding-and-removing-satellites)
+  and [comets](satellites-and-comets.md#adding-and-removing-comets)).
 
 The rosters first-paint at report time from `$almanac` and then go live
-from loop data.  What you see depends on the almanac WeeWX has: with
-**weewx-skyfield 2.1** (satellites and comets configured), everything —
-Proxima, the dome, the Next Visible Pass chart, the live satellite
-layer, the comet diamonds and the full countdown row.  With
-**weewx-skyfield 2.0**, everything but the comets and the
-shower/supermoon chips.  With an earlier
-**weewx-skyfield**, everything but the satellites and their chart.  With
-**PyEphem** (no weewx-skyfield), the Geocentric minus the Proxima
-Centauri row, the sunset and darkness chips, and no dome or chart.  With
-only WeeWX's **built-in
-almanac**, the page generates but the panels show install hints — the
-built-in almanac serves none of the positions or distances this page runs
-on, which is why weewx-skyfield is strongly recommended.
+from loop data, so what you see depends on the almanac WeeWX has — with
+weewx-skyfield 2.1 everything, and less at each tier below it, down to
+the built-in almanac, which serves none of the positions the Celestial page runs
+on.  The full table is under
+[the almanac tiers](configuration.md#the-almanac-tiers), and the
+machinery behind the motion is in
+[How the page stays live](how-it-stays-live.md).
 
 For the rest of the sky *atlas* — sun path, orrery, analemma, solar year,
 lunation and rise/set timeline — see weewx-skyfield's own
@@ -177,8 +202,3 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
   required for the sky dome's satellites and the Next Visible Pass
   chart; 2.1 or later for the comets, the meteor showers and the full
   countdown row), or PyEphem
-
-## License
-
-weewx-celestial is Copyright © 2022–2026 John A Kline and is licensed
-under the GNU Public License v3.

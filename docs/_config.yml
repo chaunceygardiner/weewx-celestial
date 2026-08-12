@@ -1,6 +1,49 @@
 # GitHub Pages configuration for https://chaunceygardiner.github.io/weewx-celestial/
-theme: jekyll-theme-primer
 title: weewx-celestial
-description: "Watch the sky move -- a live Geocentric panel for WeeWX, driven by weewx-loopdata almanac fields"
+description: >-
+  Watch the sky move -- a live celestial page for WeeWX: countdown central,
+  the Geocentric panel with comets, the live sky dome with real-time
+  satellite tracking, and the Next Visible Pass chart, all driven by
+  weewx-loopdata almanac fields.
+url: "https://chaunceygardiner.github.io"
+baseurl: "/weewx-celestial"
+
+# Pinned so the three manuals (celestial, skyfield, loopdata) render from
+# one theme version and cannot drift apart when upstream releases.
+remote_theme: just-the-docs/just-the-docs@v0.12.0
 plugins:
+  - jekyll-remote-theme
   - jekyll-sitemap
+  # Turns the .md links between pages into real URLs.  GitHub Pages enables
+  # this by default; naming it here keeps a local jekyll build identical.
+  - jekyll-relative-links
+
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  "weewx-celestial on GitHub":
+    - "https://github.com/chaunceygardiner/weewx-celestial"
+aux_links_new_tab: true
+
+# External links shown at the bottom of the left sidebar nav, on every page.
+nav_external_links:
+  - title: weewx-celestial on GitHub
+    url: https://github.com/chaunceygardiner/weewx-celestial
+  - title: Download weewx-celestial.zip
+    url: https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip
+
+callouts:
+  note:
+    title: Note
+    color: blue
+  important:
+    title: Important
+    color: red
+  tip:
+    title: Tip
+    color: green
+
+footer_content: >-
+  weewx-celestial is Copyright &copy; 2022&ndash;2026 John A Kline and is
+  licensed under the GNU Public License v3.
