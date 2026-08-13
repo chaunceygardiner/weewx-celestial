@@ -108,7 +108,7 @@ mark's group a `<title>` child and keep its text current.  On a live
 page, dismiss an open chip whenever a swap moves the sky under it — a
 chip should be a transient answer, never a stale overlay.
 
-## Two traps that cost real time
+## Three traps that cost real time
 
 {: .important }
 **Top-level `var` names in an include collide with `window`.**  A skin
@@ -126,6 +126,20 @@ Echo`, Cheetah also re-compiles each placeholder at render time and
 rejects constructs that plain compilation accepts — guard cells with
 directive-level `#if` blocks rather than conditional expressions inside
 `$(...)`.
+
+**`$almanac.texts` succeeds on WeeWX 5.2 and then kills the page.**  The
+report's `[Almanac]` display names reach the almanac only from WeeWX 5.3
+on.  You might expect 5.2 to raise a clean `AttributeError` you could
+default around — it does not.  `Almanac.__getattr__` walks the registered
+almanacs, and PyEphem's catch-all treats any unknown name as a heavenly
+body, so it hands back a binder for a "body" called `texts`: the lookup
+*succeeds*, returns something truthy, and dies one step later on `.get`,
+during report generation, so the page never appears at all.  A
+`getattr(almanac, 'texts', {})` default can therefore never fire.  Read
+`$almanac.__dict__.get('texts', {})` instead — the only lookup that tells
+the truth — and fall back to the capitalized tag name.  The same shape
+lurks wherever an optional almanac attribute is probed: on the PyEphem
+tier, test the *value*, never the success of the attribute access.
 
 ## The dome and the pass panel are not an interface
 

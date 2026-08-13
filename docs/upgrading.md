@@ -2,7 +2,7 @@
 title: Upgrading
 layout: default
 nav_order: 3
-description: Upgrading weewx-celestial from 7.x, 6.x or 5.x and earlier — what each path needs, the bundled --migrate-loopdata-fields utility, and the three 6.0 field changes with no 1:1 equivalent.
+description: Upgrading weewx-celestial within 8.x, or from 7.x, 6.x or 5.x and earlier — what each path needs, the bundled --migrate-loopdata-fields utility, and the three 6.0 field changes with no 1:1 equivalent.
 ---
 
 # Upgrading

@@ -22,7 +22,9 @@ one takes the same **three separate edits**:
    a satellite, six for a comet (see the
    [Fields reference](fields-reference.md)),
 3. a display name under `[StdReport] [[Defaults]] [[[Almanac]]]`, so
-   every report *and* the loop feed call it the same thing.
+   every report *and* the loop feed call it the same thing.  (Display
+   names reach the page on WeeWX 5.3 and later; on 5.2 the tag name
+   itself is shown.)
 
 The extension bundles a utility that makes all three in one command, one
 object per run, so the three cannot drift apart.  The skin itself needs

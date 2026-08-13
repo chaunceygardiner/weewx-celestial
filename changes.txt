@@ -1,6 +1,17 @@
 weewx-celestial change history
 ------------------------------
 
+8.1.2 (2026/08/13)
+------------------
+- The page generates again on WeeWX 5.2, this extension's stated
+  minimum.  Since 7.2 it has taken its body names from the report's
+  [Almanac] section, which WeeWX only began handing to the almanac in
+  5.3; on 5.2 the report died while generating and the page never
+  appeared at all.  The bodies now fall back to their capitalized
+  English names (Moon, Jupiter, Proxima) when that section is out of
+  reach, and nothing else on the page changes.  Translating body names
+  still needs WeeWX 5.3 or later; the minimum stays 5.2.
+
 8.1.1 (2026/08/12)
 ------------------
 - A satellite pass row's whole-day countdown now counts CALENDAR days,

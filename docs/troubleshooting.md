@@ -23,7 +23,18 @@ five minutes.  Wait one cycle after installing and restarting.
 
 If it still isn't there, check that the report is enabled
 (`[StdReport] [[CelestialReport]] enable = true`) and look in the weewxd
-log for a generation error from `CelestialReport`.
+log for a generation error from `CelestialReport`.  A template failure is
+only ever *logged* — the report cycle carries on and `weectl report run`
+still exits reporting success — so the log is the place to look, not the
+console.
+
+**On WeeWX 5.2, upgrade to 8.1.2 or later.**  Versions 7.2 through 8.1.1
+cannot generate this page at all on WeeWX 5.2: they read body names from
+the report's `[Almanac]` section, which WeeWX only began providing in
+5.3.  The log shows `Ignoring template index.html.tmpl` above a traceback
+ending in `KeyError: 'Texts'` (with PyEphem installed) or
+`cannot find 'texts'` (without it).  8.1.2 falls back to English body
+names there and the page generates normally.
 
 ## The badge says `NO DATA (HTTP 404) — check loop_data_file`
 
@@ -189,10 +200,15 @@ report time, so remote viewers see station time.  Override with
 
 ## The translation did not take
 
-Three separate things can be meant by this:
+Four separate things can be meant by this:
 
 - **Nothing changed at all.**  `lang` takes effect when the page is next
   *generated*, not on the next loop packet.  Wait a report cycle.
+- **Everything translated except the body names.**  `[Almanac]` display
+  names — the bodies, and the satellites and comets — need WeeWX 5.3 or
+  later; 5.2 never hands that section to the almanac.  The rest of the
+  page translates normally and the bodies read `Moon`, `Jupiter`,
+  `Proxima`.  See [Translations](i18n.md#how-it-works).
 - **Labels translated, live values did not.**  Loop-data values follow
   *loopdata's target report*, not this one — one language per loopdata
   instance.  See [Translations](i18n.md#constellations-and-loop-data-values).

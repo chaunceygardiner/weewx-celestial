@@ -155,6 +155,11 @@ against the migrator's field set, the translation dictionary against the
 skin's `lang/en.conf`, the report's options across skin.conf, the templates
 and the manual, and every link and anchor between manual pages.
 
+It runs against WeeWX 5.2 — this extension's minimum — as well as current
+WeeWX.  On 5.2 the seven shipped-language render tests skip, stating why:
+they assert translated body names, which need the report `[Almanac]`
+section WeeWX only began providing in 5.3.
+
 When a Playwright environment is available it also loads the
 served page in headless Chromium with an advancing loop-data feed and asserts
 the live machinery comes up — no page errors, dial dots drawn, rates derived,

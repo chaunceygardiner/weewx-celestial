@@ -22,6 +22,8 @@ checkout's almanac-field parser when that repo is available.
 """
 
 import contextlib
+import inspect
+import json
 import os
 import re
 import sys
@@ -67,6 +69,20 @@ WXSKYFIELD_DIRS = [
     os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield', 'bin', 'user'),
     '/home/weewx/bin/user',
 ]
+
+# WeeWX only began handing the report's [Almanac] section to the almanac in
+# 5.3 (`texts=`); 5.2, this extension's stated minimum, has no such keyword
+# and raises TypeError on the constructor.  Tests that assert TRANSLATED
+# body names are therefore asserting a 5.3+ capability and must skip on 5.2
+# rather than fail -- the page itself renders fine there, with capitalized
+# English body names, which is what
+# TestSampleSkinRenders::test_renders_on_weewx_5_2_without_texts pins.
+WEEWX_HAS_ALMANAC_TEXTS = 'texts' in inspect.signature(
+    weewx.almanac.Almanac.__init__).parameters
+requires_almanac_texts = pytest.mark.skipif(
+    not WEEWX_HAS_ALMANAC_TEXTS,
+    reason='WeeWX 5.3+ required: 5.2 cannot carry the report [Almanac] '
+           'body names (the page renders, in English)')
 
 # Where the sibling weewx-loopdata checkout may be found (its parser is the
 # oracle for the migration tests' almanac grammar).
@@ -2037,6 +2053,96 @@ class TestSampleSkinRenders:
                 pass
         assert "time_zone = '%s'" % auto_tz in html
 
+    @staticmethod
+    def _body_names(html):
+        """The roster's display names, and the javascript's BODY_LABELS."""
+        rows = re.findall(r'<span class="chip [^"]*"></span>([^<]*)<', html)
+        labels = json.loads(
+            re.search(r'BODY_LABELS = (\{.*?\});', html).group(1))
+        return rows, labels
+
+    def test_body_names_come_from_almanac_texts(self, wxskyfield_almanac):
+        """On WeeWX 5.3 and later the roster and the javascript both name
+        the bodies from the report's [Almanac] section."""
+        wxskyfield_almanac.texts = {'moon': 'Mond', 'jupiter': 'Jupiter'}
+        rows, labels = self._body_names(self.render(wxskyfield_almanac))
+        assert 'Mond' in rows
+        assert labels['moon'] == 'Mond'
+        # A body the [Almanac] section does not name still gets its
+        # capitalized tag.
+        assert labels['neptune'] == 'Neptune'
+
+    @pytest.mark.parametrize('tier', ['pyephem', 'weeutil'])
+    def test_renders_on_weewx_5_2_without_texts(self, tier):
+        """WeeWX only grew Almanac.texts in 5.3; install.py's floor is 5.2.
+        The page must still generate there, naming the bodies in
+        capitalized English.
+
+        The 5.2 shape is a trap, which is why the template reads __dict__
+        rather than the attribute: with PyEphem registered, $almanac.texts
+        does not raise -- Almanac.__getattr__ walks the almanacs and
+        PyEphemAlmanacType's catch-all hands back an AlmanacBinder for a
+        "heavenly body" named texts.  The lookup SUCCEEDS and returns
+        something truthy (so a getattr() default can never fire); the page
+        dies one step later on .get.  Without PyEphem the shape differs
+        again -- WeeutilAlmanacType raises UnknownType and Almanac's own
+        __getattr__ raises AttributeError -- hence both tiers here."""
+        if tier == 'pyephem':
+            pytest.importorskip('ephem')
+        with saved_almanacs():
+            weewx.almanac.almanacs[:] = [
+                weewx.almanac.PyEphemAlmanacType() if tier == 'pyephem'
+                else weewx.almanac.WeeutilAlmanacType()]
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
+                                        altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            # Exactly 5.2: the attribute was never set.  Note the
+            # constructor is called WITHOUT texts= -- 5.2's Almanac has no
+            # such keyword and raises TypeError, so passing it here (even
+            # to delete the result) would make this very test unrunnable
+            # on the WeeWX it is about.  pop() covers both: a no-op on
+            # 5.2, the deletion that simulates it on 5.3+.
+            alm.__dict__.pop('texts', None)
+            if tier == 'pyephem':
+                assert isinstance(alm.texts, weewx.almanac.AlmanacBinder)
+            html = self.render(alm)
+        rows, labels = self._body_names(html)
+        assert 'Moon' in rows and 'Jupiter' in rows
+        assert labels['moon'] == 'Moon'
+        assert labels['neptune'] == 'Neptune'
+        # The rest of the page is unaffected: the roster still carries a
+        # row per body for the javascript to keep live.
+        assert 'id="geo-row-proxima_centauri"' in html
+
+    def test_raising_sky_page_degrades_instead_of_killing_the_page(
+            self, wxskyfield_almanac):
+        """A $sky_page whose METHODS raise (weewx-skyfield hitting its own
+        WeeWX 5.2 incompatibility, say) must degrade the dome and pass
+        panels, never take the page down with it -- which is what makes
+        this skin's own 5.2 fix sufficient on its own.  Every $sky_page
+        call site is wrapped in a bare #try; this pins that.  Verified on
+        a real WeeWX 5.2 instance 2026-08-13, where the page generated at
+        83,732 bytes with only the separate dome/pass FRAGMENT templates
+        skipped."""
+
+        class RaisingSkyPage:
+            def _boom(self, *args, **kwargs):
+                raise KeyError('Texts')
+            dome_svg = _boom
+            pass_chart_html = _boom
+            satellite_names = _boom
+            comet_names = _boom
+
+        html = self.render(wxskyfield_almanac, sky_page=RaisingSkyPage())
+        # The page is whole: header, roster row per body, footer.
+        assert '<html lang="en">' in html
+        assert 'id="geo-row-proxima_centauri"' in html
+        assert re.match(r'[\d,]+$', self.cell(html, 'almanac.moon.earth_distance'))
+        # The dome degrades to its install hint, exactly as when
+        # weewx-skyfield is absent altogether.
+        assert html.count('class="skyhint"') == 1
+        assert 'live sky dome' in html
+
 
 class TestI18n:
     """The page's translation plumbing (7.2) -- the same machinery
@@ -2276,6 +2382,7 @@ class TestI18n:
             for key in set(cel['Texts']) & set(sky['Texts']):
                 assert cel['Texts'][key] == sky['Texts'][key], (name, key)
 
+    @requires_almanac_texts
     def test_shipped_german_renders(self, wxskyfield_sky):
         """The shipped de.conf, fed through the same channels the report
         engine uses (gettext from [Texts], almanac texts from [Almanac],
@@ -2312,6 +2419,7 @@ class TestI18n:
         # render; the substitution survives translation).
         assert 'Berechnet mit %s: Skyfield' % LINKED_NAME in html
 
+    @requires_almanac_texts
     def test_shipped_french_renders(self, wxskyfield_sky):
         """The shipped fr.conf, fed through the same channels the report
         engine uses, renders a French page -- the template's static strings
@@ -2345,6 +2453,7 @@ class TestI18n:
         # weewx-skyfield with the project link.
         assert 'Calculé avec %s : Skyfield' % LINKED_NAME in html
 
+    @requires_almanac_texts
     def test_shipped_dutch_renders(self, wxskyfield_sky):
         """The shipped nl.conf, fed through the same channels the report
         engine uses, renders a Dutch page -- the template's static strings
@@ -2379,6 +2488,7 @@ class TestI18n:
         # weewx-skyfield with the project link.
         assert 'Berekend met %s: Skyfield' % LINKED_NAME in html
 
+    @requires_almanac_texts
     def test_shipped_spanish_renders(self, wxskyfield_sky):
         """The shipped es.conf, fed through the same channels the report
         engine uses, renders a Spanish page -- the template's static strings
@@ -2413,6 +2523,7 @@ class TestI18n:
         # weewx-skyfield with the project link.
         assert 'Calculado con %s: Skyfield' % LINKED_NAME in html
 
+    @requires_almanac_texts
     def test_shipped_italian_renders(self, wxskyfield_sky):
         """The shipped it.conf, fed through the same channels the report
         engine uses, renders an Italian page -- the template's static
@@ -2447,6 +2558,7 @@ class TestI18n:
         # weewx-skyfield with the project link.
         assert 'Calcolato con %s: Skyfield' % LINKED_NAME in html
 
+    @requires_almanac_texts
     def test_shipped_norwegian_renders(self, wxskyfield_sky):
         """The shipped no.conf, fed through the same channels the report
         engine uses, renders a Norwegian page -- the template's static
@@ -2481,6 +2593,7 @@ class TestI18n:
         # weewx-skyfield with the project link.
         assert 'Beregnet med %s: Skyfield' % LINKED_NAME in html
 
+    @requires_almanac_texts
     def test_shipped_swedish_renders(self, wxskyfield_sky):
         """The shipped sv.conf, fed through the same channels the report
         engine uses, renders a Swedish page -- the template's static

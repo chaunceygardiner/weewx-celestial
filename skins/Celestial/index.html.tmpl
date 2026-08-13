@@ -469,9 +469,21 @@
             ## exist): the guarded cells leave an elementless comet's
             ## row honestly empty (MPC drops faded comets; absence,
             ## never the string "None").
+            ##
+            ## Read the [Almanac] names out of the almanac's __dict__, never
+            ## as $almanac.texts: WeeWX only grew the texts attribute in 5.3
+            ## and this extension supports 5.2.  On 5.2 the plain attribute
+            ## lookup does NOT fail cleanly -- Almanac.__getattr__ walks the
+            ## registered almanacs and PyEphem's catch-all hands back an
+            ## AlmanacBinder for a "heavenly body" named texts, so the access
+            ## succeeds, returns something truthy, and the page then dies on
+            ## .get with "cannot find 'get'".  A getattr() default can never
+            ## fire; __dict__ is the only lookup that tells the truth.  On
+            ## 5.2 the roster falls back to capitalized English tag names.
+            #set $almanac_texts = $almanac.__dict__.get('texts', {})
             #for $body_name in ($geo_bodies[:-1] + tuple($comet_names) + $geo_bodies[-1:])
             #set $chip_cls = 'chip-comet' if $body_name in $comet_names else 'chip-' + $body_name
-            #set $display_name = $gettext('Proxima') if $body_name == 'proxima_centauri' else str($almanac.texts.get($body_name, $body_name.capitalize()))
+            #set $display_name = $gettext('Proxima') if $body_name == 'proxima_centauri' else str($almanac_texts.get($body_name, $body_name.capitalize()))
             #set $dist_html = ''
             #set $au_html = ''
             #set $alt_html = ''

@@ -56,6 +56,10 @@ separately.
                hst = Hubble
    ```
 
+   `[Almanac]` display names reach the page on WeeWX 5.3 and later; on
+   5.2 the tag name itself is shown.  See
+   [Translations](i18n.md#how-it-works).
+
    (Live labels follow loopdata's *target report's* `[Almanac]` section,
    so `[[Defaults]]` is the reliable home — a name set only in one
    report's section does not reach the loop feed.)

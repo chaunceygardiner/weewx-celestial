@@ -96,10 +96,18 @@
   ## three ride through json.dumps, which \u-escapes every non-ASCII
   ## character -- html_entities encoding can never touch them, and dial
   ## labels land via textContent where entities would show literally.
+  ##
+  ## __dict__, never $almanac.texts: the attribute only exists from WeeWX
+  ## 5.3 and this extension supports 5.2, where the lookup does not fail
+  ## cleanly -- PyEphem's catch-all returns an AlmanacBinder for a body
+  ## named texts, so the access succeeds and .get kills the page.  See the
+  ## roster's fuller note in index.html.tmpl; on 5.2 the javascript gets
+  ## capitalized English names.
   #import json
+  #set $almanac_texts = $almanac.__dict__.get('texts', {})
   #set $names = {}
   #for $b in ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'earth')
-  #silent $names.update({$b: str($almanac.texts.get($b, $b.capitalize()))})
+  #silent $names.update({$b: str($almanac_texts.get($b, $b.capitalize()))})
   #end for
   BODY_LABELS = $json.dumps($names);
   #set $ords = $almanac.formatter.ordinate_names
