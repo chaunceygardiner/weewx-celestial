@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.1.2**, the current release.
+This manual documents weewx-celestial **8.2**, the current release.
 
 ## Start here
 
@@ -48,10 +48,11 @@ page you leave open, on which everything moves.
 
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
-chart.  Here it is entire, in the bundled sample report (Palo Alto, a July
-evening at 9:12 PM — the first-quarter moon high in the southwest trailing
-its wake, Mercury and Mars in the west, the freshly set sun dashed below the
-horizon, Proxima Centauri alone at the rim, and every odometer ticking):
+chart.  Here it is entire, in the bundled sample report (Palo Alto, an
+August night at 10:36 PM — Saturn and Neptune newly up in the east and
+Pluto high in the south, everything else dashed below the horizon and
+trailing its wake, Proxima Centauri alone at the rim, and every odometer
+ticking):
 
 ![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
 
@@ -95,10 +96,11 @@ dial point, solid when naked-eye bright, hollow when fainter — and
 honestly absent when the Minor Planet Center has dropped the comet's
 elements.
 
-Both installer-default comets on the live dial — Halley's diamond low in
-the eastern sky, its three-ray tail fanning away from the sun's own dial
-point, Hale-Bopp dimmed below the southern horizon — with their live
-roster rows below the planets':
+Both installer-default comets on the live dial — Halley in the
+north-west, Hale-Bopp due south, each a hollow diamond because both are
+far below naked-eye brightness, both dimmed and dashed for being under
+the horizon at this hour, their three-ray tails fanning away from the
+sun's own dial point — with their live roster rows below the planets':
 
 ![The Geocentric dial with both comet diamonds and their tails](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDial-Comets.png)
 

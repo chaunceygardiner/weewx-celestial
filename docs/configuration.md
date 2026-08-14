@@ -130,6 +130,15 @@ from loop data.  What renders depends on the almanac WeeWX has:
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |
 
+2.2 adds nothing to that top row — no new fields, no new marks — but the
+dome and the Next Visible Pass chart carry their colors inside the SVG
+this skin embeds, so upgrading to it is what makes their altitude rings and
+meridian cross visible.  It is also where the dome's Mars comes up to meet
+the dial's: celestial 8.2 lifts its own Mars dot, and until 2.2 is
+installed the embedded dome still draws the darker one.  The half of that
+pass which lives in this skin's own stylesheet (the star and constellation
+names) ships in celestial 8.2 and applies at any weewx-skyfield version.
+
 The footer credit is generated truthfully for whichever almanac actually
 serves the page.
 

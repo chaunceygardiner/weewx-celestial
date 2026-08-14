@@ -28,6 +28,14 @@ appends any fields-line entries a newer version reads (append-only,
 printing each one), and the restart both reloads that line in
 weewx-loopdata and refreshes the deployed `celestial.css` and `sky.js`.
 
+One note for 8.2: half of its contrast pass — the Geocentric dial's grid,
+its below-horizon marks and trails, and the sky dome's star and
+constellation names — lands with this install.  The other half lives
+inside the dome and the Next Visible Pass chart, which draw their own
+colors, and arrives only when **weewx-skyfield 2.2** is installed: their
+altitude rings and meridian cross stay invisible until then, and the
+dome's Mars stays a shade darker than the dial's.  Upgrade both.
+
 ## Upgrading from 7.x
 
 Install right over the existing version, then restart WeeWX —

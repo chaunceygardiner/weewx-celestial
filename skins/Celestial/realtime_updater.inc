@@ -340,10 +340,21 @@
     // fill='none' is structural, not color, so it rides as an attribute:
     // a stale cached stylesheet must never turn the rings into solid
     // discs that bury the dial.
+    // The grid is deliberately recessive: 2.05:1 inside 10 au, 1.74
+    // outside, both short of the 3:1 a graphical object wants.  That is a
+    // judgement, not an oversight.  The rings are not what carries the
+    // scale -- the au label beside each one is at 5.78:1 and does not move
+    // -- and a dial stops reading as a dial when its armature competes
+    // with the dots.  Read as contrast ratio the lift over 8.1 looks
+    // slight (1.20 -> 1.74); read as perceptual lightness, which is the
+    // honest instrument this near black, it is 2.5x the step (dL* 7.4 ->
+    // 18.9), because the ratio formula's flare term swamps everything at
+    // this end.  Weight chosen by eye against the measured alternatives
+    // (mockups/celestial-dial-contrast).
     for (var lg = -2; lg <= 5; lg++) {
       var rr = R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
       svgEl('circle', {cx: CX, cy: CY, r: rr, 'class': 'geo-ring', fill: 'none',
-                       'stroke-opacity': lg <= 1 ? 0.9 : 0.55}, dial);
+                       'stroke-opacity': lg <= 1 ? 0.5 : 0.4}, dial);
       var rp = dialXY(157.5, rr);
       svgEl('text', {x: rp[0], y: rp[1] - 3, 'class': 'gridlab',
                      'text-anchor': 'middle'}, dial, ringLabels[lg + 2]);
@@ -463,8 +474,12 @@
       seg.setAttribute('y1', pA[1]);
       seg.setAttribute('x2', pB[0]);
       seg.setAttribute('y2', pB[1]);
+      // The wake fades from a visible FLOOR, not from nothing: ramping
+      // straight off zero put the oldest segments at 1.02:1, an hour of
+      // trail no eye can find.  The newest segment carries the motion and
+      // is the one that has to read (4.58:1 above the horizon).
       seg.setAttribute('stroke-opacity',
-                       (i + 1) / TRAIL_N * (altB < 0 ? 0.28 : 0.6));
+                       (0.2 + 0.8 * (i + 1) / TRAIL_N) * (altB < 0 ? 0.42 : 0.75));
     }
   }
   function placeBodyLabel(lab, az, r) {

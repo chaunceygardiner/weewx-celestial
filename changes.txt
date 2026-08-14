@@ -1,6 +1,44 @@
 weewx-celestial change history
 ------------------------------
 
+8.2 (2026/08/14)
+----------------
+- The Geocentric dial gets its grid back.  Its rings, ticks and rim were
+  drawn in the color of a section border, on the panel surface that
+  border surrounds: 1.2 to 1.4 to 1 against their own background, which
+  is present, correct and invisible.  They now have a color of their
+  own -- weewx-skyfield 2.2's, so the dial and the sky dome still read
+  as one instrument -- and the outer decade rings, the faintest thing
+  on the dial, come up to the same weight skyfield gives its altitude
+  rings.  The dots were never the problem; what was missing was the
+  armature they are placed against, and a dial without one reads as
+  washed out.
+- Below the horizon is still dim, but no longer a smudge.  After dark
+  most of the dial is below the horizon, so most of the dial was
+  wearing that dim: a body's dashed outline is what actually carries
+  it, and the outline is the body's own color at full strength, so the
+  weight moves there -- the outline is half again as thick, the fill
+  comes up a little, and the same lift reaches the moon's rim and the
+  comet tails.  A body that is down still reads unmistakably as down.
+- An hour-long motion trail now fades to something rather than to
+  nothing.  The wake behind each dot ramped from full strength straight
+  off zero, which spent its oldest twenty minutes below anything an eye
+  can find; it fades from a visible floor instead, and its newest
+  segment -- the one carrying the direction of travel -- is stronger.
+- The sky dome's star and constellation names are easier to read, and
+  Mars is one shade brighter everywhere on the page.  The names sit on
+  the dome's gradient rather than on a panel, where the page's
+  secondary-text color reached only 3.7:1; they have their own color
+  now, and so do the dome's 30 and 60 degree ring marks.  This is the
+  half of weewx-skyfield 2.2's contrast fix that lives in this skin's
+  stylesheet -- the rest, including the altitude rings and the
+  meridian/horizon cross that were drawn invisibly in the panel border
+  color, arrives with the dome itself the moment 2.2 is installed.
+  Mars is lifted here because the embedded dome carries its own copy of
+  that color, and the two agree from weewx-skyfield 2.2 on; on a station
+  still running 2.1 the dome keeps the darker Mars until it is upgraded.
+  The constellation figures stay recessive on purpose.
+
 8.1.2 (2026/08/13)
 ------------------
 - The page generates again on WeeWX 5.2, this extension's stated

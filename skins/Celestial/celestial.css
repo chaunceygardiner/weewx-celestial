@@ -15,13 +15,27 @@
   --muted:#8B93B8;   /* secondary text */
   --brass:#D3A94C;   /* accent */
   --line:#2A3358;    /* borders, hairlines */
-  /* Per-body identity colors (weewx-skyfield 1.5's night-plate values --
+  /* Chart furniture -- the dial's rings, ticks and rim.  NOT --line: that
+   * is the color of a section border, and the dial is drawn ON the surface
+   * that border surrounds, where it measures 1.20-1.42:1.  This is
+   * weewx-skyfield 2.2's night `grid` token (same value, same reason: it
+   * fixed the identical inheritance on the dome's altitude rings and
+   * meridian cross), so the two pages still read as one family.  --line
+   * stays exactly as it is for the borders and hairlines it is for. */
+  --grid:#6E7DBA;
+  /* Per-body identity colors (weewx-skyfield's night-plate values --
    * the traditional astronomy scheme: yellow sun, silver moon, gray
    * Mercury, pearly Venus; pluto is celestial's own addition -- the Sky
    * palette has no night pluto).  Earth (the dial's center) and Proxima
-   * (silver, like the stars) are celestial's own as well. */
+   * (silver, like the stars) are celestial's own as well.  Mars follows
+   * skyfield 2.2's lift (was #C04F36, the one body dot under 3:1 on the
+   * night dome): the embedded dome emits its dot color inline, so the two
+   * agree from 2.2 on.  On a station still running 2.1 the dome keeps the
+   * darker Mars until it is upgraded -- one release of two shades on one
+   * page, accepted deliberately: the alternative is holding the dial at a
+   * value skyfield has already retired. */
   --c-sun:#FFD75E; --c-moon:#C9D0DA; --c-mercury:#9CA0AC; --c-venus:#F0E3BE;
-  --c-mars:#C04F36; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
+  --c-mars:#CE6750; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
   --c-uranus:#35A8BE; --c-neptune:#5F85E6; --c-pluto:#8A7FB0;
   --c-earth:#7FB4A2;
   color-scheme: dark;
@@ -130,24 +144,35 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
 .stroke-neptune{stroke:var(--c-neptune)} .stroke-pluto{stroke:var(--c-pluto)}
 .stroke-proxima_centauri{stroke:var(--c-moon)}
 
-/* The dial's static furniture. */
-.geo-ring{fill:none; stroke:var(--line)}
-.geo-rim{fill:none; stroke:var(--line); stroke-width:1.4}
-.geo-tick{stroke:var(--line); stroke-width:1}
+/* The dial's static furniture.  The per-ring stroke-opacity (0.5 inside
+ * 10 au, 0.4 outside) is set by the javascript, which draws them.  The
+ * grid is deliberately recessive -- see the note there -- but the RIM is
+ * not scale furniture: it is the dial's outer boundary, one circle rather
+ * than eight, so it stays a notch firmer (2.50:1) and gives the receding
+ * decades something to be contained by.  The ticks follow the rings. */
+.geo-ring{fill:none; stroke:var(--grid)}
+.geo-rim{fill:none; stroke:var(--grid); stroke-opacity:.62; stroke-width:1.4}
+.geo-tick{stroke:var(--grid); stroke-opacity:.4; stroke-width:1}
 .geo-tick-major{stroke-width:1.6}
 .geo-earth{stroke:var(--night); stroke-width:1}
 /* Body dots: above the horizon they wear a night-colored ring; below they
- * dim and their outline goes dashed in their own color. */
+ * dim and their outline goes dashed in their own color.  That dashed
+ * outline is what CARRIES a down body: it is the body's own color at full
+ * strength (4.72:1 even for Mars, the darkest) where the dimmed fill
+ * reaches 1.90, so the weight belongs on the outline.  1.5px, not the
+ * hairline it was through 8.1. */
 .geodot.ring{stroke:var(--night); stroke-width:1}
-.geodot.below{fill-opacity:.35; stroke-width:1; stroke-dasharray:2.5 2.5}
+.geodot.below{fill-opacity:.45; stroke-width:1.5; stroke-dasharray:2.5 2.5}
 .sunglow{filter:blur(6px); opacity:.55}
 /* The moon's true-phase disc, silver-rimmed so a new moon never vanishes. */
 .moon-dark{fill:#1E2745}
 .moon-lit{fill:#DDD8C4}
 .moon-rim{fill:none; stroke:var(--c-moon); stroke-opacity:.55; stroke-width:1}
-.geomoon.below{opacity:.45}
-.geomoon.below .moon-rim{stroke-dasharray:2.5 2.5}
-/* Motion trails: per-segment opacity is set by the javascript. */
+.geomoon.below{opacity:.55}
+.geomoon.below .moon-rim{stroke-dasharray:2.5 2.5; stroke-opacity:.7}
+/* Motion trails: per-segment opacity is set by the javascript, which ramps
+ * it from a visible floor (the old ramp started from nothing: the oldest
+ * segment landed at 1.02:1, ink spent where no eye can find it). */
 .trail{stroke-width:1.5; stroke-linecap:round}
 /* Comet marks (javascript-drawn on the dial): a brass diamond with an
  * anti-sunward tail fan, solid when naked-eye bright (mag <= 6), the
@@ -156,9 +181,9 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
  * dynamic, so per-tag classes cannot exist (the satellite precedent). */
 .cometdot{fill:var(--brass); stroke:var(--night); stroke-width:1.5}
 .cometdot.faint{fill:var(--night); stroke:var(--brass); stroke-width:2}
-.cometdot.below{fill-opacity:.35; stroke-dasharray:2.5 2.5}
+.cometdot.below{fill-opacity:.45; stroke-dasharray:2.5 2.5}
 .comet-tail{stroke:var(--brass)}
-.geocomet.below .comet-tail{opacity:.35}
+.geocomet.below .comet-tail{opacity:.5}
 .stroke-comet{stroke:var(--brass)}
 .chip-comet{background:var(--brass)}
 
@@ -190,9 +215,18 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .satline{font-size:.8rem}
 /* Dome typography borrowed from weewx-skyfield's sky.css -- names and
  * values kept in step, same cross-repo rule as cardinal/bodylab/gridlab
- * above (the light-theme variants stay behind: this page is night-only). */
-.starlab{font-size:10px; fill:var(--muted); font-family:Georgia, serif; font-style:italic}
-.conlab{font-size:10px; fill:#7C8FC9; font-family:Georgia, serif; font-style:italic;
+ * above (the light-theme variants stay behind: this page is night-only).
+ * These small labels are their own value, not --muted: --muted is set for
+ * body copy on the panel SURFACE, and the dome and next-visible-pass charts
+ * put them on the dome gradient instead, whose rim is much lighter -- there
+ * --muted reached only 3.70:1 (skyfield 2.2 lifted all three).  .skylab is
+ * the dome's scoped opt-in, worn by the ring-degree labels as
+ * "mono gridlab skylab"; the axis labels on every other panel sit on the
+ * panel surface and keep plain .gridlab.  Equal specificity, so .skylab
+ * MUST stay after .gridlab above -- source order is all that makes it win. */
+.skylab{fill:#9FA5C4}
+.starlab{font-size:10px; fill:#9FA5C4; font-family:Georgia, serif; font-style:italic}
+.conlab{font-size:10px; fill:#9DABD7; font-family:Georgia, serif; font-style:italic;
         letter-spacing:.14em; text-transform:uppercase}
 .satlab{fill:var(--brass); font-family:Georgia, serif}
 .nowlab{font-size:10px; fill:var(--brass)}

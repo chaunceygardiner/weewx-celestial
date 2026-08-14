@@ -1986,6 +1986,69 @@ class TestSampleSkinRenders:
         assert (skytip_rule(os.path.join(SKIN_DIR, 'celestial.css'))
                 == skytip_rule(os.path.join(sky_skin, 'sky.css')))
 
+    def test_chart_palette_in_step_with_skyfield(self):
+        """The dial's grid color, its Mars dot and the three dome label
+        colors are weewx-skyfield's values copied in -- the same cross-repo
+        rule as sky.js and the .skytip rule above, and the same reason: the
+        dome and the Next Visible Pass chart arrive as skyfield's own SVG
+        with their colors already inside them, so a value that drifts on
+        this side puts two shades of one thing on one page.  skyfield 2.2
+        retuning this palette (grid, night Mars, the small labels) is
+        exactly the event this pins.  grid and mars live in skyfield's
+        PALETTES dict, because the charts emit those two inline; the label
+        colors live in its sky.css.  Skips when no weewx-skyfield is
+        available."""
+        candidates = [
+            os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                         'skins', 'Skyfield'),
+            '/home/weewx/skins/Skyfield',
+        ]
+        sky_skin = next((d for d in candidates
+                         if os.path.exists(os.path.join(d, 'sky.css'))), None)
+        sky_py = next((os.path.join(d, 'wxskyfield_sky.py')
+                       for d in WXSKYFIELD_DIRS
+                       if os.path.exists(os.path.join(d, 'wxskyfield_sky.py'))),
+                      None)
+        if sky_skin is None or sky_py is None:
+            pytest.skip('weewx-skyfield is not available')
+
+        cel_css = open(os.path.join(SKIN_DIR, 'celestial.css'),
+                       encoding='utf-8').read()
+        sky_css = open(os.path.join(sky_skin, 'sky.css'), encoding='utf-8').read()
+
+        def token(css, name):
+            """The value of a --custom-property in the :root block."""
+            m = re.search(r'--%s:\s*(#[0-9A-Fa-f]{6})' % name, css)
+            assert m is not None, name
+            return m.group(1).upper()
+
+        def label_fill(css, cls):
+            """The fill of a class's OWN rule.  Anchored at line start so the
+            `:root.theme-light` overrides -- which this night-only page does
+            not copy -- can never be the one that matches."""
+            m = re.search(r'^\.%s\{([^}]*)\}' % cls, css, re.M | re.S)
+            assert m is not None, cls
+            fill = re.search(r'fill:\s*(#[0-9A-Fa-f]{6})', m.group(1))
+            assert fill is not None, cls
+            return fill.group(1).upper()
+
+        # skyfield's 'night' palette is the one celestial gets: the template
+        # calls dome_svg($almanac) with no palette argument, and dome_svg
+        # defaults to 'night'.
+        sky_src = open(sky_py, encoding='utf-8').read()
+        night = re.search(r"\n    'night':\s*\{(.*?)\n    \},", sky_src, re.S)
+        assert night is not None, sky_py
+
+        def palette_color(key):
+            m = re.search(r"'%s':\s*'(#[0-9A-Fa-f]{6})'" % key, night.group(1))
+            assert m is not None, key
+            return m.group(1).upper()
+
+        assert token(cel_css, 'grid') == palette_color('grid')
+        assert token(cel_css, 'c-mars') == palette_color('mars')
+        for cls in ('skylab', 'starlab', 'conlab'):
+            assert label_fill(cel_css, cls) == label_fill(sky_css, cls), cls
+
     def test_renders_with_pyephem_almanac(self):
         """With PyEphem but no weewx-skyfield, the roster first-paints
         complete except the Proxima Centauri row (PyEphem's star catalog
