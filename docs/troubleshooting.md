@@ -116,10 +116,11 @@ The reason is the last refetch's outcome, and it says where to look:
 
 | The line says | What it means | What to check |
 |---|---|---|
-| `no newer backdrop is being generated` | The fetches are succeeding; the file they return is old | The station: is the report still running each archive interval?  Are `dome-svg*.txt` mtimes moving?  Is a fragment template failing? (see below) |
-| `dome-svg.txt returns HTTP 404` (or another status) | The fragments are not being served next to the page | Whether the files exist in `HTML_ROOT`, and whether whatever publishes your site (rsync, FTP) carries `.txt` as well as `.html` |
-| `dome-svg.txt is not a sky fragment` | Something answers, but it is empty or is not SVG | A web server returning an error page with status 200; or a report cycle that rendered the fragments empty because no capable almanac served it |
-| `no response for dome-svg.txt` | The request itself failed | The network between browser and server; a page left open through a server restart |
+| `no newer backdrop has arrived` | The fetches are succeeding; the file they return is old | The station: is the report still running each archive interval?  Are `dome-svg*.txt` mtimes moving?  Is a fragment template failing? (see below) |
+| `dome-svg-3.txt returns HTTP 404` (or another status, and whichever fragment was asked for) | That fragment is not being served next to the page | Whether the files exist in `HTML_ROOT`, and whether whatever publishes your site (rsync, FTP) carries `.txt` as well as `.html`.  The named file is the one that failed — a deploy that dropped only the numbered fragments leaves `dome-svg.txt` itself serving perfectly |
+| `dome-svg-3.txt is not a sky fragment` | Something answers, but it is not SVG | A web server returning an error page with status 200 |
+| `dome-svg.txt is empty` | The file is there and has nothing in it | If it names a numbered slot, the page is asking for a slot beyond the current archive interval — harmless, and it corrects itself on the next cycle.  If it names `dome-svg.txt` itself, the station is writing no backdrop at all: check that weewx-skyfield is serving the report (the dome would show an install hint), and that a report cycle has run since the last restart.  **Before 8.3.2 a station with a non-default `group_interval` emptied every fragment** — upgrade if you are not on 8.3.2 |
+| `no response for dome-svg-3.txt` | The request failed, or hung until it timed out | The network between browser and server; a page left open through a server restart |
 
 On the station:
 
@@ -133,6 +134,18 @@ ls -l <HTML_ROOT>/celestial/dome-svg*.txt
 # place -- which looks exactly like a frozen sky.
 sudo journalctl -u weewx | grep -i dome
 ```
+
+**If you set `report_timing` on this report, this is what you will see.**
+The Celestial skin does not support a `report_timing` that makes its
+reports run less often than the archive interval — see
+[Report timing is not supported](configuration.md#report-timing-is-not-supported).
+The backdrops are written by the report cycle, so a report throttled to
+run hourly on a five-minute archive leaves the page holding a backdrop up
+to an hour old, which is past the staleness limit: the dome freezes and
+this line stands, permanently.  Nothing is broken; the page simply cannot
+tell a deliberately slow report apart from a station that has stopped.
+Remove the `report_timing` line and the dome runs normally again.  Nothing needs
+configuring, and the dome resumes stepping as soon as a backdrop lands.
 
 Two things this is not.  The **LIVE badge is a different instrument**: it
 watches `loop_data_file`, which is usually a different URL in a different

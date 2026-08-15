@@ -60,7 +60,7 @@ except ImportError:
 _logged_version: Optional[str] = None
 
 
-def _log_version(skin_dict) -> None:
+def _log_version(generator) -> None:
     """Announce the skin's version at the first report that renders the
     page, and again if it ever changes -- never once per cycle, since
     reports run every archive interval and this is identification, not a
@@ -68,7 +68,10 @@ def _log_version(skin_dict) -> None:
     kills the whole page, and no log line is worth that."""
     global _logged_version
     try:
-        version = skin_dict.get('Extras', {}).get('version')
+        # The generator, not its skin_dict: reading the attribute at the
+        # CALL site would put it outside this guard, which is where the
+        # promise below stops being true (8.3.2).
+        version = getattr(generator, 'skin_dict', {}).get('Extras', {}).get('version')
         if version and version != _logged_version:
             _logged_version = version
             log.info('Celestial version is %s.', version)
@@ -84,7 +87,7 @@ class CelestialSkyPage(SearchList):
         SearchList.__init__(self, generator)
 
     def get_extension_list(self, timespan, db_lookup) -> List[Dict[str, Any]]:
-        _log_version(self.generator.skin_dict)
+        _log_version(self.generator)
         sky_page: Optional[Any] = None
         if SkyPage is None:
             log.info('weewx-skyfield sky page not installed; the dome panel is hidden')

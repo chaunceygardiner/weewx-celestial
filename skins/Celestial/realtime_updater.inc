@@ -173,13 +173,15 @@
   ## landing and the star field is no longer advancing.  The reason is
   ## the last refetch's outcome, so the line names the fault rather than
   ## just the symptom -- the same service the badge does for the loop
-  ## feed.  dome-svg.txt is a filename: it stays spelled that way in
-  ## every language.
+  ## feed.  {file} is filled in with the fragment that actually failed
+  ## -- usually a numbered slot -- so the placeholder must survive
+  ## translation intact.
   #silent $t.update({'Star field frozen — this sky is from {time} ({why})': $gettext('Star field frozen — this sky is from {time} ({why})')})
-  #silent $t.update({'no newer backdrop is being generated': $gettext('no newer backdrop is being generated')})
-  #silent $t.update({'dome-svg.txt returns HTTP {status}': $gettext('dome-svg.txt returns HTTP {status}')})
-  #silent $t.update({'dome-svg.txt is not a sky fragment': $gettext('dome-svg.txt is not a sky fragment')})
-  #silent $t.update({'no response for dome-svg.txt': $gettext('no response for dome-svg.txt')})
+  #silent $t.update({'no newer backdrop has arrived': $gettext('no newer backdrop has arrived')})
+  #silent $t.update({'{file} returns HTTP {status}': $gettext('{file} returns HTTP {status}')})
+  #silent $t.update({'{file} is not a sky fragment': $gettext('{file} is not a sky fragment')})
+  #silent $t.update({'{file} is empty': $gettext('{file} is empty')})
+  #silent $t.update({'no response for {file}': $gettext('no response for {file}')})
   T = $json.dumps($t);
   // Composed translations: look the English key up in T (falling back to
   // the key, so a missing entry renders English) and fill the {named}
@@ -314,6 +316,17 @@
   var LOG_MIN = -2.6, LOG_MAX = 5.45;
   var TRAIL_N = 24, TRAIL_SEC = 3600;  // the last hour, in 150 s segments
   var EXTRAP_MAX = 120;                // stop extrapolating stale data (s)
+  // How long without a NEW packet before the feed counts as dead, which
+  // is a different question from how long a value may be extrapolated
+  // and must not borrow its answer: a station whose loop packets are
+  // minutes apart would then be declared dead between every pair of
+  // them, and the dome would two-step -- marks tracking live, snapping
+  // back to the backdrop's geometry with the satellite marker deleted,
+  // then jumping forward on the next packet.  Derived from the poll
+  // rate, which the manual tells users to match to weewx-loopdata's
+  // write cadence, so twenty missed writes is the measure.  No
+  // inference, no learning: a number from the configuration.
+  var DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
   function rOfAu(au) {
     var lg = Math.log(au) / Math.LN10;
     return R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
@@ -518,6 +531,7 @@
   // fails to bind and every use of it throws or reads navigation state.
   var latest = null;      // last parsed loop-data object
   var latestTs = 0;       // its current.dateTime.raw (or receipt time)
+  var latestRecvTs = 0;   // when THIS BROWSER received it (its own clock)
   var packets = [];       // [{t, r}] oldest first, pruned to 10 minutes
   var HISTORY_SEC = 600;
   function pushHistory(t, r) {
@@ -931,7 +945,13 @@
     if (svg === null || latest === null) {
       return;
     }
-    if (domeStaleFor(nowTs) !== null) {
+    if (domeChecked && !domeAsking(nowTs) && domeStaleFor(nowTs) !== null) {
+      restoreDomeMarks(svg);
+      // domeChecked, so the freeze and the line that explains it begin
+      // together: acting on a suspicion the page has not yet tested
+      // would leave a visibly stopped dome with nothing under it saying
+      // why, for as long as the first refetch takes.
+      //
       // The backdrop stopped advancing, so the whole dome layer freezes
       // -- bodies and satellites together.  Nudging live marks across a
       // star field that is no longer moving manufactures a sky that
@@ -947,6 +967,29 @@
       // itself.
       return;
     }
+    if (latestRecvTs > 0 && nowTs - latestRecvTs > DEAD_FEED) {
+      // Both sides of this comparison are the BROWSER's clock -- the
+      // receipt stamp, not the packet's station timestamp.  Mixing them
+      // reintroduced exactly what 8.3.1 removed: a viewer two minutes
+      // ahead of the station would read every healthy packet as a dead
+      // feed, for ever, with no line under the panel to say why.
+      //
+      // The other input dying is the same lie inverted, and the comment
+      // in domeStaleFor used to get this wrong.  When the FEED stops,
+      // latestTs stops with it, so the station clock this page judges by
+      // stops too: the backdrop goes on arriving, m.ts runs past that
+      // frozen clock, the difference goes negative and the dome can
+      // never be called stale again.  Meanwhile the nudge loop below
+      // keeps drawing bodies at their last known place plus EXTRAP_MAX
+      // of extrapolation, on a star field that is still advancing --
+      // a current sky wearing hour-old marks.  So the marks go back to
+      // the backdrop's own geometry here too.  No second line under the
+      // panel: the LIVE badge already owns the feed's fault, the same
+      // reasoning that keeps the backdrop's fault off the badge.
+      restoreDomeMarks(svg);
+      return;
+    }
+    domeRestored = false;    // the live layer is running; a later freeze restores again
     if (domeBase === null) {
       readDomeBase();
     }
@@ -1106,6 +1149,89 @@
     }
     setHtml(passId, sub);
   }
+  function renderSatRosters(nowTs) {
+    // The two countdown rows per satellite, one per table (present only
+    // when the report almanac served them; setHtml is a no-op
+    // otherwise): the dome's next pass of ANY kind, visibility-tagged,
+    // and the Next Pass panel's next visible pass.
+    //
+    // These live OUT here, called from the tick and the poll, because
+    // they are pure loop-feed arithmetic and have nothing to do with the
+    // backdrop.  They used to sit inside renderSats, which the dome's
+    // stale freeze skips -- so a station whose fragments stopped serving
+    // got a frozen roster beside a countdown chip that kept ticking, the
+    // two contradicting each other about the same pass (8.3.2).  The
+    // rule the page states everywhere else holds here too: only what
+    // stands on the backdrop freezes with it.
+    if (latest === null) {
+      return;
+    }
+    SAT_NAMES.forEach(function(name) {
+      if (!hasKey('almanac.' + name + '.az')) {
+        return;              // not in the loop feed: first paint stands
+      }
+      var sunlit = latest['almanac.' + name + '.sunlit'];
+      renderPassRow('almanac.' + name + '.next_pass',
+                    'sat-any-line-' + name, 'sat-any-pass-' + name,
+                    T['no pass in the coming week'], sunlit, nowTs, true);
+      renderPassRow('almanac.' + name + '.next_visible_pass',
+                    'sat-line-' + name, 'sat-pass-' + name,
+                    T['no visible pass in the coming week'], sunlit, nowTs,
+                    false);
+    });
+  }
+  function restoreDomeMarks(svg) {
+    // Put every mark back where the backdrop drew it, once, as the
+    // freeze engages.  Freezing in place is not enough: the marks may
+    // have been nudged first -- a page restored from cache takes its
+    // first packet before the first refetch answers, and that one nudge
+    // jumps a body from its generated position to its true one, which
+    // against an hours-old star field can be most of the sky.  Frozen
+    // there for ever, the dome would stand permanently in exactly the
+    // state the freeze exists to prevent, with this function's own
+    // comment promising the opposite.  Undoing the nudge is undoing a
+    // translate, so removing the attribute restores the almanac's own
+    // geometry; the live satellite marks are removed outright and the
+    // generated ones come back out from under them.
+    if (domeRestored) {
+      return;
+    }
+    domeRestored = true;
+    // Both attributes, on every mark, unconditionally.  The nudge does
+    // two things: it moves a mark, and it HIDES one that has set since
+    // the backdrop was drawn ("set since generation" above).  A hidden
+    // body carries no transform, so a transform-only restore left it
+    // hidden for ever -- a frozen plate showing a daytime sky with no
+    // sun in it, which is the same lie as a mark in the wrong place.
+    // Removing an attribute a mark never had is a no-op, and the
+    // generated backdrop emits neither (checked: zero display
+    // attributes in a rendered dome), so the wide selector costs
+    // nothing and cannot hide what the almanac meant to draw.  Found by
+    // the liveseasons port's review.
+    // Array.prototype.forEach.call, not NodeList.forEach: this file is
+    // ES5 throughout -- no arrow functions, no const, no classList --
+    // and the block below deliberately supports engines too old for
+    // XHR2's onloadend.  Those same engines have no NodeList.forEach, so
+    // the tidier spelling would throw inside renderDome, which localTick
+    // calls with no try/catch: every tick after the dome went stale
+    // would abort before renderPass, for the life of the page.
+    Array.prototype.forEach.call(
+        svg.querySelectorAll('g.dome-body, text[data-body]'),
+        function(e) {
+          e.removeAttribute('transform');
+          e.removeAttribute('display');
+        });
+    if (satMarks !== null) {
+      SAT_NAMES.forEach(function(name) {
+        var m = satMarks[name];
+        if (m && m.g && m.g.parentNode !== null) {
+          m.g.parentNode.removeChild(m.g);
+        }
+        // (the generated marks were un-hidden by the sweep above)
+      });
+      satMarks = null;
+    }
+  }
   function renderSats(nowTs, svg) {
     if (satMarks === null) {
       satMarks = {};
@@ -1117,18 +1243,6 @@
       if (!hasKey(azKey)) {
         return;              // not in the loop feed: static dome stands
       }
-      // The two countdown rows, one per table (present only when the
-      // report almanac served them; setHtml is a no-op otherwise): the
-      // dome's next pass of ANY kind, visibility-tagged, and the Next
-      // Pass panel's next visible pass.
-      var sunlit = latest['almanac.' + name + '.sunlit'];
-      renderPassRow('almanac.' + name + '.next_pass',
-                    'sat-any-line-' + name, 'sat-any-pass-' + name,
-                    T['no pass in the coming week'], sunlit, nowTs, true);
-      renderPassRow('almanac.' + name + '.next_visible_pass',
-                    'sat-line-' + name, 'sat-pass-' + name,
-                    T['no visible pass in the coming week'], sunlit, nowTs,
-                    false);
       // The marker.  Wrap-aware azimuth extrapolation keeps a zenith pass
       // smooth; EXTRAP_MAX freezes a stale feed, which is exactly right
       // for a vanished satellite.
@@ -1173,7 +1287,10 @@
       // still drawn: the dome shows what is up, like its daytime moon
       // and stars.
       var sunAlt = num(latest, 'almanac.sun.alt');
-      var shadowed = (sunlit === false);
+      // The marker's own read of the sunlit flag.  It used to ride along
+      // with the roster rows' copy; those moved out to renderSatRosters
+      // in 8.3.2 and this one has to stay here, where it is used.
+      var shadowed = (latest['almanac.' + name + '.sunlit'] === false);
       var daylight = (sunAlt !== null && sunAlt >= -6);
       m.dot.setAttribute('class', 'satdot' + (shadowed ? ' shadow' : '')
                                            + (daylight ? ' faint' : ''));
@@ -1214,7 +1331,14 @@
     var m = domeFragMeta();
     if (m !== null) {
       var base = m.ts - m.slot * m.step;
-      var k = Math.floor((Date.now() / 1000 - base) / m.step);
+      // The STATION's clock, exactly as the staleness judgement uses it.
+      // These fragments are stamped by the station, so a viewer twenty
+      // minutes fast computes k past the end of the slot set every time,
+      // asks only ever for slot 0, and silently loses the stagger this
+      // whole set exists for -- back to one lurch a cycle, with nothing
+      // wrong on the station and no symptom to see.  Found by the
+      // liveseasons port's review.
+      var k = Math.floor((stationNow(Date.now() / 1000) - base) / m.step);
       if (k >= 1 && k < m.count) {
         return 'dome-svg-' + k + '.txt';
       }
@@ -1239,6 +1363,9 @@
   var appliedDomeFrag = null;
   var lastDomeFetch = 0;         // when the last refetch went out
   var domeStaleGrace = 0;        // hold the frozen line until this instant
+  var domeRestored = false;      // has the freeze already undone the nudges
+  var domeChecked = false;       // has any refetch attempt completed yet
+  var domeFetchInFlight = false; // is one out on the wire right now
   // The plate this page was generated on -- the class the stylesheet's
   // light rules hang off.  ('theme-light' or 'theme-dark'; anything else
   // reads as night, the shipped default.)  Compared against each
@@ -1283,6 +1410,22 @@
     if (pageTimedOut) {
       return;
     }
+    if (domeFetchInFlight
+        && Date.now() / 1000 - lastDomeFetch < 2 * DOME_REFRESH) {
+      // One at a time: on resume the overdue interval callback and the
+      // wake handler both come due, and the guard on lastDomeFetch only
+      // covers the second of them.  The backward-step guard hides the
+      // symptom; this removes it.
+      //
+      // Bounded, though.  The flag is cleared by onloadend and by the
+      // onload/onerror/ontimeout trio -- all XHR2, and the timeout that
+      // guarantees one of them fires is XHR2 as well.  On an engine
+      // without any of it a hung connection would latch the flag and
+      // stop the dome refetching forever, which is far worse than the
+      // duplicate fetch this guard exists to prevent.  After two
+      // refresh intervals we ask again regardless.
+      return;
+    }
     var fragName = domeFragName();
     var xhttp = new XMLHttpRequest();
     xhttp.onload = function() {
@@ -1293,12 +1436,29 @@
       // nobody -- but the outcome is remembered: if this goes on long
       // enough for the sky to be visibly wrong, domeStaleWhy turns it
       // into the reason under the panel.
+      domeChecked = true;
+      clearInFlight();
       if (this.status !== 200 && this.status !== 0) {
-        domeFetchProblem = {kind: 'http', status: this.status};
+        domeFetchProblem = {kind: 'http', status: this.status, file: fragName};
+        return;
+      }
+      if (!/\S/.test(this.responseText)) {
+        // An empty fragment is its own answer, and it is worth naming.
+        // Sometimes it is deliberate -- a slot whose offset falls beyond
+        // the archive interval renders empty by design, which a page
+        // holding an older cycle's count will ask for after the interval
+        // is shortened.  Sometimes it means the station is writing
+        // nothing at all: no capable almanac this cycle, or the
+        // group_interval arithmetic that emptied every slot for Jacques
+        // Terrettaz in issue #4.  The page cannot tell those apart, but
+        // it can say which file came back empty, which is the fact that
+        // sends a reader to the right place -- and it is emphatically
+        // not "not a sky fragment", which reads as garbage.
+        domeFetchProblem = {kind: 'empty', file: fragName};
         return;
       }
       if (this.responseText.indexOf('<svg') === -1) {
-        domeFetchProblem = {kind: 'junk'};
+        domeFetchProblem = {kind: 'junk', file: fragName};
         return;
       }
       // A backdrop arrived and parses.  Whatever happens to it below --
@@ -1353,6 +1513,7 @@
       hideSkytip();
       domeBase = null;       // baselines belong to the old backdrop
       satMarks = null;       // the live layer's elements were replaced too
+      domeRestored = false;  // a fresh sky is live again until it is not
       var swapTs = Date.now() / 1000;
       updateDomeStale(swapTs);   // a fresh sky clears the frozen line at once
       if (latest !== null) {
@@ -1362,20 +1523,100 @@
     xhttp.onerror = function() {
       // A network-level failure: unreachable, blocked, offline.  Unlike
       // the HTTP case there is no status to show.
-      domeFetchProblem = {kind: 'net'};
+      domeChecked = true;
+      clearInFlight();
+      domeFetchProblem = {kind: 'net', file: fragName};
     };
     xhttp.ontimeout = xhttp.onerror;
+    xhttp.onloadend = function() {
+      domeFetchInFlight = false;
+    };
+    // ...and on each individual completion too.  onloadend is the one
+    // XHR2-era handler in this block, and the timeout note below is
+    // explicit about engines old enough to lack such things: without
+    // this, a browser with no onloadend latches the flag on its first
+    // fetch and never refetches the dome again.
+    var clearInFlight = function() {
+      domeFetchInFlight = false;
+    };
     try {
+      // A timeout is what makes ontimeout above mean anything: without
+      // one, a server that accepts the connection and never answers
+      // leaves the request hanging for ever -- no onload, no onerror, so
+      // the reason stays whatever it last was (null, after any earlier
+      // success) and the line blames the station for a network fault.
+      // Generous next to the loop feed's 1800 ms: this is a whole sky,
+      // not a small json file.
       // Cache-busted: the fragment is a static file and heuristic browser
       // caching would happily serve a stale sky.
       lastDomeFetch = Date.now() / 1000;
       xhttp.open('GET', fragName + '?ts=' + Date.now(), true);
+      // AFTER open(): older engines throw InvalidStateError on a timeout
+      // set against an unopened request, and this whole block is inside
+      // a try whose catch would swallow it -- costing the refetch
+      // entirely on exactly the browsers least able to spare it.
+      //
+      // Thirty seconds, because this is a whole sky: a rendered fragment
+      // measures about 140 KB on a real station, and ten meant every
+      // refetch over a slow mobile link timed out, recorded "no
+      // response" against a perfectly healthy station, and never
+      // recovered -- the timeout being far shorter than the interval
+      // that would have retried it.  Still well inside one refresh
+      // cycle, so a hung connection stays bounded.
+      xhttp.timeout = 30000;
+      // Raised only once the request is built and open: set any earlier
+      // and a throw from domeFragName or the XHR constructor would leave
+      // it stuck, and every later refetch -- interval and wake alike --
+      // would return at the guard for the life of the page.
+      domeFetchInFlight = true;
       xhttp.send();
     } catch (e) {
+      // A request that cannot be issued at all -- a security or URL
+      // error, a page opened off file:// -- is as much a fault as one
+      // that comes back 404, and it must COUNT as having asked:
+      // otherwise domeChecked stays false for the life of the page, the
+      // freeze never engages and no line ever posts, which is silently
+      // the behaviour this release replaced.
+      domeFetchInFlight = false;
+      domeChecked = true;
+      domeFetchProblem = {kind: 'net', file: fragName};
       console.log(e);
     }
   }
   setInterval(refreshDome, DOME_REFRESH * 1000);
+  // And once at load.  The HTML can be minutes or hours older than the
+  // fragments beside it -- a page served from a browser or CDN cache is
+  // the ordinary case, which is why the fragments are cache-busted at
+  // all -- so waiting for the first interval would freeze the dome and
+  // post the line for a whole minute before the first refetch silently
+  // corrected it.  Same grace as a page waking up, for the same reason.
+  domeStaleGrace = Date.now() / 1000 + 5;
+  // The page already HOLDS its generation-time backdrop, and the
+  // load-time fetch usually returns that same fragment.  Seeding the
+  // applied identity from it makes that a no-op instead of re-injecting
+  // byte-identical markup -- which would throw away the mark baselines,
+  // unhide the generated satellite marks until the next tick, and
+  // re-parse a whole sky for nothing.  A page whose slot has moved on
+  // still swaps, because the identity will not match.
+  function seedAppliedFrag() {
+    var m = domeFragMeta();
+    if (m === null) {
+      return;
+    }
+    if (m.slot === 0) {
+      appliedDomeFrag = 'dome-svg.txt|' + m.ts;
+    }
+  }
+  // At LOAD, not at eval: this script is inline at the top of <body> and
+  // the dome it reads sits hundreds of lines below, so a seed run here
+  // finds no #dome-svg at all and silently does nothing -- which is how
+  // it shipped into review, taking the applied-fragment identity, the
+  // cycle baseline and the remembered cadence down with it.  The rest of
+  // the file already knew this: addLoadEvent(updateCurrent) above.
+  addLoadEvent(function() {
+    seedAppliedFrag();
+    refreshDome();
+  });
 
   // A laptop closed and reopened, or a tab left in the background and
   // brought forward: the timers stopped with the machine, and on the way
@@ -1387,15 +1628,38 @@
   // DOME_REFRESH guard keeps a much-flipped tab from fetching per
   // switch.  (The pass chart is left to its own five minutes: it is a
   // fixed future scene, and being minutes old tells no lie.)
+  function domeWake() {
+    // The dome is stale by definition on the way back from a sleep, and
+    // the fetch that fixes it is already in flight: hold the frozen line
+    // for a few seconds rather than flash an accusation at a station
+    // doing nothing wrong.
+    // The grace FIRST, and unconditionally: on a real resume the overdue
+    // interval callback often runs before this does, taking the fetch
+    // and setting lastDomeFetch -- so the guard below would return
+    // without granting it, and the line would flash for that fetch's
+    // whole round trip.  The grace is about the resume, not about who
+    // happened to send the request.
+    domeStaleGrace = Date.now() / 1000 + 5;
+    if (Date.now() / 1000 - lastDomeFetch < DOME_REFRESH) {
+      return;                    // a much-flipped tab must not fetch per switch
+    }
+    refreshDome();
+  }
   document.addEventListener('visibilitychange', function() {
-    if (!document.hidden
-        && Date.now() / 1000 - lastDomeFetch >= DOME_REFRESH) {
-      // The dome is stale by definition on the way back from a sleep,
-      // and the fetch that fixes it is already in flight: hold the
-      // frozen line for a few seconds rather than flash an accusation
-      // at a station doing nothing wrong.
-      domeStaleGrace = Date.now() / 1000 + 5;
-      refreshDome();
+    if (!document.hidden) {
+      domeWake();
+    }
+  });
+  // Coming back to the front is not the only way a page resumes.  The
+  // back button restores from the bfcache with no visibility change at
+  // all, and an OS suspend with this tab already in front resumes
+  // without one either -- both land on exactly the case the grace exists
+  // for.  pageshow catches the first; the tick-gap check in localTick
+  // catches the second, since a one-second timer that did not fire for
+  // five seconds means the machine was not running.
+  window.addEventListener('pageshow', function(e) {
+    if (e.persisted) {
+      domeWake();
     }
   });
 
@@ -1413,16 +1677,20 @@
   // healthy, a station that has stopped writing new ones.  That last
   // case is the one no status code would ever reveal.
   var domeFetchProblem = null;   // last refetch outcome; null = healthy
-  var domeStaleShown = null;     // what the line currently says
+  var domeStaleShown = '';       // what the line currently says ('' = none)
   function domeStaleFor(nowTs) {
     // How many seconds the backdrop is stale BY, or null when it is
     // current.  Its depicted time (data-dome-ts) is the honest measure:
     // that is the instant the marks are being drawn against.  The limit
     // is three report cycles, floored at ten minutes -- one skipped
     // cycle is routine, two is a hiccup, three means nothing is coming
-    // -- and the cycle length comes from the fragment's own step and
-    // count, so this follows any archive interval with no configuration,
-    // exactly as the slot walk does.  A pre-stagger backdrop (no
+    // -- where a cycle is the fragment set's own declared span, which is
+    // the archive interval.  This skin does not support a report_timing
+    // that makes its reports slower than that (the manual says so
+    // plainly): a page cannot tell a throttled report apart from a stopped
+    // one without inferring it, and every attempt to infer it mistook a
+    // sleep, an outage, a cached page or a hand-run report for a cadence.
+    // A pre-stagger backdrop (no
     // self-description) is exempt: there is nothing to judge it by, and
     // the walk already treats it as slot 0 for ever.
     var m = domeFragMeta();
@@ -1437,8 +1705,10 @@
     // over it.  Before the first packet (or with no feed at all) the
     // browser's clock is the only one there is and it decides.  When a
     // feed DIES its clock stops with it, so this stops firing -- which
-    // is right: the marks stop moving on their own then (EXTRAP_MAX),
-    // nothing drifts, and the badge above already carries that fault.
+    // is right for THIS test: a stopped clock cannot judge, and the
+    // dead-feed case is handled where it belongs, in renderDome, which
+    // puts the marks back rather than pinning them to a sky that goes
+    // on turning underneath them.
     var over = (stationNow(nowTs) - m.ts)
                - Math.max(600, 3 * m.step * m.count);
     return over > 0 ? over : null;
@@ -1451,16 +1721,29 @@
   }
   function domeStaleWhy() {
     var p = domeFetchProblem;
+    // Every one through fmt (T[key] || key), never a bare T[...] lookup:
+    // a key that drifts by one character from its Python source then
+    // renders "(undefined)" instead of falling back to English, and the
+    // tests -- which assert the English text a matching key also
+    // produces -- would not see it.
     if (p === null) {
-      return T['no newer backdrop is being generated'];
+      return fmt('no newer backdrop has arrived', {});
     }
+    // The FILE that failed, not the family's base name: the walk is
+    // usually on a numbered slot, and an rsync that dropped those while
+    // keeping dome-svg.txt would otherwise send a reader to the one file
+    // being served perfectly.
+    var file = p.file || 'dome-svg.txt';
     if (p.kind === 'http') {
-      return fmt('dome-svg.txt returns HTTP {status}', {status: p.status});
+      return fmt('{file} returns HTTP {status}', {file: file, status: p.status});
     }
     if (p.kind === 'net') {
-      return T['no response for dome-svg.txt'];
+      return fmt('no response for {file}', {file: file});
     }
-    return T['dome-svg.txt is not a sky fragment'];
+    if (p.kind === 'empty') {
+      return fmt('{file} is empty', {file: file});
+    }
+    return fmt('{file} is not a sky fragment', {file: file});
   }
   function fmtBackdropWhen(ts, refTs) {
     // The backdrop's own time, to the minute -- seconds would be noise
@@ -1478,7 +1761,30 @@
     }
     return d.toLocaleString(LOCALE, tzOptions(opts));
   }
+  function domeAsking(nowTs) {
+    // "The page is still asking, so it is not yet answering."  A fetch
+    // on the wire, or the few seconds' grace after a load or a wake,
+    // holds back a verdict that has not been reached -- but never
+    // retracts one already given, or a hung server would blink the
+    // explanation off and on beneath a dome that never moves.
+    //
+    // The FREEZE consults this too, and must: gating only the line left
+    // a page restored from cache standing visibly frozen with nothing
+    // underneath it for as long as the grace ran, which is the silence
+    // this release exists to end.  Freeze and explanation begin
+    // together, or neither does.
+    return (domeFetchInFlight || nowTs < domeStaleGrace)
+           && domeStaleShown === '';
+  }
   function updateDomeStale(nowTs) {
+    if (pageTimedOut) {
+      // A page past expiration_time has deliberately stopped fetching,
+      // so it has no standing to say the station is not writing
+      // backdrops -- the same accusation-without-asking the domeChecked
+      // gate prevents, reached from the other end.  The badge already
+      // says CLICK-ME, which is the honest account of this state.
+      return;
+    }
     // Runs on the one-second tick, with or without a loop feed: a dead
     // feed does not stop the backdrop going stale, and the reader is
     // owed the line either way.
@@ -1487,7 +1793,29 @@
       return;                    // no dome on this page
     }
     var msg = '';
-    if (domeStaleFor(nowTs) !== null && nowTs >= domeStaleGrace) {
+    // domeChecked, because the no-fault reason -- fetches fine, nothing
+    // newer being written -- is a claim about the station that this page
+    // cannot make before its first refetch has come back.  A page
+    // restored from cache with an old backdrop would otherwise post it
+    // within the first second, having asked nobody.  Bounded by the
+    // fetch's own timeout, after which some outcome is recorded.
+    //
+    // The FREEZE consults the same two conditions (renderDome), so the
+    // dome and the line explaining it begin together.  If you are here
+    // to make them agree, they already do -- see domeAsking.
+    // A request on the wire holds back a line that has not been shown
+    // yet -- the wake grace is five seconds and a fetch may take ten, so
+    // a slow sky over a slow link would otherwise flash the accusation
+    // in the gap between them.  It does NOT retract a line already
+    // standing: against a server that hangs for the full ten seconds
+    // every minute, that would blink the explanation off and on beneath
+    // a dome that never moves, which is worse than either state.  The
+    // freeze has no such gate, and the two must agree.
+    // Neither an in-flight fetch nor a wake grace retracts a line that
+    // is already standing: on a dead station, a tab flip would otherwise
+    // blank the explanation for five seconds under a dome that never
+    // moves.  Both only hold back a line that has yet to appear.
+    if (domeChecked && !domeAsking(nowTs) && domeStaleFor(nowTs) !== null) {
       // The key's em dash is spelled with its \u escape, matching
       // json.dumps' escaping of the generated T object.
       msg = fmt('Star field frozen \u2014 this sky is from {time} ({why})',
@@ -1670,6 +1998,14 @@
     try {
       // Cache-busted, like the dome fragment.
       xhttp.open('GET', 'pass-chart.txt?ts=' + Date.now(), true);
+      // Timed out like the dome's fetch, and for the same reason: a
+      // server that accepts the connection and never answers would
+      // otherwise leave one request hanging every five minutes for the
+      // life of the page.  The chart carries no health line of its own --
+      // it is a fixed future scene, not a live sky -- so this buys
+      // tidiness rather than a diagnosis.  Sized like the dome's, and
+      // for the same payload reason.
+      xhttp.timeout = 30000;
       xhttp.send();
     } catch (e) {
       console.log(e);
@@ -2027,8 +2363,18 @@
   }
 
   // ---- poll + local tick ---------------------------------------------------
+  var lastTickTs = 0;
   function localTick() {
     var nowTs = Date.now() / 1000;
+    // Two minutes, not five seconds: a hidden tab's timers are throttled
+    // to roughly one a minute, so a tighter threshold reads ordinary
+    // background running as a resume, on every single tick.  A real
+    // sleep is minutes at least, and shorter suspends are caught by
+    // visibilitychange and pageshow anyway.
+    if (lastTickTs !== 0 && nowTs - lastTickTs > 120) {
+      domeWake();                // the machine was not running; see above
+    }
+    lastTickTs = nowTs;
     setHtml('live-clock', fmtHMS(nowTs));
     // The countdowns tick with or without loop data -- their static
     // targets are baked into the page; the feed re-anchors and rolls.
@@ -2037,6 +2383,7 @@
     // whatever the loop feed is doing.
     updateDomeStale(nowTs);
     if (latest !== null) {
+      renderSatRosters(nowTs);
       renderGeo(nowTs);
       renderDome(nowTs);
       renderPass(nowTs);
@@ -2086,8 +2433,30 @@
         }
 
         latest = result;
+        var prevTs = latestTs;
         latestTs = (typeof lastTs === 'number') ? lastTs : nowTs;
+        // Stamped by the browser, for the one question that must not
+        // cross clocks: has the feed stopped arriving HERE?  latestTs is
+        // the station's own time and belongs to the backdrop-age
+        // judgement; comparing it against Date.now() would make an
+        // ordinary two-minute clock skew look exactly like a dead feed.
+        //
+        // Only when the packet is NEW, though.  The commonest way a feed
+        // dies is not a failed fetch: weewx-loopdata stops writing and
+        // the web server goes on serving the last file, so every poll is
+        // a 200 carrying the same stale json.  Stamping those would keep
+        // this clock fresh for ever while the station's clock -- and with
+        // it the backdrop-age judgement, which reads latestTs -- froze:
+        // both restore paths dead at once, and the plate left showing a
+        // current star field wearing hour-old bodies.  A repeat of the
+        // same packet is not news.  (A feed with no dateTime at all
+        // stamps from the browser clock above, so this is inert for it:
+        // there is no station clock there to detect anything against.)
+        if (latestTs !== prevTs) {
+          latestRecvTs = nowTs;
+        }
         pushHistory(latestTs, result);
+        renderSatRosters(nowTs);
         renderGeo(nowTs);
         renderDome(nowTs);
         renderPass(nowTs);
@@ -2103,8 +2472,13 @@
     }
     xhttp.ontimeout = xhttp.onerror;
     try {
-      xhttp.timeout = 1800;
       xhttp.open("GET", "$Extras.loop_data_file", true);
+      // AFTER open(), for the reason the dome's fetch documents: an
+      // engine that throws InvalidStateError on a timeout set against an
+      // unopened request would throw here inside this try, the catch
+      // would swallow it, and the poll would never send -- the page
+      // would never go live at all, which is worse than any dome fault.
+      xhttp.timeout = 1800;
       xhttp.send();
     } catch (e) {
       console.log(e);

@@ -51,6 +51,25 @@ Installing registers the report; its options live in `weewx.conf`:
 - `title` / `meta_title` (Extras): override the page heading and the HTML
   `<title>`.
 
+## Report timing is not supported
+
+**Do not set `report_timing` on this report.**  This page is live: its
+dome backdrops are written by the report cycle and refetched by the open
+page every minute, and the whole design assumes those two run at the same
+rate.  A report throttled to run less often than the archive interval
+leaves the page holding a sky older than it is willing to draw marks
+over, so the dome freezes and says so — permanently, and correctly: from
+the browser, a deliberately slow report and a station that has stopped
+writing backdrops look exactly alike.
+
+If report generation is costing more than you want to spend — this skin
+renders a dome backdrop for each slot that fits inside the archive
+interval, five of them at WeeWX's default five minutes and up to ten on a
+longer one, which is the expensive part — lengthen the **archive
+interval** instead.  The page follows that on its
+own: the fragment set is spaced across it, and the staleness limit is
+derived from it.
+
 ## Dark, light and auto
 
 The page ships as the night plate it has always been.  `theme` switches

@@ -1,6 +1,121 @@
 weewx-celestial change history
 ------------------------------
 
+8.3.2 (2026/08/15)
+------------------
+- ACTION: the sky dome's star field advances again on stations whose
+  units are not the defaults.  The dome fragments are spaced across the
+  archive interval, which the templates read as $current.interval.raw --
+  a value delivered in whatever unit the report's group_interval asks
+  for.  A station carrying `group_interval = hour` reports a five-minute
+  interval as 0.0833, int() takes that to 0, and EVERY fragment renders
+  empty, slot 0 included: the open page keeps the sky it was generated
+  with for ever, the sun and planets go on moving across it, and nothing
+  appears in the log because nothing failed.  Both templates now read
+  the interval in seconds explicitly and round rather than truncate (the
+  conversion is floating point, and 299.99988 would have cost the set a
+  slot), with a fallback if it ever comes back non-positive.  This is the
+  original fault behind Jacques Terrettaz's issue #4 -- he read the
+  templates on his own station and found it.
+- The satellite rosters keep rolling through a frozen dome.  8.3.1's
+  freeze took them with it -- both the next-pass table under the dome and
+  the visible-pass table beside the chart -- because the code that writes
+  their countdown lines sat inside the dome's own render.  A station
+  whose fragments stopped serving got a roster stuck on one pass beside a
+  countdown chip that went on ticking, the two contradicting each other
+  about the same satellite.  The rows are pure loop-feed arithmetic and
+  now live outside the dome entirely, which is what the 8.3.1 notes
+  already claimed.
+- A frozen dome shows the sky the almanac drew.  8.3.1 froze the marks
+  wherever the last nudge left them, which on a page restored from cache
+  could be, most of the way across an hours-old sky -- and a body the
+  live layer had HIDDEN for setting since the backdrop was drawn stayed
+  hidden, so the plate could show a daytime sky with no sun in it.  Every
+  mark now goes back to the backdrop's own geometry as the freeze
+  engages.
+- A dead loop feed no longer defeats the freeze.  The backdrop's age is
+  judged against the station's clock, which the loop packets carry -- so
+  when the feed stops, that clock stops, the backdrop can never be called
+  stale, and 8.3.1 went on drawing bodies at their last known place while
+  the star field behind them kept advancing: the same lie with the two
+  inputs swapped.  Whichever input dies now, the marks return to the
+  backdrop's geometry and the plate stays internally honest.  No second
+  line under the panel: the LIVE badge already carries the feed's fault.
+  A STALLED feed counts as a dead one: the commonest failure is not a
+  failed fetch but weewx-loopdata stopping while the web server goes on
+  serving the last file, so every poll succeeds and carries the same
+  json.  A repeat of a packet already seen is not news, and does not
+  keep the page believing its feed is alive.
+- An empty fragment has its own reason in the frozen line ("dome-svg.txt
+  is empty").  8.3.1 called it "not a sky fragment" -- the words for
+  garbage -- when emptiness is sometimes by design (a slot beyond the
+  archive interval) and sometimes means the station is writing no
+  backdrop at all.  Naming the file is what tells the two apart.
+- The line names the fragment that actually failed.  It is usually a
+  numbered slot -- dome-svg-3.txt -- and 8.3.1 hardcoded dome-svg.txt, so
+  a deploy that dropped only the numbered fragments sent the reader to
+  the one file being served perfectly.
+- The line waits until the page has actually asked.  "Nothing newer has
+  arrived" is a claim about the station, and 8.3.1 could make it within
+  the first second, before any refetch had returned -- a page restored
+  from cache accused a station it had not yet spoken to.
+- The frozen line's no-fault wording is plainer: "no newer backdrop has
+  arrived" states what the page sees rather than accusing the station of
+  not generating one.
+- A hung server is reported as a hung server.  8.3.1's dome fetch wired
+  ontimeout but never set a timeout, so a connection that was accepted
+  and never answered left the request hanging: no error was recorded, the
+  line fell back to the no-fault reason, and a dead request piled up
+  every minute.  Thirty seconds now -- a rendered fragment is about
+  140 KB, and a tighter budget failed every refetch over a slow mobile
+  link -- and "no response" when it expires.  The loop-data poll
+  has carried the mirror-image hazard since long before this release --
+  its timeout was set BEFORE the request was opened, which older engines
+  reject by throwing, inside a try whose catch would have swallowed it
+  and left the page never going live at all.  Both are now set after
+  opening.
+- Every way a page comes back to life refetches the sky.  8.3.1 covered a
+  tab returning to the front; the back button restoring from the
+  browser's cache raises no visibility change at all, and neither does an
+  OS suspend with the tab already in front -- the second is caught now by
+  noticing that a one-second tick did not fire for two minutes.  A page
+  also refetches once at load, so HTML served from a cache corrects
+  itself at once instead of standing on a stale sky until the first
+  minute boundary.
+- A page coming back from sleep keeps its few seconds' grace even when
+  the overdue interval, rather than the wake itself, sends the fetch --
+  8.3.1 granted it only on the path that fetched, which is usually not
+  the one that runs first.  And neither that grace nor a fetch in flight
+  now retracts a line already standing: 8.3.1 could blank the
+  explanation under a dome that never moved.
+- One refetch at a time.  On resume the overdue interval and the wake
+  both came due and each sent its own; 8.3.1's never-step-backward guard
+  hid the collision rather than preventing it.
+- ALTERING REPORT TIMING IS NOT SUPPORTED, and the manual now says so.
+  The dome backdrops are written by the report cycle and the open page
+  refetches them every minute; a report_timing that makes reports run
+  less often than the archive interval leaves the page holding a sky
+  older than it will draw marks over, so the dome freezes and says so.
+  From the browser a deliberately slow report and a stopped station look
+  exactly alike.  Lengthen the archive interval instead: the page follows
+  that on its own.
+- Every reason in the frozen line goes through the translation fallback,
+  so a key that drifts from its source renders English rather than
+  "undefined".
+- The version log line is guarded where it claimed to be: the skin dict
+  is now read inside the guard rather than at the call site, so a
+  generator without one cannot take the page down.
+- The French translation is reviewed in full by native speaker Jacques
+  Terrettaz -- this skin's own strings included -- with his corrections
+  to the roster's motion line ("s'eloigne a 28 km/s") and to the
+  satellite pass strings ("culmine a 19 degrees").  The reference
+  dictionary gains a translators' note that the pass sub-line's {rise},
+  {culm} and {set} are compass points rather than times, a trap the other
+  eight languages had open.
+- Found by seven code reviews -- of 8.3.1, five of this change, and of
+  the same machinery ported into another skin -- and by Jacques
+  Terrettaz, who found the one that mattered by reading the templates.
+
 8.3.1 (2026/08/15)
 ------------------
 - A sky dome whose backdrop stops arriving now freezes and says so.  The

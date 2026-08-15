@@ -21,12 +21,26 @@
 ## unexpected failure must fail the template (weewxd logs it and the old
 ## fragment stays on disk), never write error text into the page.
 #if $sky_page
+## SECONDS, explicitly.  $current.interval.raw is delivered in whatever
+## unit the report's group_interval asks for, so a station carrying
+## `group_interval = hour` reports a five-minute interval as 0.0833 --
+## int() takes that to 0, every slot's offset then fails the test below,
+## and ALL TEN fragments render empty.  The page keeps its
+## generation-time sky and the star field stands still for ever, with
+## nothing in the log, because nothing failed.  `.second.raw` converts
+## regardless of the setting.  Found by Jacques Terrettaz, issue #4.
 #set $frag_interval = 300
 #try
-#set $frag_interval = int($current.interval.raw) * 60
+## round(), not int(): the unit conversion is floating point, so an
+## hour-based interval comes back as 299.99988 and truncation would
+## quietly cost the set a slot.
+#set $frag_interval = int(round($current.interval.second.raw))
 #except
 #pass
 #end try
+#if not $frag_interval or $frag_interval <= 0
+#set $frag_interval = 300
+#end if
 #set $frag_step = max(60, $frag_interval // 10)
 #set $frag_count = min(10, max(1, $frag_interval // $frag_step))
 #set $frag_offset = $frag_k * $frag_step

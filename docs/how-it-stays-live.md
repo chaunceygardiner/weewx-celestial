@@ -96,14 +96,19 @@ fragments:
   for an hour, so from 8.3.1 the page watches the backdrop's age.  Once it
   is three report cycles behind — measured against the station's own
   clock, which the loop packets carry, not the viewer's — the dome
-  **freezes whole**, marks and satellites with it, and a line under the
-  panel says so and names the fault: an HTTP status if the fragment is
-  not being served, "not a sky fragment" if what comes back is empty or
-  unreadable, "no response" if nothing answers, and — the case no status
-  code could reveal — "no newer backdrop is being generated" when the
-  fetches succeed but the station has stopped writing new ones.  Nothing
-  else on the page is affected: the dial, the roster and the countdown
-  chips stand on the loop feed, not on the backdrop.  See
+  **freezes
+  whole**, marks and satellites with it, and a line under the panel says
+  so and names the fault, and the fragment it names is the one that
+  actually failed: an HTTP status if that fragment is not being served,
+  "not a sky fragment" if what comes back is unreadable, "no response" if
+  nothing answers, and — the case no status code could reveal — "no newer
+  backdrop has arrived" when the fetches succeed but no newer sky is
+  being written — and "is empty" when the file is there with nothing in
+  it, which is sometimes by design (a slot beyond the archive interval)
+  and sometimes the station writing no backdrop at all.  Naming the file
+  is what tells those two apart.  Nothing else on the page is affected:
+  the dial, both satellite rosters and the countdown chips stand on the
+  loop feed, not on the backdrop, and go on rolling.  See
   [The star field is frozen](troubleshooting.md#the-star-field-is-frozen).
 - **The pass chart**, refetched every five minutes, which is how a
   completed pass's chart rolls over to the next pass, and how the panel

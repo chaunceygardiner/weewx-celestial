@@ -769,6 +769,51 @@ class TestSampleSkinRenders:
         finally:
             os.chdir(cwd)
 
+    def test_dome_fragment_survives_any_group_interval(self, wxskyfield_almanac):
+        """$current.interval arrives in whatever unit the report's
+        group_interval asks for, so a station carrying `group_interval =
+        hour` reports a five-minute interval as 0.0833.  Read with .raw
+        and int()ed, that is ZERO -- every slot's offset then fails the
+        offset test and ALL TEN fragments render empty, with nothing in
+        the log because nothing failed.  The open page keeps its
+        generation-time sky for ever.  That is Jacques Terrettaz's issue
+        #4, and it is why the templates read .second.raw.  Pinned for
+        both templates, since they repeat the arithmetic."""
+
+        class Val:
+            """A $current.interval as WeeWX delivers it: .raw in the
+            report's own unit, .second.raw always in seconds."""
+
+            def __init__(self, raw, seconds):
+                self.raw = raw
+                self.second = type('S', (), {'raw': seconds})()
+
+        # The second case is what WeeWX really hands a group_interval =
+        # hour station: the conversion is floating point, so seconds come
+        # back as 299.99988 and a truncating int() would cost the set a
+        # slot (verified against weewx.units, not assumed).
+        for label, interval in (('hours', Val(0.08333333, 300.0)),
+                                ('hours, as converted', Val(0.0833333, 299.99988)),
+                                ('minutes', Val(5.0, 300.0)),
+                                ('seconds', Val(300.0, 300.0))):
+            out = self.render_dome_fragment('dome-svg.txt.tmpl', {
+                'almanac': wxskyfield_almanac,
+                'sky_page': make_sky_page(),
+                'current': type('C', (), {'interval': interval})(),
+            })
+            assert '<svg' in out, label
+            assert 'data-dome-step="60"' in out, label
+            assert 'data-dome-count="5"' in out, label
+
+        # A nonsense interval falls back rather than emptying the set.
+        out = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'almanac': wxskyfield_almanac,
+            'sky_page': make_sky_page(),
+            'current': type('C', (), {'interval': Val(0.0, 0.0)})(),
+        })
+        assert '<svg' in out
+        assert 'data-dome-count="5"' in out
+
     def test_dome_fragment_template(self, wxskyfield_almanac):
         """dome-svg.txt.tmpl, the refetch fragment (stagger slot 0): the
         self-describing wrapper around the dome SVG (data-body hooks
@@ -978,8 +1023,13 @@ class TestSampleSkinRenders:
         from types import SimpleNamespace
 
         def render(name, interval_minutes):
+            # .second.raw is what the templates read, and deliberately so:
+            # .raw arrives in the report's own group_interval unit (see
+            # test_dome_fragment_survives_any_group_interval).
             current = SimpleNamespace(
-                interval=SimpleNamespace(raw=interval_minutes))
+                interval=SimpleNamespace(
+                    raw=interval_minutes,
+                    second=SimpleNamespace(raw=interval_minutes * 60)))
             return self.render_dome_fragment(name, {
                 'almanac': wxskyfield_almanac, 'sky_page': make_sky_page(),
                 'current': current})
@@ -1240,6 +1290,7 @@ class TestSampleSkinRenders:
         non-browser harness, because only a browser predefines
         window.history).  Skips when the playwright env is absent."""
         import http.server
+        import re as relib
         import json as jsonlib
         import socketserver
         import subprocess
@@ -1255,11 +1306,19 @@ class TestSampleSkinRenders:
         # for the duration of this test).
         bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
                   'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+        # The packets carry the BROWSER's clock, not the fixture's, while
+        # their astronomy stays the fixture's.  A real station's feed and
+        # the machine reading it agree on the time; this harness would
+        # otherwise present a feed a year stale, and the page treats a
+        # feed more than EXTRAP_MAX behind as dead -- correctly -- and
+        # puts the dome's marks back where the backdrop drew them.  The
+        # embedded backdrop is restamped below for the same reason.
+        wall = int(time.time())
         packets = []
-        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
+        for i, ts in enumerate((TIME_TS, TIME_TS + 2, TIME_TS + 4)):
             alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                         formatter=weewx.units.get_default_formatter())
-            r = {'current.dateTime.raw': ts,
+            r = {'current.dateTime.raw': wall + 2 * i,
                  'almanac.moon.phase': alm.moon.phase,
                  'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
                  'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
@@ -1303,8 +1362,10 @@ class TestSampleSkinRenders:
                 r['almanac.%s.next_pass.visible' % s] = p2.visible
             packets.append(jsonlib.dumps(r).encode())
 
-        (tmp_path / 'index.html').write_text(
-            self.render(wxskyfield_sat_almanac, sky_page=make_sky_page()))
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % wall,
+                         html, count=1)
+        (tmp_path / 'index.html').write_text(html)
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
@@ -1514,13 +1575,18 @@ class TestSampleSkinRenders:
         # identity.  The dome/pass chip machinery is independent of loop
         # data (the swap dismissal must be too); only the dial's titles
         # below need the packet.
-        # The staged timestamp must be NEWER than the rendered page's
-        # (TIME_TS): the backward guard rejects an older sky.
-        (tmp_path / 'dome-svg.txt').write_text(
-            '<div class="domefrag" data-dome-ts="%d" data-dome-step="60" '
-            'data-dome-count="1">%s</div>'
-            % (TIME_TS + 60, str(sky_page.dome_svg(wxskyfield_sat_almanac))))
-        assert '<svg' in (tmp_path / 'dome-svg.txt').read_text()
+        # The staged timestamps must be NEWER than the rendered page's
+        # (TIME_TS): the backward guard rejects an older sky.  TWO of
+        # them, because 8.3.2 refetches once at load as well: the first
+        # lands then, and the SECOND is the one the fast-forwarded minute
+        # brings -- which is the swap whose chip-dismissal is under test.
+        def staged(ts):
+            return ('<div class="domefrag" data-dome-ts="%d" '
+                    'data-dome-step="60" data-dome-count="1">%s</div>'
+                    % (ts, str(sky_page.dome_svg(wxskyfield_sat_almanac))))
+        domefrags = [staged(TIME_TS + 60), staged(TIME_TS + 120)]
+        assert '<svg' in domefrags[0]
+        fetched = {'n': 0}
         # One loop packet with known mars numbers: the dial's marks and
         # their <title>s exist only once a packet arrives, and a single
         # packet derives no rates, so the title holds exactly these values.
@@ -1534,6 +1600,21 @@ class TestSampleSkinRenders:
         requested = []
 
         class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/dome-svg.txt'):
+                    requested.append('/dome-svg.txt')
+                    body = domefrags[min(fetched['n'],
+                                         len(domefrags) - 1)].encode()
+                    fetched['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
             def translate_path(self, path):
                 requested.append(path.split('?')[0])
                 return str(tmp_path / path.split('?')[0].lstrip('/'))
@@ -1619,7 +1700,7 @@ class TestSampleSkinRenders:
         # The fragment swap really happened (the staged wrapper's identity
         # replaced the rendered one) and dismissed the open chip.
         assert '/dome-svg.txt' in requested, requested
-        assert out['swapped_dome_ts'] == str(TIME_TS + 60)
+        assert out['swapped_dome_ts'] == str(TIME_TS + 120)
         assert out['after_swap']['shown'] is False
         # Delegation binds to nothing, so the swapped-in dome's marks work
         # untouched -- and the same almanac instant renders the same title.
@@ -1785,8 +1866,312 @@ class TestSampleSkinRenders:
         assert out['swept'] == 1           # still mid-pass at the final sample
         assert served['n'] >= 5            # every phase of the walk was served
 
-    def test_stale_backdrop_freezes_the_dome_in_a_real_browser(
+    def test_dome_seed_waits_for_the_document(self):
+        """The include is inline at the TOP of <body> and the dome sits
+        hundreds of lines below it, so anything that reads the rendered
+        dome must run from the load handler, never at script-eval time.
+        A seed that runs too early finds no #dome-svg, does nothing, and
+        says nothing -- it cost the applied-fragment identity, the cycle
+        baseline and the remembered cadence all at once, and no browser
+        test noticed because every symptom was an absence.  This pins the
+        shape: seedAppliedFrag is a plain function, called from
+        addLoadEvent, and never invoked at top level."""
+        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
+                   encoding='utf-8').read()
+        assert 'function seedAppliedFrag()' in src
+        # Not an IIFE, and not called from column 2 (top-level statement).
+        assert '(function seedAppliedFrag()' not in src
+        assert not re.search(r'^  seedAppliedFrag\(\);', src, re.M)
+        # Called from inside the load handler, with the first refetch.
+        m = re.search(r'addLoadEvent\(function\(\) \{(.*?)\}\);', src, re.S)
+        assert m is not None, 'the load handler is gone'
+        assert 'seedAppliedFrag();' in m.group(1)
+        assert 'refreshDome();' in m.group(1)
+        # And the template really does put the script above the dome, which
+        # is the whole reason this rule exists.
+        tmpl = open(os.path.join(SKIN_DIR, 'index.html.tmpl'),
+                    encoding='utf-8').read()
+        assert (tmpl.index('realtime_updater.inc')
+                < tmpl.index('id="dome-svg"')), \
+            'the include no longer precedes the dome; revisit the seed'
+
+    def test_freeze_restores_the_drawn_sky_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
+        """The freeze puts the dome back the way the almanac drew it.
+
+        The other stale test starts stale, so nothing is ever nudged and
+        it cannot see this at all.  Here the page starts CURRENT and the
+        live layer really runs: bodies take nudge transforms, the sun --
+        drawn up at the fixture noon -- is fed below the horizon so the
+        live layer HIDES it, and a satellite marker is created.  Then the
+        station's clock leaps two hours (the feed carries it, and the
+        freeze is judged by it), the fragments 404 so no swap can clear
+        the markup and fake the result, and the freeze engages.
+
+        Pins: no mark keeps a transform, NO MARK KEEPS A display -- a
+        body the live layer hid must come back, or the frozen plate shows
+        a daytime sky with no sun in it -- and no live satellite marker
+        survives.  The display half was found by the liveseasons port's
+        review of this same function.  Skips when the playwright env is
+        absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        now = int(time.time())
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        # Current, so the page starts live rather than frozen.
+        html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
+                         html, count=1)
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        def packet(ts, sun_alt):
+            return jsonlib.dumps({
+                'current.dateTime.raw': ts,
+                # Below the horizon: the live layer HIDES the sun, which
+                # the backdrop drew high (fixture noon).
+                'almanac.sun.az': 200.0, 'almanac.sun.alt': sun_alt,
+                'almanac.sun.earth_distance': 1.016,
+                'almanac.mercury.az': 150.0, 'almanac.mercury.alt': 20.0,
+                'almanac.mercury.earth_distance': 0.85,
+                'almanac.mars.az': 100.0, 'almanac.mars.alt': 35.0,
+                'almanac.mars.earth_distance': 0.9,
+                'almanac.iss.az': 120.0, 'almanac.iss.alt': 45.0,
+                'almanac.iss.sunlit': True, 'almanac.iss.label': 'ISS',
+            }).encode()
+
+        # Live for the first few polls, then the station's clock jumps.
+        packets = ([packet(now + 2 * i, -5.0) for i in range(4)]
+                   + [packet(now + 7200 + 2 * i, -5.0) for i in range(6)])
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()   # dome-svg.txt: 404, no swap
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The live layer really ran: marks moved, the set sun was\n'
+            '    # hidden, a satellite marker was drawn.\n'
+            "    page.wait_for_selector('#dome-svg g.dome-body[transform]', timeout=15000)\n"
+            '    out = {\n'
+            "        'live_nudged': page.eval_on_selector_all(\n"
+            "            '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
+            "        'live_hidden': page.eval_on_selector_all(\n"
+            "            '#dome-svg g.dome-body[display]', 'els => els.length'),\n"
+            "        'live_satdots': page.eval_on_selector_all(\n"
+            "            '#dome-svg .satdot', 'els => els.length'),\n"
+            '    }\n'
+            '    # ...and then the station clock leaps and the freeze engages.\n'
+            "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=20000)\n"
+            '    page.wait_for_timeout(2500)\n'
+            "    out['nudged'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg g.dome-body[transform], #dome-svg text[data-body][transform]',\n"
+            "        'els => els.length')\n"
+            "    out['hidden'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg g.dome-body[display], #dome-svg text[data-body][display]',\n"
+            "        'els => els.length')\n"
+            "    out['satdots'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg .satdot', 'els => els.length')\n"
+            "    out['errors'] = errors\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        # The live layer did all three things, so the restore has work to do.
+        assert out['live_nudged'] >= 1, out
+        assert out['live_hidden'] >= 1, out
+        assert out['live_satdots'] >= 1, out
+        # And the freeze undid every one of them.
+        assert out['nudged'] == 0, out
+        assert out['hidden'] == 0, out
+        assert out['satdots'] == 0, out
+
+    def test_stalled_feed_restores_the_drawn_sky_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """A feed that STALLS is the commonest way a feed dies, and the
+        hardest case: weewx-loopdata stops writing while the web server
+        goes on serving the last file, so every poll is a 200 carrying
+        identical json.  Nothing fails.  The station's clock inside those
+        packets stops, which also stops the backdrop-age judgement that
+        reads it -- so unless the page notices that a repeat is not news,
+        both of its restore paths are dead at once and the dome is left
+        showing a current star field wearing hour-old bodies.
+
+        A 503-shaped test passes happily over this: it must stall, not
+        fail.  Here the live layer nudges for real, the feed then repeats
+        one packet for ever, and the page's clock is driven past
+        EXTRAP_MAX -- after which every mark must be back where the
+        backdrop drew it.  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        now = int(time.time())
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
+                         html, count=1)
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        def packet(ts):
+            return jsonlib.dumps({
+                'current.dateTime.raw': ts,
+                'almanac.sun.az': 200.0, 'almanac.sun.alt': 30.0,
+                'almanac.sun.earth_distance': 1.016,
+                'almanac.mercury.az': 150.0, 'almanac.mercury.alt': 20.0,
+                'almanac.mercury.earth_distance': 0.85,
+                'almanac.iss.az': 120.0, 'almanac.iss.alt': 45.0,
+                'almanac.iss.sunlit': True, 'almanac.iss.label': 'ISS',
+            }).encode()
+
+        # Three fresh packets, then the same one for ever: the file on the
+        # far end has stopped being rewritten.
+        packets = [packet(now), packet(now + 2), packet(now + 4)]
+        stalled = packet(now + 4)
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = (packets[served['n']] if served['n'] < len(packets)
+                            else stalled)
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.clock.install()\n'
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The live layer ran on the fresh packets.\n'
+            "    page.wait_for_selector('#dome-svg g.dome-body[transform]', timeout=15000)\n"
+            "    out = {'live_nudged': page.eval_on_selector_all(\n"
+            "        '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
+            "        'live_satdots': page.eval_on_selector_all(\n"
+            "            '#dome-svg .satdot', 'els => els.length')}\n"
+            '    # Now the feed repeats itself while the clock runs past\n'
+            '    # EXTRAP_MAX.  Every poll still answers 200.  Stepped, not\n'
+            '    # leapt: each step needs the event loop back to deliver the\n'
+            '    # XHR the timers just fired.\n'
+            '    for _ in range(16):\n'
+            '        page.clock.fast_forward(10000)\n'
+            '        page.wait_for_timeout(120)\n'
+            "    out['nudged'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg g.dome-body[transform], #dome-svg text[data-body][transform]',\n"
+            "        'els => els.length')\n"
+            "    out['hidden'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg g.dome-body[display], #dome-svg text[data-body][display]',\n"
+            "        'els => els.length')\n"
+            "    out['satdots'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg .satdot', 'els => els.length')\n"
+            "    out['errors'] = errors\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert out['live_nudged'] >= 1, out       # the live layer really ran
+        assert out['live_satdots'] >= 1, out
+        assert served['n'] > len(packets), out    # and the feed kept answering
+        # The stall was noticed even though every poll succeeded.
+        assert out['nudged'] == 0, out
+        assert out['hidden'] == 0, out
+        assert out['satdots'] == 0, out
+
+    @pytest.mark.parametrize('serve_fragment,reason', [
+        # Fetches succeed and the file they return is old: the station
+        # has stopped writing new ones (or its report cadence is longer
+        # than this page has learned).  The case no status code reveals.
+        (True, 'no newer backdrop has arrived'),
+        # Nothing is served where the page looks.
+        (False, 'dome-svg.txt returns HTTP 404'),
+    ])
+    def test_stale_backdrop_freezes_the_dome_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path, serve_fragment, reason):
         """A backdrop that stops advancing freezes the dome and says so.
         The page is rendered for the fixture instant and fed packets on
         the browser's real clock -- the station saying, in effect, that
@@ -1796,12 +2181,14 @@ class TestSampleSkinRenders:
         transform and no live satellite marker is drawn (bodies and
         satellites freeze together -- a satellite flying over a
         motionless star field is the lie this prevents), the health line
-        under the panel is SHOWN and names the reason, and the rest of
-        the page goes on living: the dial still nudges and the roster
-        still ticks, because neither stands on the backdrop.  Skips when
-        the playwright env is absent."""
+        under the panel is SHOWN and names the RIGHT reason of the two
+        the load-time refetch can reach, and the rest of the page goes on
+        living: the dial still nudges and both satellite rosters still
+        roll, because neither stands on the backdrop.  Skips when the
+        playwright env is absent."""
         import http.server
         import json as jsonlib
+        import re as relib
         import socketserver
         import subprocess
         import threading
@@ -1818,11 +2205,17 @@ class TestSampleSkinRenders:
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
-        # No dome-svg.txt is served, but nothing fetches one inside this
-        # test either (DOME_REFRESH is 60 s): the reason under the panel
-        # must therefore be the no-fetch-problem one -- the station is
-        # not generating newer backdrops -- which is the case no HTTP
-        # status could ever reveal.
+        # The load-time refetch (8.3.2) fires within the test's life, so
+        # which reason the line carries is decided here: a fragment that
+        # answers with the same old sky, or nothing to answer at all.
+        if serve_fragment:
+            frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
+                'sky_page': make_sky_page(),
+                'almanac': wxskyfield_sat_almanac,
+            })
+            assert '<svg' in frag
+            assert relib.search(r'data-dome-ts="\d+"', frag)   # fixture-old
+            (tmp_path / 'dome-svg.txt').write_text(frag)
 
         now = time.time()
 
@@ -1842,6 +2235,15 @@ class TestSampleSkinRenders:
                 'almanac.iss.alt': 45.0 + 0.1 * i,
                 'almanac.iss.sunlit': True,
                 'almanac.iss.label': 'ISS',
+                # A pass in progress right now, nothing like the fixture's
+                # Jun 22 first paint: the rosters must roll to THIS.
+                'almanac.iss.next_pass.rise.unix_epoch.raw': now - 60,
+                'almanac.iss.next_pass.set.unix_epoch.raw': now + 600,
+                'almanac.iss.next_pass.max_altitude.degree_angle.raw': 45.0,
+                'almanac.iss.next_pass.visible': True,
+                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now - 60,
+                'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 600,
+                'almanac.iss.next_visible_pass.max_altitude.degree_angle.raw': 45.0,
             }).encode()
         packets = [packet(i) for i in range(4)]
         served = {'n': 0}
@@ -1883,16 +2285,38 @@ class TestSampleSkinRenders:
             '    # The line appears on the one-second tick, feed or no feed.\n'
             "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=15000)\n"
             '    page.wait_for_timeout(5500)\n'
+            '    def marks():\n'
+            "        return page.evaluate('''() => {\n"
+            "          var out = [];\n"
+            "          document.querySelectorAll('#dome-svg g.dome-body[transform]')\n"
+            "            .forEach(function(g) { out.push(g.getAttribute('data-body') +\n"
+            "                                   ':' + g.getAttribute('transform')); });\n"
+            "          document.querySelectorAll('#dome-svg .satdot').forEach(\n"
+            "            function(c) { out.push('sat:' + c.getAttribute('cx') +\n"
+            "                                   ',' + c.getAttribute('cy')); });\n"
+            "          return out.join('|'); }''')\n"
             '    out = {\n'
             "        'errors': errors,\n"
             "        'stale': page.inner_text('#dome-stale'),\n"
             "        'nudged': page.eval_on_selector_all(\n"
             "            '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
             "        'satdots': page.eval_on_selector_all('#dome-svg .satdot', 'els => els.length'),\n"
+            "        'marks': marks(),\n"
             "        'dialnudged': page.eval_on_selector_all(\n"
             "            '#dial .geodot:not([display])', 'els => els.length'),\n"
             "        'rate': page.inner_text('#geo-rate-mercury'),\n"
+            "        'anyline': page.inner_text('#sat-any-line-iss'),\n"
+            "        'passline': page.inner_text('#sat-line-iss'),\n"
             '    }\n'
+            '    # Two and a half seconds of feed later, every mark on\n'
+            '    # the dome must be exactly where it was: THAT is\n'
+            '    # frozen.  Not "never nudged" -- the freeze waits for\n'
+            '    # the first refetch to come back, so a mark may take\n'
+            '    # one nudge before it engages, and a transform once\n'
+            '    # set is not removed.\n'
+            '    page.wait_for_timeout(2500)\n'
+            "    out['marks_later'] = marks()\n"
+            "    out['rate_later'] = page.inner_text('#geo-rate-mercury')\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
         try:
@@ -1903,17 +2327,29 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
-        # The dome froze, whole: no nudged body, no live satellite.
-        assert out['nudged'] == 0
-        assert out['satdots'] == 0
+        # The dome froze, whole -- bodies and satellites together:
+        # not one mark moved across two and a half seconds of live
+        # feed, while that feed was demonstrably still arriving (the
+        # dial below went on deriving rates from it).
+        assert out['marks'] == out['marks_later']
         # ... and said so, with the reason and a way out.
         assert 'Star field frozen' in out['stale']
-        assert 'no newer backdrop is being generated' in out['stale']
+        assert reason in out['stale'], out['stale']
         assert 'what to check' in out['stale']
         # ... while the rest of the page went on living.
         assert out['dialnudged'] >= 9
         assert 'receding' in out['rate'] or 'approaching' in out['rate']
+        assert ('receding' in out['rate_later']
+                or 'approaching' in out['rate_later'])
         assert served['n'] >= 2
+        # The satellite ROSTERS are loop-feed arithmetic and must roll
+        # through a frozen dome -- they used to sit inside the dome's
+        # render and froze with it, leaving a roster that contradicted
+        # the countdown chip ticking two inches above it (8.3.2).  Both
+        # tables must have left the fixture's Jun 22 first paint for the
+        # pass the feed says is happening now.
+        assert 'overhead now' in out['anyline'], out['anyline']
+        assert 'overhead now' in out['passline'], out['passline']
 
     def test_wake_refetches_the_backdrop_in_a_real_browser(
             self, wxskyfield_almanac, tmp_path):
@@ -1950,9 +2386,16 @@ class TestSampleSkinRenders:
         })
         assert '<svg' in frag
         now = int(time.time())
-        frag = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
-                         frag, count=1)
-        (tmp_path / 'dome-svg.txt').write_text(frag)
+
+        # Two skies, a minute apart.  The load-time refetch (8.3.2) takes
+        # the first, so the WAKE has to be tested against something newer
+        # still: the handler hands out the next one each time, exactly as
+        # a station writing a new cycle would.
+        def stamped(ts):
+            return relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % ts,
+                             frag, count=1)
+        frags = [stamped(now), stamped(now + 60)]
+        fetched = {'n': 0}
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
@@ -1972,6 +2415,16 @@ class TestSampleSkinRenders:
                     self.send_header('Cache-Control', 'no-store')
                     self.end_headers()
                     self.wfile.write(packet)
+                    return
+                if self.path.startswith('/dome-svg.txt'):
+                    body = frags[min(fetched['n'], len(frags) - 1)].encode()
+                    fetched['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
                 return super().do_GET()
 
@@ -1993,13 +2446,20 @@ class TestSampleSkinRenders:
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
             "    page.wait_for_load_state('networkidle')\n"
-            '    # The page has the generation-time backdrop and, being a\n'
-            '    # fixture, is already stale by the feed\'s clock.\n'
+            '    # The load-time refetch has landed the first sky; the\n'
+            '    # wake must go and get the one after it.\n'
+            "    page.wait_for_function('''(was) => {\n"
+            "      var d = document.querySelector('#dome-svg div[data-dome-ts]');\n"
+            "      return d !== null && d.getAttribute('data-dome-ts') !== was;\n"
+            "    }''', arg='%(fixture)d', timeout=5000)\n"
             "    before = page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts')\n"
-            '    # Wake it: the tab comes back to the front.\n'
+            '    # Wake it: the machine was asleep, so no fetch has gone out\n'
+            '    # for a long time (which is what the interval guard reads),\n'
+            '    # and the tab comes back to the front.\n'
             "    page.evaluate('''() => {\n"
+            "      lastDomeFetch = 0;\n"
             "      document.dispatchEvent(new Event('visibilitychange'));\n"
             "    }''')\n"
             '    # Inside a couple of seconds -- nowhere near the 60 s\n'
@@ -2016,7 +2476,7 @@ class TestSampleSkinRenders:
             "            '#dome-stale', 'el => el.hidden'),\n"
             '    }\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % port)
+            'print(json.dumps(out))\n' % {'port': port, 'fixture': TIME_TS})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -2025,8 +2485,8 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
-        assert int(out['after']) > int(out['before'])   # the sky moved on
-        assert int(out['after']) == now
+        assert int(out['before']) == now                # the load-time fetch
+        assert int(out['after']) == now + 60            # the wake's own
         assert out['staleflash'] is True                # and never accused anyone
 
     def test_countdown_chips_tick_and_roll_in_a_real_browser(
@@ -3113,7 +3573,9 @@ class TestI18n:
         assert '"mercury": "Mercure"' in html
         assert '["N", "E", "S", "O"]' in html
         assert '"below horizon": "sous l\'horizon"' in html
-        assert '"approaching": "se rapproche"' in html
+        # Jacques Terrettaz's 2026-08-15 correction: the roster reads
+        # "se rapproche a 28 km/s", so the verb carries its preposition.
+        assert '"approaching": "se rapproche \\u00e0"' in html
         # The footer carries the full French Skyfield credit, naming
         # weewx-skyfield with the project link.
         assert 'Calculé avec %s : Skyfield' % LINKED_NAME in html
@@ -4689,7 +5151,7 @@ class TestManualInStepWithCode:
             assert row.startswith(('Reviewed', 'Partly reviewed', 'Beta')), \
                 'a language row does not lead with its review status: %r' % row
             if not row.startswith('Beta'):
-                assert re.match(r'(Partly r|R)eviewed as of \d+\.\d+ ', row), \
+                assert re.match(r'(Partly r|R)eviewed as of \d+\.\d+(\.\d+)? ', row), \
                     'a review is claimed without the release it was made '\
                     'against: %r' % row
 
