@@ -100,6 +100,49 @@ or raise `expiration_time`.  Appending `?pageUpdate=<page_update_pwd>` to
 the URL disables expiration for that view — the password is visible in
 the page source, so treat it as a convenience, not a secret.
 
+## The star field is frozen
+
+The dome's stars and constellation figures come from backdrops the
+station regenerates every report cycle; the open page refetches one a
+minute (see [How it stays live](how-it-stays-live.md#the-two-fetched-fragments)).
+When those stop arriving the page keeps the last good sky, and from 8.3.1
+it also stops nudging the marks over it — a frozen dome is honestly old,
+while live marks crossing a motionless star field draw a sky that never
+existed — and posts a line under the panel:
+
+> Star field frozen — this sky is from 14:05 (*reason*) · what to check
+
+The reason is the last refetch's outcome, and it says where to look:
+
+| The line says | What it means | What to check |
+|---|---|---|
+| `no newer backdrop is being generated` | The fetches are succeeding; the file they return is old | The station: is the report still running each archive interval?  Are `dome-svg*.txt` mtimes moving?  Is a fragment template failing? (see below) |
+| `dome-svg.txt returns HTTP 404` (or another status) | The fragments are not being served next to the page | Whether the files exist in `HTML_ROOT`, and whether whatever publishes your site (rsync, FTP) carries `.txt` as well as `.html` |
+| `dome-svg.txt is not a sky fragment` | Something answers, but it is empty or is not SVG | A web server returning an error page with status 200; or a report cycle that rendered the fragments empty because no capable almanac served it |
+| `no response for dome-svg.txt` | The request itself failed | The network between browser and server; a page left open through a server restart |
+
+On the station:
+
+```sh
+# Are the fragments being rewritten each report cycle?  Run twice, a
+# cycle apart -- the timestamps should move.
+ls -l <HTML_ROOT>/celestial/dome-svg*.txt
+
+# Did a fragment template fail?  They deliberately carry no error
+# catcher, so a failure is logged and the PREVIOUS file is left in
+# place -- which looks exactly like a frozen sky.
+sudo journalctl -u weewx | grep -i dome
+```
+
+Two things this is not.  The **LIVE badge is a different instrument**: it
+watches `loop_data_file`, which is usually a different URL in a different
+directory, so a healthy badge says nothing about the fragments (and a
+frozen star field says nothing about your loop data).  And a **dead loop
+feed does not raise this line at all** — the backdrop's age is measured
+against the station's clock, which the loop packets carry, so that the
+viewer's own clock can never freeze a healthy sky; when the feed stops,
+the badge is the fault to read, and the dome's marks stop by themselves.
+
 ## A panel shows an install hint instead of a chart
 
 The almanac WeeWX has registered cannot serve that panel.  The page
@@ -258,6 +301,24 @@ grep -i -e celestial -e loopdata -e skyfield /var/log/syslog | tail -40
 # or, where journald has replaced the syslog file:
 journalctl -u weewx --no-pager | grep -i -e celestial -e loopdata -e skyfield | tail -40
 ```
+
+That second command answers the version question too: from 8.3.1 the skin
+announces itself at the first report that renders the page after a
+restart —
+
+```
+INFO user.celestial_sky: Celestial version is 8.3.1.
+```
+
+— and it is the version of the skin that actually rendered the page,
+which is the one worth reporting.  It is logged once, not every cycle, so
+look near the restart rather than at the tail of the log; it speaks again
+only if the version changes, which is how a later upgrade announces
+itself without a restart.  Installing over a running weewxd never changes
+the code weewxd has already imported, so the line that follows an install
+is the one after your restart.  (Before 8.3.1 this extension had no
+service and never named itself at all; `weectl extension list` is the
+fallback.)
 
 Then [open an issue](https://github.com/chaunceygardiner/weewx-celestial/issues)
 with both, your WeeWX version, and the versions of weewx-celestial,

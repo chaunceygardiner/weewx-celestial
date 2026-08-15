@@ -588,6 +588,17 @@
             #set $frag_ts = int($almanac.time_ts)
             <div id="dome-svg"><div class="domefrag" data-dome-ts="$frag_ts" data-dome-step="$frag_step" data-dome-count="$frag_count">$dome_html</div></div>
             <p class="caption dialcaption">$gettext("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon.") $gettext("Hover or tap any mark for its coordinates.")</p>
+            ## The backdrop's health line, written by the javascript
+            ## (updateDomeStale) and hidden until the fragment refetches
+            ## stop landing -- at which point the dome freezes rather
+            ## than flying live marks over a motionless star field, and
+            ## this says so, naming the fault.  ALWAYS hidden at first
+            ## paint: a page carries a backdrop of its own generation
+            ## instant, which is by definition current.  The link is the
+            ## one place on the page that sends a reader to the manual,
+            ## because this is the one condition the page cannot fix by
+            ## itself.
+            <p class="stalehint" id="dome-stale" hidden><span id="dome-stale-msg"></span> · <a href="https://chaunceygardiner.github.io/weewx-celestial/troubleshooting.html#the-star-field-is-frozen">$gettext("what to check")</a></p>
           </div>
           ## The satellite rosters: one row per CONFIGURED satellite --
           ## [Skyfield] [[Satellites]], enumerated through skyfield 2.0's

@@ -132,4 +132,15 @@ here.
     "annular" = "annular"
     "{name} perihelion" = "{name} perihelion"
     "{name} radiant — ZHR {zhr}, peak {date}" = "{name} radiant — ZHR {zhr}, peak {date}"
+
+    # ── the dome's health line (8.3.1): shown when the backdrop
+    #    refetches stop landing and the star field is no longer
+    #    advancing.  dome-svg.txt is a filename -- keep it verbatim
+    #    in every language ────────────────────────────────────
+    "Star field frozen — this sky is from {time} ({why})" = "Star field frozen — this sky is from {time} ({why})"
+    "no newer backdrop is being generated" = "no newer backdrop is being generated"
+    "dome-svg.txt returns HTTP {status}" = "dome-svg.txt returns HTTP {status}"
+    "dome-svg.txt is not a sky fragment" = "dome-svg.txt is not a sky fragment"
+    "no response for dome-svg.txt" = "no response for dome-svg.txt"
+    "what to check" = "what to check"
 ```

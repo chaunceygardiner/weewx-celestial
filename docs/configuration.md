@@ -113,7 +113,11 @@ configuration:
   archive interval, and the open page fetches the one covering the
   current minute.  The fragments describe their own spacing, so any
   archive interval works unconfigured; if report cycles stall, the page
-  keeps the freshest backdrop it has.  The Next Visible Pass chart refetches
+  keeps the freshest backdrop it has — and once it is three cycles
+  behind, freezes the dome and says so rather than flying live marks
+  over a motionless star field (see
+  [The star field is frozen](troubleshooting.md#the-star-field-is-frozen)).
+  The Next Visible Pass chart refetches
   every five minutes and rolls over to the next pass by itself.
 - **The satellite marker is honest about visibility**: drawn whenever
   the satellite is up, full brightness only when you could actually see

@@ -18,6 +18,23 @@ Presence detection is this module's ONLY job.  It must never grow real
 logic, wrap SkyPage's methods, or version-check: an older skyfield's dome
 simply lacks the satellite layer and the data-body hooks, and the page's
 javascript degrades feature by feature on its own.
+
+The one thing it does besides: log this skin's version at the first
+report that renders the page, and again whenever that version changes
+(8.3.1).  With no service since 7.0, nothing of this extension's runs at
+startup, so the log -- the first place anyone looks when a station
+misbehaves -- never named it at all.  The string comes from the skin's
+own [Extras] version, so what is logged is the version that actually
+rendered the page, not what some other file claims is installed.
+
+Why the version and not a plain "have I logged this" flag: WeeWX imports
+a search list once per weewxd process (importlib, then sys.modules) but
+re-reads skin.conf every report cycle.  So a skin upgraded under a
+running weewxd renders at its new version while this module is still the
+old code -- and once a station is on 8.3.1 or later, comparing versions
+is what lets that upgrade announce itself at the next cycle instead of
+staying quiet until somebody restarts.  Installing over a running weewxd
+still cannot change the CODE that is loaded; only a restart does that.
 """
 
 import logging
@@ -40,6 +57,25 @@ except ImportError:
         SkyPage = None  # type: ignore[assignment, misc]
 
 
+_logged_version: Optional[str] = None
+
+
+def _log_version(skin_dict) -> None:
+    """Announce the skin's version at the first report that renders the
+    page, and again if it ever changes -- never once per cycle, since
+    reports run every archive interval and this is identification, not a
+    heartbeat.  Guarded to the last brace: a search list that raises
+    kills the whole page, and no log line is worth that."""
+    global _logged_version
+    try:
+        version = skin_dict.get('Extras', {}).get('version')
+        if version and version != _logged_version:
+            _logged_version = version
+            log.info('Celestial version is %s.', version)
+    except Exception:
+        pass
+
+
 class CelestialSkyPage(SearchList):
     """Exposes $sky_page to the Celestial skin's templates -- the real
     weewx-skyfield SkyPage when available, else None."""
@@ -48,6 +84,7 @@ class CelestialSkyPage(SearchList):
         SearchList.__init__(self, generator)
 
     def get_extension_list(self, timespan, db_lookup) -> List[Dict[str, Any]]:
+        _log_version(self.generator.skin_dict)
         sky_page: Optional[Any] = None
         if SkyPage is None:
             log.info('weewx-skyfield sky page not installed; the dome panel is hidden')

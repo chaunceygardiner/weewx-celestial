@@ -358,6 +358,16 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
          border:1px dashed var(--line); padding:38px 20px; margin:8px 0 6px}
 .skyhint a{color:var(--brass)}
 
+/* The dome's health line: shown only when the backdrop has stopped
+   advancing and the dome has frozen.  A caption-sized line rather than
+   the install hint's dashed box -- it sits under a chart that is still
+   worth reading, just no longer current.  Deliberately NO display
+   property: the javascript hides it with the hidden attribute, and a
+   display here would defeat it (the .count lesson). */
+.stalehint{color:var(--brass); font-style:italic; text-align:center;
+           font-size:.82rem; margin:2px 0 6px}
+.stalehint a{color:inherit}
+
 footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
        padding-top:16px; text-align:center; font-style:italic}
 footer a{color:inherit; text-underline-offset:3px; text-decoration-color:var(--brass)}

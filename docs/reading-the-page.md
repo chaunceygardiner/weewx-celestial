@@ -170,6 +170,13 @@ covering the current minute, so the sky advances by a quarter of a degree
 at a time instead of lurching.  Between steps the sun, moon and planet
 marks are nudged at loop-derived rates.
 
+If the backdrops stop arriving — the station stops generating them, or
+the page cannot fetch them — the whole dome freezes rather than moving
+its marks across a star field that has stood still, and a line under the
+panel says so and names the fault.  A frozen dome is honestly old; a
+moving one over a frozen sky would be wrong.  See
+[The star field is frozen](troubleshooting.md#the-star-field-is-frozen).
+
 With satellites configured, the dome carries the one class of thing up
 there that genuinely moves fast.  A satellite marker is:
 

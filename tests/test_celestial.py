@@ -321,6 +321,54 @@ class TestCelestialSkyPage:
         generator.skin_dict = {}
         return celestial_sky.CelestialSkyPage(generator)
 
+    def test_version_is_logged_once_per_process(self, monkeypatch, caplog):
+        """With no service since 7.0, this is the extension's ONLY voice
+        in the weewx log -- the first place anyone looks when a station
+        misbehaves, and the first thing an issue report needs.  It names
+        the version out of the skin that is actually rendering, at the
+        first report that renders the page -- again when that version
+        CHANGES (a skin upgraded under a running weewxd), never once per
+        cycle (reports run every archive interval; this is
+        identification, not a heartbeat).  A skin with no version logs
+        nothing rather than something misleading."""
+        import celestial_sky
+        monkeypatch.setattr(celestial_sky, 'SkyPage', None)
+        monkeypatch.setattr(celestial_sky, '_logged_version', None)
+
+        class Obj:
+            pass
+        generator = Obj()
+        generator.skin_dict = {'Extras': {'version': '9.9'}}
+        sl = celestial_sky.CelestialSkyPage(generator)
+        with caplog.at_level(logging.INFO, logger='celestial_sky'):
+            sl.get_extension_list(None, None)
+            sl.get_extension_list(None, None)
+        lines = [r.getMessage() for r in caplog.records
+                 if 'Celestial version' in r.getMessage()]
+        assert lines == ['Celestial version is 9.9.']
+
+        # An upgrade under a running weewxd DOES speak again: WeeWX
+        # re-reads skin.conf every cycle, so the version it renders with
+        # can change while this module stays the copy weewxd imported.
+        generator.skin_dict = {'Extras': {'version': '9.10'}}
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger='celestial_sky'):
+            sl.get_extension_list(None, None)
+            sl.get_extension_list(None, None)
+        assert [r.getMessage() for r in caplog.records
+                if 'Celestial version' in r.getMessage()] \
+            == ['Celestial version is 9.10.']
+
+        # A versionless skin dict is silent, and never raises: a search
+        # list that throws takes the whole page down with it.
+        monkeypatch.setattr(celestial_sky, '_logged_version', None)
+        generator.skin_dict = {}
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger='celestial_sky'):
+            assert sl.get_extension_list(None, None) == [{'sky_page': None}]
+        assert [r.getMessage() for r in caplog.records
+                if 'Celestial version' in r.getMessage()] == []
+
     def test_absent_skyfield_yields_none(self, monkeypatch):
         import celestial_sky
         monkeypatch.setattr(celestial_sky, 'SkyPage', None)
@@ -1612,6 +1660,15 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        # The page is rendered for the fixture instant while this test's
+        # packets carry the browser's real clock, and the include judges
+        # the backdrop's age against the feed's clock: left alone, the
+        # embedded backdrop would read a year stale and the dome would
+        # freeze (see the staleness test below).  Stamping it with the
+        # feed's own time removes a mismatch the harness invents -- in
+        # production the page and the packets come from one station.
+        html = relib.sub(r'data-dome-ts="\d+"',
+                         'data-dome-ts="%d"' % int(time.time()), html, count=1)
         (tmp_path / 'index.html').write_text(html)
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
@@ -1727,6 +1784,250 @@ class TestSampleSkinRenders:
         assert out['errors'] == []
         assert out['swept'] == 1           # still mid-pass at the final sample
         assert served['n'] >= 5            # every phase of the walk was served
+
+    def test_stale_backdrop_freezes_the_dome_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """A backdrop that stops advancing freezes the dome and says so.
+        The page is rendered for the fixture instant and fed packets on
+        the browser's real clock -- the station saying, in effect, that
+        the sky on screen is a year old -- which is the shape of every
+        real fault here (fragments not generated, not served, or a
+        stalled report cycle).  Pins: no dome-body picks up a nudge
+        transform and no live satellite marker is drawn (bodies and
+        satellites freeze together -- a satellite flying over a
+        motionless star field is the lie this prevents), the health line
+        under the panel is SHOWN and names the reason, and the rest of
+        the page goes on living: the dial still nudges and the roster
+        still ticks, because neither stands on the backdrop.  Skips when
+        the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        # Rendered for the fixture instant, and deliberately NOT restamped:
+        # the embedded backdrop's data-dome-ts is a year behind the feed.
+        (tmp_path / 'index.html').write_text(
+            self.render(wxskyfield_sat_almanac, sky_page=make_sky_page()))
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        # No dome-svg.txt is served, but nothing fetches one inside this
+        # test either (DOME_REFRESH is 60 s): the reason under the panel
+        # must therefore be the no-fetch-problem one -- the station is
+        # not generating newer backdrops -- which is the case no HTTP
+        # status could ever reveal.
+
+        now = time.time()
+
+        def packet(i):
+            # A live sky: the sun and the ISS both up and moving, so a
+            # dome that had NOT frozen would nudge marks and draw a
+            # satellite marker within the first two packets.
+            return jsonlib.dumps({
+                'current.dateTime.raw': now + 2 * i,
+                'almanac.sun.az': 180.0 + 0.5 * i,
+                'almanac.sun.alt': 30.0,
+                'almanac.sun.earth_distance': 1.016,
+                'almanac.mercury.az': 150.0 + 0.5 * i,
+                'almanac.mercury.alt': 20.0,
+                'almanac.mercury.earth_distance': 0.85 + 0.001 * i,
+                'almanac.iss.az': 120.0 + 0.5 * i,
+                'almanac.iss.alt': 45.0 + 0.1 * i,
+                'almanac.iss.sunlit': True,
+                'almanac.iss.label': 'ISS',
+            }).encode()
+        packets = [packet(i) for i in range(4)]
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The line appears on the one-second tick, feed or no feed.\n'
+            "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=15000)\n"
+            '    page.wait_for_timeout(5500)\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'stale': page.inner_text('#dome-stale'),\n"
+            "        'nudged': page.eval_on_selector_all(\n"
+            "            '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
+            "        'satdots': page.eval_on_selector_all('#dome-svg .satdot', 'els => els.length'),\n"
+            "        'dialnudged': page.eval_on_selector_all(\n"
+            "            '#dial .geodot:not([display])', 'els => els.length'),\n"
+            "        'rate': page.inner_text('#geo-rate-mercury'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        # The dome froze, whole: no nudged body, no live satellite.
+        assert out['nudged'] == 0
+        assert out['satdots'] == 0
+        # ... and said so, with the reason and a way out.
+        assert 'Star field frozen' in out['stale']
+        assert 'no newer backdrop is being generated' in out['stale']
+        assert 'what to check' in out['stale']
+        # ... while the rest of the page went on living.
+        assert out['dialnudged'] >= 9
+        assert 'receding' in out['rate'] or 'approaching' in out['rate']
+        assert served['n'] >= 2
+
+    def test_wake_refetches_the_backdrop_in_a_real_browser(
+            self, wxskyfield_almanac, tmp_path):
+        """A page coming back from a sleeping laptop or a background tab
+        refetches the backdrop AT ONCE instead of waiting for the next
+        minute boundary.  The loop feed catches up in its own two
+        seconds, so without this the sky would sit an hour behind live
+        marks for up to a minute -- and would post the frozen line at a
+        station doing nothing wrong.  Pins both halves: the fresh
+        backdrop is applied on visibilitychange (well inside
+        DOME_REFRESH, which nothing else in the suite can exercise), and
+        the frozen line does not flash while that fetch is in flight.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        # The page as generated (backdrop at the fixture instant), and
+        # beside it the fragment the station would have written since --
+        # stamped NOW, the way a live station's current slot would be.
+        (tmp_path / 'index.html').write_text(
+            self.render(wxskyfield_almanac, sky_page=make_sky_page()))
+        frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'sky_page': make_sky_page(),
+            'almanac': wxskyfield_almanac,
+        })
+        assert '<svg' in frag
+        now = int(time.time())
+        frag = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
+                         frag, count=1)
+        (tmp_path / 'dome-svg.txt').write_text(frag)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        packet = jsonlib.dumps({
+            'current.dateTime.raw': now,
+            'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+            'almanac.sun.earth_distance': 1.016,
+        }).encode()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(packet)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(packet)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The page has the generation-time backdrop and, being a\n'
+            '    # fixture, is already stale by the feed\'s clock.\n'
+            "    before = page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts')\n"
+            '    # Wake it: the tab comes back to the front.\n'
+            "    page.evaluate('''() => {\n"
+            "      document.dispatchEvent(new Event('visibilitychange'));\n"
+            "    }''')\n"
+            '    # Inside a couple of seconds -- nowhere near the 60 s\n'
+            '    # interval -- the fresh backdrop is in place.\n'
+            '    page.wait_for_function("""(was) => {\n'
+            "      var d = document.querySelector('#dome-svg div[data-dome-ts]');\n"
+            "      return d !== null && d.getAttribute('data-dome-ts') !== was;\n"
+            '    }""", arg=before, timeout=5000)\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'before': before,\n"
+            "        'after': page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts'),\n"
+            "        'staleflash': page.eval_on_selector(\n"
+            "            '#dome-stale', 'el => el.hidden'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert int(out['after']) > int(out['before'])   # the sky moved on
+        assert int(out['after']) == now
+        assert out['staleflash'] is True                # and never accused anyone
 
     def test_countdown_chips_tick_and_roll_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):

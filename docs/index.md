@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.3**, the current release.
+This manual documents weewx-celestial **8.3.1**, the current release.
 
 ## Start here
 
@@ -109,7 +109,9 @@ weewx-skyfield's own dome chart, the full Hipparcos star field and
 constellation figures included, embedded as a live instrument.  Each
 report cycle renders a staggered set of backdrops a minute apart and the
 open page steps to the one covering the current minute, while the
-sun/moon/planet marks are nudged between steps at loop-derived rates.
+sun/moon/planet marks are nudged between steps at loop-derived rates.  If
+the backdrops stop arriving, the dome freezes rather than moving its
+marks over a motionless star field, and says why.
 With weewx-skyfield 2.0's satellites configured, the dome carries the one
 thing up there that genuinely moves fast: the satellite marker crossing
 in real time — drawn whenever the satellite is up, dimmed unless you

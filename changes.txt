@@ -1,6 +1,54 @@
 weewx-celestial change history
 ------------------------------
 
+8.3.1 (2026/08/15)
+------------------
+- A sky dome whose backdrop stops arriving now freezes and says so.  The
+  star field and constellation figures are refetched once a minute; when
+  those fetches stop landing the page used to keep the last good sky and
+  go on nudging the sun, moon, planets and satellites across it, so the
+  error grew at 15 degrees an hour with no bound and nothing on the page
+  said a word.  Once the backdrop is three report cycles behind, the
+  whole dome freezes -- marks and satellites together, since a satellite
+  flying over a motionless star field is the lie this prevents -- and a
+  line under the panel gives the reason.
+- The reason names the fault, not just the symptom: an HTTP status when
+  the fragments are not being served, "not a sky fragment" when what
+  comes back is empty or unreadable, "no response" when nothing answers,
+  and "no newer backdrop is being generated" when the fetches succeed and
+  the station has simply stopped writing new ones -- the case no status
+  code could ever reveal.  The line links to the manual's new
+  "The star field is frozen" troubleshooting entry.
+- The backdrop's age is judged by the STATION's clock, which the loop
+  packets carry, not the viewer's: a browser clock an hour out can no
+  longer freeze a perfectly healthy sky.  A dead loop feed therefore
+  never raises the line -- the LIVE badge already carries that fault, and
+  the dome's marks stop by themselves.
+- Nothing else on the page is affected.  The Geocentric dial, the roster
+  and the countdown chips stand on the loop feed, not on the backdrop,
+  and go on ticking through a frozen dome.
+- A page coming back from a closed laptop or a background tab now
+  refetches the backdrop at once instead of waiting for the next minute
+  boundary.  The timers stop with the machine, and on the way back the
+  loop feed catches up within its two seconds while the sky did not --
+  up to a minute of live marks moving over an hour-old star field, and,
+  with the change above, a frozen line accusing a station that is doing
+  nothing wrong.  The line is held for a few seconds while that fetch is
+  in flight.
+- The weewx log finally names this extension: "Celestial version is
+  8.3.1.", at the first report that renders the page after a restart --
+  and again if the version changes, so that from 8.3.1 on, a skin
+  upgraded under a running weewxd announces itself at the next report
+  cycle rather than staying quiet until somebody restarts.  Never once
+  per cycle.  With no service since 7.0 nothing of this extension's ran
+  at startup, so the log -- the first place anyone looks when a station
+  misbehaves, and the first thing an issue report needs -- never named it
+  at all.  The version comes from the skin that actually rendered the
+  page, not from a file elsewhere claiming to be installed.
+- Six new [Texts] strings (the line, its four reasons, and the link
+  beside them), complete in all nine languages.
+- Reported by Jacques Terrettaz (issue #4).
+
 8.3 (2026/08/14)
 ----------------
 - The page comes in light as well as dark.  A new report option --
