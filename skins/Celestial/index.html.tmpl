@@ -1,6 +1,4 @@
 ## Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
-## This sample report is based on WeeWX's Seasons Report
-## Copyright Tom Keffer and Matthew Wall.
 ## Distributed under the terms of the GNU Public License (GPLv3)
 ## See LICENSE for your rights.
 #errorCatcher Echo
@@ -12,12 +10,47 @@
 ## the keys that render.
 ## weewx.almanac feeds the footer's identity check (see there).
 #import weewx.almanac
+#import logging
 #import time
 ## datetime.date differences the pass rows' whole-day countdowns (see
 ## the satellite roster below): calendar days, never elapsed seconds.
 #import datetime
+## The page's plate.  The report's `theme` option (dark | light | auto,
+## default dark) is read by weewx-skyfield's SkyPage straight out of THIS
+## report's skin dict -- celestial_sky hands it over -- so the option is
+## spelled and valued exactly as skyfield's own Sky page spells it, and
+## `auto` (light while the sun is up at generation time) is skyfield's
+## sunrise logic, not a second copy of it.  Resolved HERE, at generation:
+## the dome and the Next Visible Pass chart arrive as skyfield SVG with
+## their colors already inside them and the javascript refetches them
+## every 60 s, so a browser-side toggle could not move them and the next
+## refetch would undo it anyway.  Dark without a capable $sky_page: the
+## light plate is the paper the charts are drawn on, and there are no
+## charts on that tier.  Guarded, like every other skyfield call here --
+## a page that does not generate is the worse failure (7.2's lesson).
+## ONE guarded lookup serves both the class and the charts' palette.
+## skyfield RAISES on an unknown theme (SkyPageUsageError passes through
+## its panel guard by design), so asking it a second time for the palette
+## would put that raise inside the dome's own #try and cost a typo the
+## whole dome and pass panel -- the plate is what a typo may cost.
+## theme() raises ONLY on a value that is not dark, light or auto, so a
+## raise here is a misconfigured report and gets a log line -- otherwise
+## a typo is invisible: the page just renders dark for ever.  The
+## hasattr guard keeps the older-skyfield case quiet, where there is no
+## theme() and no way to know whether anyone asked for one.  This is the
+## only site that logs; the fragment templates resolve the same way and
+## stay silent, or one typo would print eleven lines a cycle.
+#set $theme = 'dark'
+#if $sky_page and hasattr($sky_page, 'theme')
+#try
+#set $theme = str($sky_page.theme($almanac))
+#except
+#silent logging.getLogger('user.celestial').warning("The Celestial report has an unusable theme option; rendering the dark plate.  Valid values are dark, light and auto.")
+#end try
+#end if
+#set $palette = 'light' if $theme == 'light' else 'night'
 <!DOCTYPE html>
-<html lang="$lang">
+<html lang="$lang" class="theme-$theme">
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -530,7 +563,7 @@
         #set $dome_html = ''
         #if $sky_page
         #try
-        #set $dome_html = str($sky_page.dome_svg($almanac))
+        #set $dome_html = str($sky_page.dome_svg($almanac, palette=$palette))
         #except
         #pass
         #end try
@@ -695,7 +728,7 @@
       #set $passchart = ''
       #if $sky_page
       #try
-      #set $passchart = str($sky_page.pass_chart_html($almanac))
+      #set $passchart = str($sky_page.pass_chart_html($almanac, palette=$palette))
       #except
       #pass
       #end try

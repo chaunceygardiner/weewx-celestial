@@ -67,6 +67,19 @@ flipping between sunlit and in-shadow in step with the dome's marker:
 
 ![The Next Visible Pass panel during a NOAA-21 pass](CelestialPassPanel-NOAA21-shadow-entry.gif)
 
+**Dark, light or following the sun** — the page ships as the night plate
+above, and takes a paper-atlas plate with `theme = light`, or `auto` to
+run light while the sun is up and dark after it sets.  The whole page
+changes together: the sky dome and the Next Visible Pass chart are
+rendered on weewx-skyfield's matching palette rather than left as a night
+rectangle in a light page.  It is settled when the report is generated —
+the charts arrive with their colors already inside them, so there is
+nothing for a browser toggle to switch, and the page does not follow the
+viewer's operating system.  See
+[Dark, light and auto](https://chaunceygardiner.github.io/weewx-celestial/configuration.html#dark-light-and-auto).
+
+![The Celestial page on the light plate](CelestialSampleReport-light.png)
+
 The live values are **weewx-loopdata almanac fields**: report almanac tags
 (computed by the registered almanac, ideally weewx-skyfield's) that
 weewx-loopdata evaluates on every loop packet and publishes in
@@ -86,7 +99,8 @@ weewx-skyfield is the atlas; weewx-celestial is the live instrument.
 later, and (strongly recommended)
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.1 or
 later for the comets, the meteor showers and the full countdown row; 2.0
-serves the sky dome's satellites and the Next Visible Pass chart.**
+serves the sky dome's satellites and the Next Visible Pass chart; 1.15 or
+later for the light plate, which is the paper those charts are drawn on.**
 
 ## Installing
 
@@ -126,6 +140,7 @@ all of it, with a sidebar and full-text search:
 | What am I looking at? | [Reading the page](https://chaunceygardiner.github.io/weewx-celestial/reading-the-page.html) |
 | How does it stay live? | [How the page stays live](https://chaunceygardiner.github.io/weewx-celestial/how-it-stays-live.html) |
 | What are the report's options? | [Configuration](https://chaunceygardiner.github.io/weewx-celestial/configuration.html) |
+| Can I have a light page? | [Dark, light and auto](https://chaunceygardiner.github.io/weewx-celestial/configuration.html#dark-light-and-auto) |
 | Can I watch other satellites or comets? | [Satellites and comets](https://chaunceygardiner.github.io/weewx-celestial/satellites-and-comets.html) |
 | Which loop-data fields does it read? | [Fields reference](https://chaunceygardiner.github.io/weewx-celestial/fields-reference.html) |
 | Can I have it in my language? | [Translations](https://chaunceygardiner.github.io/weewx-celestial/i18n.html) |
@@ -153,10 +168,11 @@ weewx-loopdata almanac-field parser (when a weewx-loopdata checkout is
 available), and audits the manual against the code — the fields reference
 against the migrator's field set, the translation dictionary against the
 skin's `lang/en.conf`, the report's options across skin.conf, the templates
-and the manual, and every link and anchor between manual pages.
+and the manual, every link and anchor between manual pages, and that every
+screenshot the manual shows is a file this repository ships.
 
 It runs against WeeWX 5.2 — this extension's minimum — as well as current
-WeeWX.  On 5.2 the seven shipped-language render tests skip, stating why:
+WeeWX.  On 5.2 the eight shipped-language render tests skip, stating why:
 they assert translated body names, which need the report `[Almanac]`
 section WeeWX only began providing in 5.3.
 

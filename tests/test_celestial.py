@@ -24,6 +24,7 @@ checkout's almanac-field parser when that repo is available.
 import contextlib
 import inspect
 import json
+import logging
 import os
 import re
 import sys
@@ -109,14 +110,40 @@ def load_wxskyfield():
     pytest.skip('the weewx-skyfield extension is not available')
 
 
-def make_sky_page(texts=None):
+def _wcag_ratio(fg, bg):
+    """Contrast ratio between two #rrggbb colors (WCAG relative
+    luminance).  Used where a value has to be legible rather than merely
+    correct -- the light plate's own choices, which no cross-repo pin
+    covers."""
+    def channel(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def luminance(color):
+        color = color.lstrip('#')
+        r, g, b = (channel(int(color[i:i + 2], 16)) for i in (0, 2, 4))
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    a, b = luminance(fg), luminance(bg)
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def make_sky_page(texts=None, theme=None):
     """The real weewx-skyfield SkyPage for render tests (what the
     celestial_sky shim serves in production), built with the report's
-    [Texts] the way the shim passes skin_dict.  Skips when no
+    [Texts] the way the shim passes skin_dict.  `theme` is the report's
+    own theme option, which SkyPage reads out of that same skin dict --
+    the whole plumbing behind the light plate (8.3).  Skips when no
     weewx-skyfield is available."""
     load_wxskyfield()
     import wxskyfield_sky
-    return wxskyfield_sky.SkyPage({'Texts': texts} if texts else {})
+    skin_dict = {}
+    if texts:
+        skin_dict['Texts'] = texts
+    if theme is not None:
+        skin_dict['theme'] = theme
+    return wxskyfield_sky.SkyPage(skin_dict)
 
 
 def load_loopdata():
@@ -713,6 +740,186 @@ class TestSampleSkinRenders:
             'almanac': wxskyfield_almanac, 'sky_page': None})
         assert empty.strip() == ''
 
+    def test_light_theme_paints_the_page_and_its_charts_on_paper(self, wxskyfield_almanac):
+        """theme = light is the WHOLE page: the class the stylesheet's
+        light plate hangs on, and the embedded dome rendered on
+        skyfield's matching paper palette.  A night dome inside a light
+        page (the LiveSeasons shape, correct there) is the one outcome
+        this page must never produce, so the night plate's own gradient
+        stop is asserted ABSENT rather than the paper one merely
+        present."""
+        html = self.render(wxskyfield_almanac,
+                           sky_page=make_sky_page(theme='light'))
+        assert '<html lang="en" class="theme-light">' in html
+        low = html.lower()
+        assert '#efece2' in low          # the paper dome's outer stop
+        assert '#8a94a6' in low          # ... and its rim
+        assert '#161f3d' not in low      # the night dome's first stop
+
+    def test_dark_theme_is_the_default_and_unchanged(self, wxskyfield_almanac):
+        """No theme option: the night page, exactly as through 8.2 --
+        the upgrade is a drop-in and nobody's page moves."""
+        html = self.render(wxskyfield_almanac, sky_page=make_sky_page())
+        assert '<html lang="en" class="theme-dark">' in html
+        low = html.lower()
+        assert '#161f3d' in low
+        assert '#efece2' not in low
+
+    def test_auto_theme_follows_the_sun(self, wxskyfield_almanac):
+        """theme = auto resolves at GENERATION time -- light while the
+        sun is up, dark otherwise -- and the dome follows it, because
+        both come from the same palette() call.  Noon and midnight on
+        the same solstice day over Palo Alto."""
+        sky_page = make_sky_page(theme='auto')
+        noon = self.render(wxskyfield_almanac, sky_page=sky_page)
+        assert '<html lang="en" class="theme-light">' in noon
+        assert '#efece2' in noon.lower()
+        midnight_alm = weewx.almanac.Almanac(
+            TIME_TS + 12 * 3600, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+            formatter=weewx.units.get_default_formatter())
+        night = self.render(midnight_alm, sky_page=sky_page)
+        assert '<html lang="en" class="theme-dark">' in night
+        assert '#161f3d' in night.lower()
+
+    def test_theme_is_dark_without_a_capable_sky_page(self, wxskyfield_almanac):
+        """The light plate is the paper the embedded charts are drawn
+        on, and $sky_page is what draws them: with no skyfield the page
+        stays dark rather than half-dressed.  Guarded, so an unusable
+        sky_page can never cost the page itself (7.2's lesson)."""
+        assert '<html lang="en" class="theme-dark">' in self.render(
+            wxskyfield_almanac, sky_page=None)
+
+    def test_unknown_theme_is_logged(self, wxskyfield_almanac, caplog):
+        """A theme that is not dark, light or auto is a misconfigured
+        report, and the page swallows the exception to stay whole -- so
+        it must say so in the log, or the mistake is invisible for
+        ever."""
+        with caplog.at_level(logging.WARNING):
+            self.render(wxskyfield_almanac,
+                        sky_page=make_sky_page(theme='papyrus'))
+        warnings = [r.getMessage() for r in caplog.records
+                    if r.levelno >= logging.WARNING]
+        assert any('theme' in m and 'dark, light and auto' in m
+                   for m in warnings), warnings
+
+    def test_a_good_theme_logs_nothing(self, wxskyfield_almanac, caplog):
+        """... and a correctly configured report is silent, on every one
+        of the three values."""
+        for theme in ('dark', 'light', 'auto'):
+            caplog.clear()
+            with caplog.at_level(logging.WARNING):
+                self.render(wxskyfield_almanac,
+                            sky_page=make_sky_page(theme=theme))
+            assert [r.getMessage() for r in caplog.records
+                    if r.levelno >= logging.WARNING] == [], theme
+
+    def test_old_skyfield_without_themes_is_quiet(self, wxskyfield_almanac, caplog):
+        """A weewx-skyfield too old to have theme() is not a
+        misconfiguration and must not be reported as one: there is no
+        way to know whether anyone asked for a theme, and the page has
+        always rendered dark there."""
+        class NoThemeSkyPage:
+            def dome_svg(self, alm, **kw):
+                return ''
+
+            def pass_chart_html(self, alm, **kw):
+                return ''
+
+        with caplog.at_level(logging.WARNING):
+            html = self.render(wxskyfield_almanac, sky_page=NoThemeSkyPage())
+        assert '<html lang="en" class="theme-dark">' in html
+        assert [r.getMessage() for r in caplog.records
+                if r.levelno >= logging.WARNING] == []
+
+    def test_unknown_theme_costs_the_plate_not_the_panels(self, wxskyfield_almanac):
+        """skyfield raises on an unknown theme -- deliberately, so a
+        template author sees a typo.  Here that raise must cost only the
+        plate: the page renders whole, on the night plate, dome and pass
+        panel included.  (It would not, if the palette were a second
+        $sky_page call inside the dome's own guard.)"""
+        html = self.render(wxskyfield_almanac,
+                           sky_page=make_sky_page(theme='papyrus'))
+        assert '<html lang="en" class="theme-dark">' in html
+        assert '#161f3d' in html.lower()      # the night dome, drawn
+        assert 'domepanel' in html            # ... and not the skyhint
+
+    def test_light_dome_fragment(self, wxskyfield_almanac):
+        """The refetched dome fragment carries the page's palette too.
+        This is the flicker trap: a fragment left on the default night
+        palette would repaint the dome dark 60 seconds after a light
+        page loaded, and again on every refetch."""
+        out = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'almanac': wxskyfield_almanac,
+            'sky_page': make_sky_page(theme='light')})
+        assert '#efece2' in out.lower()
+        assert '#161f3d' not in out.lower()
+
+    def test_dome_fragment_declares_its_plate(self, wxskyfield_almanac):
+        """Each backdrop says which plate it is drawn on.  A page wears
+        the plate it was GENERATED with -- the charts carry their colors
+        in their own markup -- but goes on refetching fragments, so on
+        theme = auto the cycle that crosses sunrise would drop a paper
+        dome into a night page and leave it there.  The stamp is what
+        lets the javascript notice."""
+        for theme, palette in (('light', 'light'), ('dark', 'night')):
+            out = self.render_dome_fragment('dome-svg.txt.tmpl', {
+                'almanac': wxskyfield_almanac,
+                'sky_page': make_sky_page(theme=theme)})
+            assert 'data-dome-palette="%s"' % palette in out, theme
+
+    def test_updater_reloads_once_when_the_plate_flips(self):
+        """The javascript half: compare the fetched backdrop's plate with
+        the page's own, reload on a mismatch, and reload only ONCE -- a
+        page whose plate keeps disagreeing (a cached copy, say) must wear
+        one stale plate rather than reload for ever.  Source-pinned;
+        there is no browser in CI."""
+        js = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
+        assert re.search(r"var PAGE_PALETTE\s*=", js), 'the page plate is gone'
+        assert "indexOf('theme-light')" in js
+        guard = re.search(r"data-dome-palette.*?\n(.*?)\n\s*var m = ", js, re.S)
+        assert guard is not None, 'the plate comparison moved'
+        body = guard.group(1)
+        assert 'PAGE_PALETTE' in body, body
+        assert 'plateReloadTried' in body and 'markPlateReload' in body, body
+        assert 'window.location.reload()' in body, body
+        # In step again clears the guard, or the SECOND flip never
+        # reloads (sunset works, the next sunrise does not).
+        assert 'clearPlateReload()' in body, body
+        # The guard must outlive the reload it bounds: an in-page flag is
+        # reset by that very navigation, so a page served from cache
+        # would reload every DOME_REFRESH seconds for ever.  Proven in a
+        # browser (playwright, this release); pinned here because CI has
+        # no browser.
+        assert 'sessionStorage' in js
+        assert re.search(r"var PLATE_KEY = 'celestial-plate-reload'", js)
+        for fn in ('plateReloadTried', 'markPlateReload', 'clearPlateReload'):
+            assert re.search(r'function %s\(' % fn, js), fn
+        # Every sessionStorage touch is wrapped: it throws outright in
+        # some privacy modes, and this must never cost the dome.
+        for call in ('getItem', 'setItem', 'removeItem'):
+            m = re.search(r'try \{\s*\n[^}]*sessionStorage\.%s' % call, js)
+            assert m is not None, call
+        # ... with the in-page flag as the fallback where it does throw
+        assert re.search(r'var plateReloaded = false', js)
+
+    def test_dome_fragment_palette_is_the_page_instant_not_the_slot(self):
+        """On theme = auto the palette must be resolved against the
+        PAGE's almanac, never the slot's re-bound one: a stagger slot
+        minutes past sunrise would otherwise render paper inside a page
+        that is still night, and flip the dome on refetch.  Pinned on
+        the source, since the bug only shows within minutes of
+        sunrise."""
+        frag = open(os.path.join(SKIN_DIR, 'dome-svg-frag.inc')).read()
+        call = re.search(r'\$sky_page\.dome_svg\((.*?)\)</div>', frag)
+        assert call is not None, 'the dome_svg call moved'
+        # The slot's re-bound almanac draws the sky; the palette does not
+        # come from it.
+        assert 'almanac_time=$frag_ts' in call.group(1)
+        assert 'palette=$palette' in call.group(1)
+        resolve = re.search(r'#set \$palette = .*?theme\((.*?)\)', frag)
+        assert resolve is not None, 'the palette resolution moved'
+        assert resolve.group(1) == '$almanac', resolve.group(1)
+
     def test_dome_fragment_stagger(self, wxskyfield_almanac):
         """The staggered slots: at a 5-minute interval slots 0-4 carry
         skies 60 s apart and slots 5-9 are honestly empty; at a 2-hour
@@ -819,6 +1026,19 @@ class TestSampleSkinRenders:
         empty = str(Template(source, searchList=[{
             'almanac': wxskyfield_sat_almanac, 'sky_page': None}]))
         assert empty.strip() == ''
+
+    def test_light_pass_chart_fragment(self, wxskyfield_sat_almanac):
+        """The Next Visible Pass chart follows the page's plate too --
+        the other refetched fragment, the same flicker trap (it
+        refetches every 300 s)."""
+        from Cheetah.Template import Template
+        source = open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read()
+        out = str(Template(source, searchList=[{
+            'almanac': wxskyfield_sat_almanac,
+            'sky_page': make_sky_page(theme='light')}]))
+        assert '<svg' in out
+        assert '#efece2' in out.lower()
+        assert '#161f3d' not in out.lower()
 
     def test_pass_chart_fragment_empty_without_satellites(self, wxskyfield_almanac):
         """No configured satellites: pass_chart_html itself returns '' and
@@ -2049,6 +2269,87 @@ class TestSampleSkinRenders:
         for cls in ('skylab', 'starlab', 'conlab'):
             assert label_fill(cel_css, cls) == label_fill(sky_css, cls), cls
 
+        # The LIGHT plate (8.3).  Here the whole token set is skyfield's,
+        # not just two values: on this plate celestial renders the dome
+        # and the pass chart on skyfield's own paper palette, so every
+        # color the page draws beside them has to be the same paper.
+        # John's rule cutting this release: if the light theme hardcodes
+        # body colors, they come FROM PALETTES['light'] rather than being
+        # invented.  This is that rule, enforced.
+        light_block = re.search(r':root\.theme-light\{(.*?)\}', cel_css, re.S)
+        assert light_block is not None, 'the light theme block is gone'
+
+        def light_token(name):
+            m = re.search(r'--%s:\s*(#[0-9A-Fa-f]{6})' % name, light_block.group(1))
+            assert m is not None, name
+            return m.group(1).upper()
+
+        light = re.search(r"\n    'light':\s*\{(.*?)\n    \},", sky_src, re.S)
+        assert light is not None, sky_py
+
+        def light_color(key, section=None):
+            hay = light.group(1)
+            if section is not None:
+                sub = re.search(r"'%s':\s*\{(.*?)\}" % section, hay, re.S)
+                assert sub is not None, section
+                hay = sub.group(1)
+            m = re.search(r"'%s':\s*'(#[0-9A-Fa-f]{6})'" % key, hay)
+            assert m is not None, (section, key)
+            return m.group(1).upper()
+
+        for tok, key in (('night', 'dome_stops'), ('ink', 'ink'), ('muted', 'muted'),
+                         ('brass', 'brass'), ('line', 'line'), ('grid', 'grid'),
+                         ('halo', 'halo')):
+            if key == 'dome_stops':
+                # The page background is the paper the dome fades out to.
+                m = re.search(r"'dome_stops':\s*\(.*?'(#[0-9A-Fa-f]{6})'\)\)",
+                              light.group(1), re.S)
+                assert m is not None
+                assert light_token(tok) == m.group(1).upper()
+            else:
+                assert light_token(tok) == light_color(key), tok
+        for body in ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+                     'saturn', 'uranus', 'neptune', 'pluto'):
+            assert light_token('c-' + body) == light_color(body, 'body'), body
+        # Earth is the documented exception (John's call, 8.3): skyfield
+        # draws it only in its orrery, a panel this page does not embed,
+        # so the dial's center dot is the one mark with no counterpart on
+        # this page to disagree with -- and it keeps its own green
+        # identity on BOTH plates instead of turning blue on paper.
+        # Pinned as an exception, so a future tidy-up that "corrects" it
+        # to skyfield's earth_fill trips this test and reads why.
+        assert light_token('c-earth') != light_color('earth_fill')
+        assert light_token('e-earth') != light_color('earth_stroke')
+        for tok in ('c-earth', 'e-earth'):
+            value = light_token(tok)
+            r, g, b = (int(value[i:i + 2], 16) for i in (1, 3, 5))
+            assert g > r and g > b, '%s (%s) left the green family' % (tok, value)
+            # ... and dark enough to be a mark on paper at all, which the
+            # night green (2.35:1 on white) is not.
+            assert _wcag_ratio(value, '#FFFFFF') >= 4.5, (tok, value)
+        # The pale bodies' edges, and Proxima wearing the moon's.
+        for body in ('sun', 'moon', 'venus'):
+            assert light_token('e-' + body) == light_color(body, 'ring'), body
+        assert light_token('c-proxima') == light_color('moon', 'ring')
+
+        def light_rule_fill(css, cls):
+            m = re.search(r':root\.theme-light \.%s\{([^}]*)\}' % cls, css)
+            assert m is not None, cls
+            fill = re.search(r'fill:\s*(#[0-9A-Fa-f]{6}|var\(--[a-z]+\))',
+                             m.group(1))
+            assert fill is not None, cls
+            return fill.group(1).upper()
+
+        for cls in ('skylab', 'starlab', 'conlab'):
+            assert light_rule_fill(cel_css, cls) == light_rule_fill(sky_css, cls), cls
+        # The moon's disc: skyfield's own paper values, including the ring
+        # that is all that draws a disc whose lit limb is nearly the page.
+        for cls, key in (('moon-dark', 'moon_dark'), ('moon-lit', 'moon_lit')):
+            assert light_rule_fill(cel_css, cls) == light_color(key), cls
+        rim = re.search(r':root\.theme-light \.moon-rim\{([^}]*)\}', cel_css)
+        assert rim is not None
+        assert light_color('moon_ring') in rim.group(1).upper()
+
     def test_renders_with_pyephem_almanac(self):
         """With PyEphem but no weewx-skyfield, the roster first-paints
         complete except the Proxima Centauri row (PyEphem's star catalog
@@ -2198,7 +2499,7 @@ class TestSampleSkinRenders:
 
         html = self.render(wxskyfield_almanac, sky_page=RaisingSkyPage())
         # The page is whole: header, roster row per body, footer.
-        assert '<html lang="en">' in html
+        assert '<html lang="en" class="theme-dark">' in html
         assert 'id="geo-row-proxima_centauri"' in html
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.moon.earth_distance'))
         # The dome degrades to its install hint, exactly as when
@@ -2464,7 +2765,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='de', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="de">' in html
+        assert '<html lang="de" class="theme-dark">' in html
         assert 'Die geozentrische Ansicht' in html
         # The roster first-paints German: the sun is up at the solstice
         # noon, and the distance cells carry the German au unit.
@@ -2499,7 +2800,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='fr', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="fr">' in html
+        assert '<html lang="fr" class="theme-dark">' in html
         assert 'La vue géocentrique' in html
         # The roster first-paints French: the sun is up at the solstice
         # noon, and the distance cells carry the French au unit.
@@ -2533,7 +2834,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='nl', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="nl">' in html
+        assert '<html lang="nl" class="theme-dark">' in html
         assert 'De geocentrische weergave' in html
         # The roster first-paints Dutch: the sun is up at the solstice
         # noon, and the distance cells carry the Dutch au unit.
@@ -2568,7 +2869,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='es', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="es">' in html
+        assert '<html lang="es" class="theme-dark">' in html
         assert 'La vista geocéntrica' in html
         # The roster first-paints Spanish: the sun is up at the solstice
         # noon, and the distance cells carry the Spanish au unit.
@@ -2603,7 +2904,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='it', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="it">' in html
+        assert '<html lang="it" class="theme-dark">' in html
         assert 'La vista geocentrica' in html
         # The roster first-paints Italian: the sun is up at the solstice
         # noon, and the distance cells carry the Italian au unit.
@@ -2638,7 +2939,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='no', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="no">' in html
+        assert '<html lang="no" class="theme-dark">' in html
         assert 'Den geosentriske visningen' in html
         # The roster first-paints Norwegian: the sun is up at the solstice
         # noon, and the distance cells carry the Norwegian au unit.
@@ -2653,6 +2954,47 @@ class TestI18n:
         assert '"below horizon": "under horisonten"' in html
         assert '"approaching": "n\\u00e6rmer seg"' in html
         # The footer carries the full Norwegian Skyfield credit, naming
+        # weewx-skyfield with the project link.
+        assert 'Beregnet med %s: Skyfield' % LINKED_NAME in html
+
+    @requires_almanac_texts
+    def test_shipped_danish_renders(self, wxskyfield_sky):
+        """The shipped da.conf, fed through the same channels the report
+        engine uses, renders a Danish page -- the template's static
+        strings and the json feeds the javascript composes from alike.
+        Danish is the one file a native speaker wrote entire (Gert
+        Andersen, 7.8), which is the better reason to render it, not a
+        lesser one: it was the only shipped language never rendered end
+        to end until 8.3."""
+        mod, _ = load_wxskyfield()
+        conf = self.lang_conf(self.LANG_DIR, 'da.conf')
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sky)
+            alm = weewx.almanac.Almanac(
+                TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                formatter=weewx.units.Formatter(
+                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                texts=dict(conf['Almanac']))
+            html = TestSampleSkinRenders.render(
+                alm, lang='da', texts=dict(conf['Texts']),
+                labels={'hemispheres': list(conf['Labels']['hemispheres'])})
+        assert '<html lang="da" class="theme-dark">' in html
+        assert 'Geocentrisk (live)' in html
+        # The roster first-paints Danish: the sun is up at the solstice
+        # noon, and the distance cells carry the Danish au unit (au, as
+        # in English -- unlike the German and Swedish AE).
+        assert 'højde ' in html
+        assert ' au<' in html
+        # The javascript feeds: Danish body names and cardinals (json,
+        # non-ASCII \u-escaped), and the composed-string dictionary.
+        # Danish compass east is Ø, so the cardinal ring proves the
+        # ordinates flowed through as well as the body names.
+        assert '"moon": "M\\u00e5ne"' in html
+        assert '"neptune": "Neptun"' in html
+        assert '["N", "\\u00d8", "S", "V"]' in html
+        assert '"below horizon": "under horisonten"' in html
+        assert '"approaching": "n\\u00e6rmer sig"' in html
+        # The footer carries the full Danish Skyfield credit, naming
         # weewx-skyfield with the project link.
         assert 'Beregnet med %s: Skyfield' % LINKED_NAME in html
 
@@ -2673,7 +3015,7 @@ class TestI18n:
             html = TestSampleSkinRenders.render(
                 alm, lang='sv', texts=dict(conf['Texts']),
                 labels={'hemispheres': list(conf['Labels']['hemispheres'])})
-        assert '<html lang="sv">' in html
+        assert '<html lang="sv" class="theme-dark">' in html
         assert 'Den geocentriska vyn' in html
         # The roster first-paints Swedish: the sun is up at the solstice
         # noon, and the distance cells carry the Swedish au unit.
@@ -4114,19 +4456,26 @@ class TestManualInStepWithCode:
     }
 
     def _declared_options(self):
-        """{option: default} from the shipped skin.conf's [Extras]."""
+        """{option: default} from the shipped skin.conf: the [Extras]
+        block, plus the REPORT-level options above the first section --
+        `lang`, and `theme` since 8.3.  Those two are not in [Extras] (a
+        report option, not a skin extra: weewx-skyfield reads `theme`
+        out of the report's own skin dict), and a harness that only
+        looked in [Extras] would let a root option ship undocumented."""
         path = os.path.join(REPO_ROOT, 'skins', 'Celestial', 'skin.conf')
         with open(path, encoding='utf-8') as f:
-            body = f.read().split('[Extras]', 1)[1]
-        body = re.split(r'^\[', body, flags=re.M)[0]
+            text = f.read()
+        blocks = [re.split(r'^\[', text.split('[Extras]', 1)[1], flags=re.M)[0],
+                  re.split(r'^\[', text, flags=re.M)[0]]
         out = {}
-        for line in body.splitlines():
-            s = line.strip()
-            if not s or s.startswith('#'):
-                continue
-            m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$', s)
-            if m:
-                out[m.group(1)] = m.group(2).strip('\'"')
+        for body in blocks:
+            for line in body.splitlines():
+                s = line.strip()
+                if not s or s.startswith('#'):
+                    continue
+                m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$', s)
+                if m:
+                    out[m.group(1)] = m.group(2).strip('\'"')
         return out
 
     def _read_options(self):
@@ -4391,6 +4740,10 @@ class TestManualInStepWithCode:
         assert len(self._absolute_site_links()) >= 15, 'extractor found too few links'
         bad = []
         for name, url in self._absolute_site_links():
+            # A #fragment is not part of the path Pages serves: judge the
+            # page, or an anchored deep link reads as a trailing-slash
+            # 404 that isn't one (and skips the page-exists check below).
+            url = url.split('#', 1)[0]
             path = url.split('github.io/', 1)[1]
             page = path.split('/', 1)[1] if '/' in path else ''
             if page == '' or url.endswith('.html'):
@@ -4401,6 +4754,36 @@ class TestManualInStepWithCode:
             '.html; these will 404 or depend on a fallback:\n  '
             + '\n  '.join(bad))
 
+    def test_referenced_images_exist(self):
+        """Every image the README and the manual show must be a file this
+        repository ships.  The manual reaches its images over
+        raw.githubusercontent, which serves master -- so a screenshot
+        that is renamed, or referenced before it is committed, is a
+        broken image on the published site and no link check sees it
+        (the link tests read hrefs, not img sources)."""
+        sources = {'README.md': os.path.join(REPO_ROOT, 'README.md')}
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if name.endswith('.md'):
+                sources[name] = os.path.join(DOCS_DIR, name)
+        raw = 'https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/'
+        seen, missing = 0, []
+        for name, path in sources.items():
+            with open(path, encoding='utf-8') as f:
+                text = f.read()
+            for src in re.findall(r'!\[[^\]]*\]\(([^)\s]+)\)', text):
+                if src.startswith(raw):
+                    target = os.path.join(REPO_ROOT, src[len(raw):])
+                elif src.startswith('http'):
+                    continue            # someone else's image; not ours to pin
+                else:
+                    target = os.path.join(os.path.dirname(path), src)
+                seen += 1
+                if not os.path.exists(target):
+                    missing.append('%s -> %s' % (name, src))
+        assert seen >= 10, 'image extractor found too few images (%d)' % seen
+        assert not missing, ('the manual shows images this repo does not '
+                             'ship:\n  ' + '\n  '.join(missing))
+
     def test_links_to_our_own_manual_name_pages_that_exist(self):
         """An .html URL into celestial's own manual must correspond to a
         page in docs/ -- otherwise it is well-formed and still dead."""
@@ -4408,6 +4791,7 @@ class TestManualInStepWithCode:
         pages.add('index.html')
         missing = []
         for name, url in self._absolute_site_links():
+            url = url.split('#', 1)[0]      # the anchor is not a filename
             if not url.startswith(self._SITE) or not url.endswith('.html'):
                 continue
             page = url[len(self._SITE):]

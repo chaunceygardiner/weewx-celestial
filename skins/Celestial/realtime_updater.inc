@@ -1210,6 +1210,46 @@
     }
   }
   var appliedDomeFrag = null;
+  // The plate this page was generated on -- the class the stylesheet's
+  // light rules hang off.  ('theme-light' or 'theme-dark'; anything else
+  // reads as night, the shipped default.)  Compared against each
+  // refetched backdrop's own; see refreshDome.
+  var PAGE_PALETTE =
+      document.documentElement.className.indexOf('theme-light') >= 0
+          ? 'light' : 'night';
+  // The reload guard has to OUTLIVE the reload -- an in-page flag is
+  // reset by the very navigation it is meant to bound, so a page served
+  // from cache would reload every DOME_REFRESH seconds for ever.
+  // sessionStorage remembers which plate we already reloaded to reach;
+  // if the page comes back still wearing the other one, that is a stale
+  // cached page, not a flip, and one stale plate beats a reload loop.
+  // The in-page flag is the fallback where storage throws (private
+  // modes, file:// origins).
+  var PLATE_KEY = 'celestial-plate-reload';
+  var plateReloaded = false;
+  function plateReloadTried(want) {
+    try {
+      return window.sessionStorage.getItem(PLATE_KEY) === want;
+    } catch (e) {
+      return plateReloaded;
+    }
+  }
+  function markPlateReload(want) {
+    plateReloaded = true;
+    try {
+      window.sessionStorage.setItem(PLATE_KEY, want);
+    } catch (e) {
+      // storage unavailable; the in-page flag bounds this page's life
+    }
+  }
+  function clearPlateReload() {
+    plateReloaded = false;
+    try {
+      window.sessionStorage.removeItem(PLATE_KEY);
+    } catch (e) {
+      // nothing to clear
+    }
+  }
   function refreshDome() {
     if (pageTimedOut) {
       return;
@@ -1232,6 +1272,28 @@
       // The same slot of the same cycle (a late report re-serving what
       // we already show) is a no-op: swapping identical content would
       // only churn the baselines.
+      // The plate first.  This page wears the plate it was GENERATED
+      // with -- baked into a class on <html>, because the charts carry
+      // their colors inside their own markup -- but it keeps refetching
+      // fragments, and on theme = auto the report cycle that crosses
+      // sunrise draws them on the other plate.  Applying one would put a
+      // paper dome inside a night page (or the reverse at sunset) until
+      // somebody reloaded, which on a dashboard left open is never.  So
+      // the page reloads itself, ONCE: the report has already
+      // regenerated on the new plate, and this is the report-cycle flip
+      // the manual promises.  Once only -- if a cached page keeps
+      // disagreeing, one stale plate beats a reload loop.
+      var pm = /data-dome-palette="([a-z]+)"/.exec(this.responseText);
+      if (pm !== null && pm[1] !== PAGE_PALETTE) {
+        if (!plateReloadTried(pm[1])) {
+          markPlateReload(pm[1]);
+          window.location.reload();
+          return;
+        }
+      } else if (pm !== null) {
+        // In step -- so the next flip gets its own reload.
+        clearPlateReload();
+      }
       var m = /data-dome-ts="([0-9.]+)"/.exec(this.responseText);
       var ident = fragName + '|' + (m === null ? '' : m[1]);
       if (ident === appliedDomeFrag) {

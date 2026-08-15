@@ -2,7 +2,7 @@
 title: Troubleshooting
 layout: default
 nav_order: 12
-description: Symptom-first fixes for the Celestial page — the badge's error states, panels showing install hints, missing chips and roster rows, an unstyled page, weewxd refusing to start, and translations that did not take.
+description: Symptom-first fixes for the Celestial page — the badge's error states, panels showing install hints, missing chips and roster rows, a light theme that did not take, an unstyled page, weewxd refusing to start, and translations that did not take.
 ---
 
 # Troubleshooting
@@ -160,6 +160,34 @@ comets are removed routinely.  The page renders honest absence rather
 than a fabricated position.  Remove it with `--remove-comet` if you don't
 expect it back, or leave it: it will return if the MPC republishes
 elements.
+
+## `theme = light` and the page is still dark
+
+Three things to check, in this order:
+
+1. **Where the option sits.**  `theme` is a report option, beside
+   `lang` — *not* inside `[[[Extras]]]`.  In `[[[Extras]]]` it is simply
+   ignored.
+2. **Whether the report has regenerated.**  The plate is baked in at
+   generation time (there is nothing in the browser to switch), so the
+   change appears on the next report cycle.  Reload after that; if the
+   page still looks dark, reload once more — the stylesheet is
+   version-tagged, but a proxy may hold the old page itself.
+3. **Whether weewx-skyfield is installed.**  The light plate is the paper
+   the sky dome and Next Visible Pass chart are drawn on, and those come
+   from weewx-skyfield.  Without it the page has no charts to match and
+   stays dark whatever the option says — the same tier where the panels
+   show an install hint.
+
+Case does not matter (`theme = Light` is `light`), but a value that is not
+one of the three (`theme = paper`, `theme = white`) leaves the page dark
+rather than failing the report — a page that generates in the wrong plate
+beats a page that does not generate — and says so in the log:
+
+```
+WARNING user.celestial: The Celestial report has an unusable theme option;
+rendering the dark plate.  Valid values are dark, light and auto.
+```
 
 ## The page looks unstyled — the dial is solid black discs
 

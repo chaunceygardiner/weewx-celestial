@@ -1,6 +1,47 @@
 weewx-celestial change history
 ------------------------------
 
+8.3 (2026/08/14)
+----------------
+- The page comes in light as well as dark.  A new report option --
+  theme = dark | light | auto, beside lang in [[CelestialReport]] and
+  NOT inside [[[Extras]]] -- puts the page on a paper-atlas plate, or
+  follows the sun: light while it is up, dark once it sets, flipping
+  within one archive interval.  dark is the default and is the page
+  exactly as it was, so upgrading changes nothing until you ask.
+- The WHOLE page changes together.  The sky dome and the Next Visible
+  Pass chart are weewx-skyfield's drawings, and on a light page they are
+  rendered on that extension's matching paper palette rather than left as
+  a night rectangle inside a light page.  Every color the page draws
+  itself is weewx-skyfield's light palette copied in, the same way the
+  night values already were, so one page never shows two shades of one
+  thing.  Needs weewx-skyfield 1.15 or later (2.2 for its own contrast
+  pass); without weewx-skyfield the page has no charts to match and
+  stays dark whatever the option says.
+- The sun, the moon and Venus are drawn differently on paper rather than
+  merely recolored: pale by identity, they measure 1.5, 1.4 and 1.3 to 1
+  as fills on a white panel, so each takes a darker edge in its own
+  color -- the outline of its dot, of its dashed below-horizon shape, of
+  its motion trail, and a ring inside its roster chip.  Proxima Centauri,
+  which wears the moon's silver, takes that edge color as its own.
+- The plate is settled when the report is generated, not in the browser.
+  The dome and the pass chart arrive as SVG with their colors already
+  inside them and the page refetches them as it runs, so there is nothing
+  for a browser-side toggle to switch and the page does not follow the
+  viewer's operating system.  Both refetched fragments are rendered on
+  the page's own palette, resolved from the page's generation instant, so
+  a refetch can never land a night dome in a light page.  On theme = auto,
+  where a report cycle really does cross sunrise, each backdrop declares
+  the plate it was drawn on and a page still wearing the other one
+  reloads itself once per flip -- so the flip reaches a page left open
+  overnight within a minute, instead of waiting for someone to press
+  reload.  A page that comes back still disagreeing (a cached copy) wears
+  the stale plate rather than reloading again.
+- A misspelled theme costs the plate and nothing else: the page renders
+  whole on the night plate rather than losing its panels -- and says so
+  in the log, naming the three valid values, so the mistake is visible
+  instead of silently dark for ever.
+
 8.2 (2026/08/14)
 ----------------
 - The Geocentric dial gets its grid back.  Its rings, ticks and rim were

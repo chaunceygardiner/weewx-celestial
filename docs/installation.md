@@ -84,6 +84,10 @@ separately.
 
 1. Restart WeeWX.  The report appears under `celestial/` of your web root.
 
+   It arrives on the night plate.  For the paper-atlas one, or for a page
+   that follows the sun, see
+   [Dark, light and auto](configuration.md#dark-light-and-auto).
+
 ## Verify it
 
 Give WeeWX one report cycle, then check three things in order — each one

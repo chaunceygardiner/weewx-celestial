@@ -37,8 +37,63 @@
   --c-sun:#FFD75E; --c-moon:#C9D0DA; --c-mercury:#9CA0AC; --c-venus:#F0E3BE;
   --c-mars:#CE6750; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
   --c-uranus:#35A8BE; --c-neptune:#5F85E6; --c-pluto:#8A7FB0;
-  --c-earth:#7FB4A2;
+  --c-earth:#7FB4A2; --c-proxima:#C9D0DA;
+  /* The halo: the color a mark is outlined in so it stays separate from
+   * whatever it sits on, and the fill of the hollow inversions (a
+   * satellite in shadow, a comet too faint to see).  skyfield's palettes
+   * carry it under the same name; on the night plate it is the page
+   * black, which is why this was spelled --night through 8.2. */
+  --halo:#0A0F22;
+  /* The three pale bodies need no edge on the night plate: their own
+   * color IS the bright mark.  On paper they do -- see the light block. */
+  --e-sun:#FFD75E; --e-moon:#C9D0DA; --e-venus:#F0E3BE; --e-earth:#7FB4A2;
   color-scheme: dark;
+}
+/* The light theme (theme = light, or auto with the sun up): the
+ * paper-atlas plate, matching the 'light' palette the dome and the Next
+ * Visible Pass chart are rendered with.  The template resolves the theme
+ * at generation time into this class on <html> -- it must sit on the root
+ * element so color-scheme (and the canvas backdrop it governs) flips with
+ * it, and it CANNOT be a browser-side toggle: the embedded charts arrive
+ * as skyfield SVG with their colors already inside them, and the
+ * javascript refetches them every 60 s.
+ *
+ * Every value here is weewx-skyfield's PALETTES['light'], copied in --
+ * the same cross-repo rule as the night values above, and the same
+ * reason: two shades of one thing on one page is the failure mode.
+ * Two values are this page's own to choose.  Proxima takes the light
+ * plate's moon RING silver -- skyfield has no Proxima, and the stars on
+ * paper are that color.  EARTH is the deliberate exception to the
+ * copy-the-palette rule (John's call, 8.3): skyfield draws Earth only in
+ * its orrery, a panel this page does not embed, so the dial's center dot
+ * is the one mark with no counterpart anywhere on this page to disagree
+ * with -- and it keeps its own green identity on BOTH plates rather than
+ * turning blue on paper as skyfield's earth_fill would.  The night green
+ * is 2.35:1 on white, so paper takes a darker one of the same family:
+ * 4.96:1 for the dot, 6.38:1 for the label.  Every OTHER body's light
+ * value is skyfield's, and a test keeps it that way. */
+:root.theme-light{
+  --night:#EFECE2; --vault:#FFFFFF; --ink:#1D2C4E; --muted:#5C6672;
+  --brass:#B45309; --line:#C9CFD8; --grid:#7A899F;
+  --c-sun:#FACC15; --c-moon:#D6DAE0; --c-mercury:#52525B; --c-venus:#F0E4BE;
+  --c-mars:#B23A24; --c-jupiter:#B06F2E; --c-saturn:#8F7524;
+  --c-uranus:#20808F; --c-neptune:#3A63C4; --c-pluto:#6A5F96;
+  --c-earth:#2E7D64;
+  /* Proxima wears the stars' silver, which on paper is the light plate's
+   * moon RING (#767E8A) -- its moon fill (#D6DAE0) is a 1.40:1 ghost on
+   * white, and a star that cannot be seen is not a star. */
+  --c-proxima:#767E8A;
+  --halo:#FFFFFF;
+  /* Pale on paper: sun 1.53:1, moon 1.40, venus 1.27 against the white
+   * panel -- as fills they are nearly not there.  skyfield's light
+   * palette answers this with a `ring` per pale body, a darker edge in
+   * the body's own hue, and these are those three values.  They serve
+   * every EDGE the body draws: the dot's outline, its dashed
+   * below-horizon outline, its motion trail and its roster chip.  Earth
+   * is not pale -- its --e- value is the darker green its center LABEL
+   * takes, the dot itself being --c-earth. */
+  --e-sun:#BC7800; --e-moon:#767E8A; --e-venus:#97864A; --e-earth:#1F6B54;
+  color-scheme: light;
 }
 *{box-sizing:border-box}
 body{background:var(--night); color:var(--ink);
@@ -129,45 +184,75 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
 .chip-mars{background:var(--c-mars)} .chip-jupiter{background:var(--c-jupiter)}
 .chip-saturn{background:var(--c-saturn)} .chip-uranus{background:var(--c-uranus)}
 .chip-neptune{background:var(--c-neptune)} .chip-pluto{background:var(--c-pluto)}
-.chip-proxima_centauri{background:var(--c-moon)}
+.chip-proxima_centauri{background:var(--c-proxima)}
 .fill-sun{fill:var(--c-sun)} .fill-moon{fill:var(--c-moon)}
 .fill-mercury{fill:var(--c-mercury)} .fill-venus{fill:var(--c-venus)}
 .fill-mars{fill:var(--c-mars)} .fill-jupiter{fill:var(--c-jupiter)}
 .fill-saturn{fill:var(--c-saturn)} .fill-uranus{fill:var(--c-uranus)}
 .fill-neptune{fill:var(--c-neptune)} .fill-pluto{fill:var(--c-pluto)}
-.fill-proxima_centauri{fill:var(--c-moon)}
+.fill-proxima_centauri{fill:var(--c-proxima)}
 .fill-earth{fill:var(--c-earth)}
 .stroke-sun{stroke:var(--c-sun)} .stroke-moon{stroke:var(--c-moon)}
 .stroke-mercury{stroke:var(--c-mercury)} .stroke-venus{stroke:var(--c-venus)}
 .stroke-mars{stroke:var(--c-mars)} .stroke-jupiter{stroke:var(--c-jupiter)}
 .stroke-saturn{stroke:var(--c-saturn)} .stroke-uranus{stroke:var(--c-uranus)}
 .stroke-neptune{stroke:var(--c-neptune)} .stroke-pluto{stroke:var(--c-pluto)}
-.stroke-proxima_centauri{stroke:var(--c-moon)}
+.stroke-proxima_centauri{stroke:var(--c-proxima)}
+/* On paper the sun, moon and Venus cannot carry their own mark (1.53,
+ * 1.40, 1.27:1 as fills on white), so every EDGE they draw switches to
+ * the light plate's ring color for that body: the roster chip takes it
+ * as an inset ring -- the same treatment skyfield gives its own roster
+ * dots on this plate -- and the trails and dashed below-horizon
+ * outlines take it as their stroke.  The night plate needs none of
+ * this, so --e-* there is just the body color and these rules are the
+ * only place the two plates diverge in kind rather than in value. */
+:root.theme-light .chip-sun{box-shadow:inset 0 0 0 1.5px var(--e-sun)}
+:root.theme-light .chip-moon{box-shadow:inset 0 0 0 1.5px var(--e-moon)}
+:root.theme-light .chip-venus{box-shadow:inset 0 0 0 1.5px var(--e-venus)}
+:root.theme-light .stroke-sun{stroke:var(--e-sun)}
+:root.theme-light .stroke-moon{stroke:var(--e-moon)}
+:root.theme-light .stroke-venus{stroke:var(--e-venus)}
 
 /* The dial's static furniture.  The per-ring stroke-opacity (0.5 inside
  * 10 au, 0.4 outside) is set by the javascript, which draws them.  The
  * grid is deliberately recessive -- see the note there -- but the RIM is
  * not scale furniture: it is the dial's outer boundary, one circle rather
  * than eight, so it stays a notch firmer (2.50:1) and gives the receding
- * decades something to be contained by.  The ticks follow the rings. */
+ * decades something to be contained by.  The ticks follow the rings.
+ * ONE set of weights serves both plates: with the light plate's own grid
+ * (#7A899F on white) the same opacities measure dL* 21.1 / 16.7 / 26.3
+ * against the night plate's settled 23.4 / 18.9 / 28.8 -- the same
+ * furniture at the same recessive distance, which is what the eye reads
+ * here, not the WCAG ratio (dark-plate rule, 8.2). */
 .geo-ring{fill:none; stroke:var(--grid)}
 .geo-rim{fill:none; stroke:var(--grid); stroke-opacity:.62; stroke-width:1.4}
 .geo-tick{stroke:var(--grid); stroke-opacity:.4; stroke-width:1}
 .geo-tick-major{stroke-width:1.6}
-.geo-earth{stroke:var(--night); stroke-width:1}
+.geo-earth{stroke:var(--halo); stroke-width:1}
 /* Body dots: above the horizon they wear a night-colored ring; below they
  * dim and their outline goes dashed in their own color.  That dashed
  * outline is what CARRIES a down body: it is the body's own color at full
  * strength (4.72:1 even for Mars, the darkest) where the dimmed fill
  * reaches 1.90, so the weight belongs on the outline.  1.5px, not the
  * hairline it was through 8.1. */
-.geodot.ring{stroke:var(--night); stroke-width:1}
+.geodot.ring{stroke:var(--halo); stroke-width:1}
+/* The paper halo is the panel itself, so a pale body would be outlined
+ * in nothing; sun and Venus take their edge instead.  (The moon's dial
+ * mark is the phase disc below, not a dot, and Proxima's light silver
+ * already reads at 4.10:1.) */
+:root.theme-light .geodot.ring.fill-sun{stroke:var(--e-sun)}
+:root.theme-light .geodot.ring.fill-venus{stroke:var(--e-venus)}
 .geodot.below{fill-opacity:.45; stroke-width:1.5; stroke-dasharray:2.5 2.5}
 .sunglow{filter:blur(6px); opacity:.55}
 /* The moon's true-phase disc, silver-rimmed so a new moon never vanishes. */
 .moon-dark{fill:#1E2745}
 .moon-lit{fill:#DDD8C4}
+:root.theme-light .moon-dark{fill:#26314F}
+:root.theme-light .moon-lit{fill:#F2ECD8}
 .moon-rim{fill:none; stroke:var(--c-moon); stroke-opacity:.55; stroke-width:1}
+/* The paper plate's moon_ring: the lit limb is nearly the page, so the
+ * rim is what draws the disc at all, and it goes full strength. */
+:root.theme-light .moon-rim{stroke:#888888; stroke-opacity:1}
 .geomoon.below{opacity:.55}
 .geomoon.below .moon-rim{stroke-dasharray:2.5 2.5; stroke-opacity:.7}
 /* Motion trails: per-segment opacity is set by the javascript, which ramps
@@ -179,8 +264,8 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
  * hollow inversion when fainter or when magnitude is honestly absent --
  * the satdot/shadow convention.  One shared color: comet tags are
  * dynamic, so per-tag classes cannot exist (the satellite precedent). */
-.cometdot{fill:var(--brass); stroke:var(--night); stroke-width:1.5}
-.cometdot.faint{fill:var(--night); stroke:var(--brass); stroke-width:2}
+.cometdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
+.cometdot.faint{fill:var(--halo); stroke:var(--brass); stroke-width:2}
 .cometdot.below{fill-opacity:.45; stroke-dasharray:2.5 2.5}
 .comet-tail{stroke:var(--brass)}
 .geocomet.below .comet-tail{opacity:.5}
@@ -195,7 +280,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .bodylab{font-size:11px; fill:var(--ink); font-family:Georgia, serif}
 .bodylab.dim{opacity:.55}
 .gridlab{font-size:10px; fill:var(--muted)}
-.earthlab{font-size:11px; fill:var(--c-earth); font-variant-caps:small-caps;
+.earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
           letter-spacing:.12em; text-anchor:middle}
 
 /* The sky dome: weewx-skyfield's dome_svg embedded beside the satellite
@@ -215,7 +300,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .satline{font-size:.8rem}
 /* Dome typography borrowed from weewx-skyfield's sky.css -- names and
  * values kept in step, same cross-repo rule as cardinal/bodylab/gridlab
- * above (the light-theme variants stay behind: this page is night-only).
+ * above -- the light-theme variants included, as of 8.3.
  * These small labels are their own value, not --muted: --muted is set for
  * body copy on the panel SURFACE, and the dome and next-visible-pass charts
  * put them on the dome gradient instead, whose rim is much lighter -- there
@@ -223,20 +308,29 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * the dome's scoped opt-in, worn by the ring-degree labels as
  * "mono gridlab skylab"; the axis labels on every other panel sit on the
  * panel surface and keep plain .gridlab.  Equal specificity, so .skylab
- * MUST stay after .gridlab above -- source order is all that makes it win. */
+ * MUST stay after .gridlab above -- source order is all that makes it win.
+ * The light rules are sky.css's, interleaved the same way it interleaves
+ * them.  The paper plate needs no lift and hands two of the three straight
+ * back to --muted (4.94:1 on that dome); only .conlab needs a value of its
+ * own -- the constellation names were the worst mark on either plate
+ * before 2.2, and #57637B is what clears 4.5:1 at the 0.95 opacity the
+ * chart draws them with. */
 .skylab{fill:#9FA5C4}
+:root.theme-light .skylab{fill:var(--muted)}
 .starlab{font-size:10px; fill:#9FA5C4; font-family:Georgia, serif; font-style:italic}
+:root.theme-light .starlab{fill:var(--muted)}
 .conlab{font-size:10px; fill:#9DABD7; font-family:Georgia, serif; font-style:italic;
         letter-spacing:.14em; text-transform:uppercase}
+:root.theme-light .conlab{fill:#57637B}
 .satlab{fill:var(--brass); font-family:Georgia, serif}
 .nowlab{font-size:10px; fill:var(--brass)}
 /* The live satellite layer (javascript-drawn): the marker dot and its
  * name, each with a faint variant for a satellite that is up but not
  * visible to the eye (daylight, or in Earth's shadow). */
-.satdot{fill:var(--brass); stroke:var(--night); stroke-width:1.5}
+.satdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
 /* In Earth's shadow: the fill/stroke inversion of weewx-skyfield's static
    dome marker (hollow ring, background fill so hover still lands). */
-.satdot.shadow{fill:var(--night); stroke:var(--brass); stroke-width:2}
+.satdot.shadow{fill:var(--halo); stroke:var(--brass); stroke-width:2}
 /* In a bright sky (sun >= -6): dimmed but drawn.  Whole-element opacity so
    the hollow ring dims too (fill-opacity would leave its stroke bright). */
 .satdot.faint{opacity:.35}

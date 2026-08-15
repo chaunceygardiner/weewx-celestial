@@ -2,7 +2,7 @@
 title: Configuration
 layout: default
 nav_order: 6
-description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone — the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, and how the page degrades across almanac tiers.
+description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone, theme — the dark and light plates, the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, and how the page degrades across almanac tiers.
 ---
 
 # Configuration
@@ -46,8 +46,49 @@ Installing registers the report; its options live in `weewx.conf`:
   `skin.conf`; set it in `weewx.conf` beside the options above rather
   than uncommenting it there, because an upgrade overwrites the skin.
 - `lang`: the page's language — see [Translations](i18n.md).
+- `theme`: the page's plate — `dark` (the default), `light`, or `auto`.
+  See [Dark, light and auto](#dark-light-and-auto) below.
 - `title` / `meta_title` (Extras): override the page heading and the HTML
   `<title>`.
+
+## Dark, light and auto
+
+The page ships as the night plate it has always been.  `theme` switches
+it.  Add it to the `[[CelestialReport]]` stanza above, beside
+`skin = Celestial` — at the report level, *not* inside `[[[Extras]]]`,
+exactly where `lang` goes:
+
+    theme = light
+
+- **`dark`** — the night page.  The default; upgrading changes nothing.
+- **`light`** — the paper-atlas page.
+- **`auto`** — light while the sun is up at generation time, dark otherwise.
+  The report regenerates each archive cycle, so the flip follows
+  sunrise and sunset to within one interval.
+
+![The Celestial page on the light plate](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport-light.png)
+
+**The whole page follows it.**  The sky dome and the Next Visible Pass
+chart are weewx-skyfield's drawings, and on a light page they are
+rendered on that extension's matching paper palette — never left as a
+night rectangle inside a light page.  The page above is the same page as
+the [dark one on the home page](index.md), one option apart.  Everything
+the page draws itself (the Geocentric dial, the roster, the countdown
+chips) is on the same paper, with the three pale bodies — the sun, the
+moon and Venus — taking a darker edge in their own color so they still
+read against it.
+
+The option is spelled and valued exactly as weewx-skyfield's own Sky page
+spells it, so the two pages configure alike; weewx-skyfield reads it
+straight out of this report's configuration.  Without that extension the
+page has no charts to match and stays dark.
+
+**It is resolved when the report is generated, not in the browser.**  The
+dome and the pass chart arrive as SVG with their colors already inside
+them, and the page refetches them as it runs — so there is nothing for a
+browser-side toggle to switch, and the page does not follow your
+operating system's dark-mode setting.  A theme change takes effect on the
+next report cycle.
 
 ## The sky dome, the satellites and the Next Visible Pass panel
 
@@ -138,6 +179,13 @@ the dial's: celestial 8.2 lifts its own Mars dot, and until 2.2 is
 installed the embedded dome still draws the darker one.  The half of that
 pass which lives in this skin's own stylesheet (the star and constellation
 names) ships in celestial 8.2 and applies at any weewx-skyfield version.
+
+The plate follows the same shape.  `theme` is read by weewx-skyfield, and
+the light plate is the paper its charts are drawn on, so **1.15 or later**
+is what makes the option do anything: below that — and on the PyEphem and
+built-in tiers, where there are no charts at all — the page stays dark
+whatever the option says, quietly, since there is no way to tell an old
+installation from one that never asked.
 
 The footer credit is generated truthfully for whichever almanac actually
 serves the page.

@@ -79,6 +79,26 @@ absent from the fields line, when the almanac cannot compute it, or —
 for the windowed guests — when the event is still more than 30 days out.
 See [the fields line](configuration.md#the-fields-line).
 
+## The two plates
+
+The page comes in two: the **night plate** it ships with, and a
+**paper-atlas plate** for a light page (`theme = light`, or `auto` to
+follow the sun — see
+[Dark, light and auto](configuration.md#dark-light-and-auto)).  Nothing
+below reads differently on the light one; the whole page changes together,
+the sky dome and Next Visible Pass chart included, and no panel is left on
+the night plate inside a light page.
+
+There is a picture of the light plate on the
+[Configuration](configuration.md#dark-light-and-auto) page.
+
+One thing is drawn differently rather than merely recolored.  The sun, the
+moon and Venus are pale by identity, and a pale mark on white paper is
+barely a mark — so on the light plate each of the three takes a darker
+edge in its own color: the outline of its dot, of its dashed
+below-horizon shape, of its motion trail, and a ring inside its roster
+chip.  It is the same body, wearing the same color, with an edge on it.
+
 ## The Geocentric
 
 Earth sits at the center.  Every body is placed by **compass bearing** —
@@ -98,8 +118,8 @@ On the dial:
 - **Solid** marks are above the horizon; **dashed and dimmed** marks are
   below it, still placed at their true bearing and distance.
 - **The moon** is drawn as a true-phase disc — the same limb-and-terminator
-  geometry weewx-skyfield's Sky page uses — inside a silver rim, so a new
-  moon is still visible as a mark.
+  geometry weewx-skyfield's Sky page uses — inside a rim of its own, so a
+  new moon is still visible as a mark.
 - **The sun** carries a soft glow.
 - **A trail** behind each mark shows the last hour of motion.  Trails and
   rates need two loop packets to exist, so for the first few seconds

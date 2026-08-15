@@ -28,6 +28,16 @@ appends any fields-line entries a newer version reads (append-only,
 printing each one), and the restart both reloads that line in
 weewx-loopdata and refreshes the deployed `celestial.css` and `sky.js`.
 
+8.3 adds the light plate.  Nothing moves on your page: `theme` defaults
+to `dark`, which is the page exactly as it was.  Set `theme = light` (or
+`auto`) in `[[CelestialReport]]` — beside `lang`, not inside
+`[[[Extras]]]` — to take it, and see
+[Dark, light and auto](configuration.md#dark-light-and-auto).  The dome
+and the Next Visible Pass chart follow the page onto the paper plate,
+which needs **weewx-skyfield 1.15 or later** (2.2 for its own contrast
+pass); without weewx-skyfield the page has no charts to match and stays
+dark whatever the option says.
+
 One note for 8.2: half of its contrast pass — the Geocentric dial's grid,
 its below-horizon marks and trails, and the sky dome's star and
 constellation names — lands with this install.  The other half lives

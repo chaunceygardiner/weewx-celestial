@@ -15,5 +15,15 @@
 ## inject into the page.
 #encoding UTF-8
 #if $sky_page
-$sky_page.pass_chart_html($almanac)#slurp
+## The page's plate, resolved exactly as index.html.tmpl resolves it, so
+## a refetched chart can never disagree with the page it lands in.
+## Guarded (an unknown theme raises) so a typo costs the plate, not the
+## fragment: this template deliberately has no #errorCatcher.
+#set $palette = 'night'
+#try
+#set $palette = 'light' if str($sky_page.theme($almanac)) == 'light' else 'night'
+#except
+#pass
+#end try
+$sky_page.pass_chart_html($almanac, palette=$palette)#slurp
 #end if

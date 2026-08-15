@@ -17,7 +17,9 @@ your HTML elements ids equal to the json keys, and poll `loop-data.txt`
 from javascript.  `skins/Celestial/realtime_updater.inc` is the reference
 implementation — the dial, the rate derivation, the countdown chips and
 the odometer are self-contained functions you can lift — and
-`skins/Celestial/celestial.css` holds every color.
+`skins/Celestial/celestial.css` holds every color — both plates' worth
+since 8.3, as a token set on `:root` and the overrides that a
+`theme-light` class on the root element switches in.
 
 {: .important }
 What is safe to copy depends on what the copied code depends on.  The
@@ -108,7 +110,7 @@ mark's group a `<title>` child and keep its text current.  On a live
 page, dismiss an open chip whenever a swap moves the sky under it — a
 chip should be a transient answer, never a stale overlay.
 
-## Three traps that cost real time
+## Four traps that cost real time
 
 {: .important }
 **Top-level `var` names in an include collide with `window`.**  A skin
@@ -140,6 +142,20 @@ during report generation, so the page never appears at all.  A
 the truth — and fall back to the capitalized tag name.  The same shape
 lurks wherever an optional almanac attribute is probed: on the PyEphem
 tier, test the *value*, never the success of the attribute access.
+
+**A baked-in palette cannot have a browser toggle.**  If your page
+embeds SVG whose colors are written into the markup — as this one does,
+and as anything drawn server-side does — then a light/dark switch in the
+browser can restyle your own chrome and nothing else, and any class you
+add to the embedded markup is undone the moment the page refetches it.
+The theme has to be resolved where the drawing happens: at generation
+time, into a class on the root element, with every fragment template
+rendered on the same palette as the page.  Miss one fragment and the
+symptom is the worst kind — a panel that flips plate a minute after load,
+on a timer, whenever that slot comes round.  (Resolve the palette from
+the page's own instant, too: on a sun-following theme, a fragment
+depicting a moment a few minutes later can otherwise disagree with the
+page it lands in.)
 
 ## The dome and the pass panel are not an interface
 

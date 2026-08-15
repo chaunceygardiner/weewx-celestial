@@ -22,7 +22,7 @@ about its behavior is answered by knowing which one owns what.
 
 | Clock | Period | What it does |
 |---|---|---|
-| **The report cycle** | typically 5 minutes | WeeWX regenerates the page's HTML.  The first paint, the dome backdrops and the Next Visible Pass chart are made here. |
+| **The report cycle** | typically 5 minutes | WeeWX regenerates the page's HTML.  The first paint, the dome backdrops, the Next Visible Pass chart and the page's plate (dark or light) are all settled here. |
 | **The loop packet** | seconds (2 with the Vantage driver) | weewx-loopdata writes `loop-data.txt`; the page fetches it every `refresh_rate` seconds and re-anchors every live value to truth. |
 | **The one-second tick** | 1 second | The browser advances the readouts between packets, and ticks the countdown chips. |
 
@@ -99,11 +99,30 @@ Satellites are the exception to all of this: their markers move at loop
 rates, continuously, because they are the one class of thing overhead
 that genuinely moves fast.
 
+Both fragments arrive as SVG with their colors already inside them, which
+is why the page's plate — dark or light — is settled when the report is
+generated rather than in the browser (see
+[Dark, light and auto](configuration.md#dark-light-and-auto)).  Each
+fragment is rendered on the palette the page around it was rendered with,
+resolved from the report's own generation instant, so a refetch can never
+land a night dome in a light page.
+
+On `theme = auto` a report cycle eventually crosses sunrise, and an open
+page cannot restyle itself — its plate was baked in when it was
+generated.  So each backdrop declares which plate it was drawn on, and a
+page that finds itself wearing the other one reloads — once per flip, and
+never again if it comes back still disagreeing, which would mean a cached
+copy rather than a flip.  The change reaches a page left open overnight
+within a minute of the report cycle that makes it, rather than waiting
+for someone to press reload.
+
 ## What the browser does not do
 
-No astronomy.  The javascript does arithmetic — differences, rates,
-linear extrapolation, countdown subtraction — and draws.  Every
-astronomical quantity on the page was computed by the almanac in weewxd.
+No astronomy, and no theme switching.  The javascript does arithmetic —
+differences, rates, linear extrapolation, countdown subtraction — and
+draws.  Every astronomical quantity on the page was computed by the
+almanac in weewxd, and the page does not follow your operating system's
+dark-mode setting: it wears the plate its report was generated with.
 That is a deliberate division: it keeps the page cheap on a phone, and it
 guarantees that what ticks in the browser cannot disagree with what the
 report says.

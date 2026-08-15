@@ -32,6 +32,25 @@
 #set $frag_offset = $frag_k * $frag_step
 #if $frag_offset < $frag_interval
 #set $frag_ts = int($almanac.time_ts) + $frag_offset
-<div class="domefrag" data-dome-ts="$frag_ts" data-dome-slot="$frag_k" data-dome-step="$frag_step" data-dome-count="$frag_count">$sky_page.dome_svg($almanac(almanac_time=$frag_ts))</div>#slurp
+## The palette is resolved against the PAGE's almanac, never the slot's:
+## on theme = auto a slot minutes past sunrise would otherwise render
+## paper while the page around it is still night, and the refetch would
+## flip the dome mid-cycle -- the palette must be a property of the
+## generation instant, exactly as the theme class on <html> is.  Guarded
+## (an unknown theme raises) so a typo costs the plate, not the fragment.
+#set $palette = 'night'
+#try
+#set $palette = 'light' if str($sky_page.theme($almanac)) == 'light' else 'night'
+#except
+#pass
+#end try
+## data-dome-palette is the plate this backdrop is DRAWN on, and it is
+## how an open page notices that theme = auto has flipped under it: the
+## page's own plate was baked in when it was generated, but it goes on
+## refetching fragments, and the cycle that crosses sunrise renders them
+## on the other plate.  The javascript compares the two and reloads once
+## on a mismatch.  This fragment is the sentinel for the pass chart too
+## -- it refetches five times as often.
+<div class="domefrag" data-dome-ts="$frag_ts" data-dome-slot="$frag_k" data-dome-step="$frag_step" data-dome-count="$frag_count" data-dome-palette="$palette">$sky_page.dome_svg($almanac(almanac_time=$frag_ts), palette=$palette)</div>#slurp
 #end if
 #end if

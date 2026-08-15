@@ -3,7 +3,7 @@ title: Home
 layout: default
 nav_order: 1
 permalink: /
-description: A live celestial page for WeeWX — countdown central, the Geocentric panel with comets, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart — updating on every loop packet via weewx-loopdata almanac fields.
+description: A live celestial page for WeeWX — countdown central, the Geocentric panel with comets, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart, on a dark or light plate — updating on every loop packet via weewx-loopdata almanac fields.
 ---
 
 # weewx-celestial — Watch the sky move
@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.2**, the current release.
+This manual documents weewx-celestial **8.3**, the current release.
 
 ## Start here
 
@@ -24,8 +24,8 @@ This manual documents weewx-celestial **8.2**, the current release.
   earlier version instead?  [Upgrading](upgrading.md).
 - **[Reading the page](reading-the-page.md)** — what every mark, color
   and phrase on the page means.  Start here once it is running.
-- **[Configuration](configuration.md)** — the report's options, and how
-  the page degrades across almanac tiers.
+- **[Configuration](configuration.md)** — the report's options, the dark
+  and light plates, and how the page degrades across almanac tiers.
 - **[Satellites and comets](satellites-and-comets.md)** — watch more than
   the installer's defaults, in one command each.
 - **[Troubleshooting](troubleshooting.md)** — symptom first: the badge's
@@ -155,6 +155,23 @@ motion from consecutive packets and advances the readouts every second —
 re-anchoring to truth on the next packet, and freezing rather than
 inventing data if the feed goes stale.
 
+## Dark or light
+
+The page ships as the night plate above, and takes a paper-atlas plate
+instead with one report option — `theme = light`, or `auto` to run light
+while the sun is up and dark once it sets:
+
+![The Celestial page on the light plate](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport-light.png)
+
+The whole page changes together.  The sky dome and the Next Visible Pass
+chart are weewx-skyfield's drawings, and on a light page they are drawn
+on that extension's matching paper palette — no night rectangle inside a
+light page.  The plate is settled when the report is generated: the
+charts arrive with their colors already inside them, so the page does not
+follow the viewer's operating system, and there is nothing for a browser
+toggle to switch.  See
+[Dark, light and auto](configuration.md#dark-light-and-auto).
+
 ## How it works
 
 The live values are **weewx-loopdata almanac fields**: report almanac tags
@@ -203,4 +220,5 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
   strongly recommended (required for Proxima Centauri; 2.0 or later
   required for the sky dome's satellites and the Next Visible Pass
   chart; 2.1 or later for the comets, the meteor showers and the full
-  countdown row), or PyEphem
+  countdown row; 1.15 or later for the light plate, which is the paper
+  its charts are drawn on), or PyEphem
