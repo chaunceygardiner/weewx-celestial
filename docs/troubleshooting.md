@@ -78,6 +78,13 @@ Look at it directly (`head -c 300 loop-data.txt`).  A truncated or
 half-written file usually means something other than loopdata is writing
 there.
 
+It also means a file that parsed but carried no `current.dateTime.raw`.
+The page times everything by the station's own clock, which that field
+carries, so a record without it is ignored whole and the browser console
+says so.  The fields line in
+[Fields reference](fields-reference.md) always includes it — check that
+yours has not been trimmed.
+
 ## The badge age keeps climbing
 
 The page is fine; the feed stopped.  In order: is weewxd running, is

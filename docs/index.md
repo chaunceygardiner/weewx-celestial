@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.3.3**, the current release.
+This manual documents weewx-celestial **8.3.4**, the current release.
 
 ## Start here
 

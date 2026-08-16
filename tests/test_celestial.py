@@ -529,6 +529,12 @@ class TestSampleSkinRenders:
         assert 'href="celestial.css?v=%s"' % celestial.CELESTIAL_VERSION in html
         assert 'PER_AU = 92955807' in html and "DIST_LABEL = ' miles'" in html
         assert '37.44' in html
+        # The station clock's pre-packet anchor, baked from the report's
+        # own instant.  Asserted on the RENDERED value, never on the
+        # template text: under #errorCatcher Echo a bad placeholder is
+        # echoed as error prose instead of raising, so a broken bake
+        # would ship a page whose clock never started.
+        assert 'GEN_TS = %d;' % int(TIME_TS) in html
         # A capable almanac serves the page: no install hint, and the
         # footer carries the full Skyfield credit (Proxima proves the star
         # catalog) -- naming weewx-skyfield with its manual linked, since
@@ -1174,6 +1180,99 @@ class TestSampleSkinRenders:
                    encoding='utf-8').read()
         assert "attrNum(track, 'data-rise')" in src
         assert "attrNum(track, 'data-set')" in src
+
+    def test_page_reads_one_clock_and_it_is_the_stations(self):
+        """8.3.4's rule, pinned where it can be enforced: every instant
+        this page reasons about was written by the STATION -- a pass's
+        rise and set, an event's countdown target, the header clock --
+        so the browser's clock is never read as a calendar, only as a
+        stopwatch (a difference between two of its own readings, which
+        no viewer's skew can color).
+
+        Through 8.3.3 four extrapolation sites computed `nowTs -
+        latestTs`, subtracting the station's clock from the browser's;
+        the countdown chips and the header clock compared station-written
+        instants against Date.now(); and renderPass judged the chart's
+        own data-set on a clock that could fall back to the viewer's,
+        which then needed a freshness test (STALE_PACKET) and a one-way
+        latch (b.over) to police.  All of that is one function now, and
+        the machinery that policed it is gone.
+
+        Structural rather than a fake-clock browser run on purpose: the
+        rule is about which names appear where, the browser test would
+        be a viewer-skew scenario, and John ruled those out of scope
+        2026-08-15."""
+        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
+                   encoding='utf-8').read()
+        # The two helpers, and the only place a station time and a
+        # browser reading are allowed to meet.
+        assert re.search(r'function packetAge\(\) \{', src)
+        assert re.search(r'function serverNow\(\) \{', src)
+        assert re.search(r'Date\.now\(\) / 1000 - latestRecvTs', src), \
+            'packetAge must measure the packet age on the browser clock alone'
+        assert re.search(r'GEN_TS \+ \(Date\.now\(\) / 1000 - PAGE_LOAD\)', src), \
+            'the pre-packet anchor must be the page generation stamp'
+        # The clock is UNCAPPED where the marks are capped: EXTRAP_MAX
+        # bounds how long a POSITION may be extrapolated, and borrowing it
+        # for the clock stopped serverNow dead EXTRAP_MAX after a feed
+        # died -- header clock frozen, every chip's -60 grace unable to
+        # fire, a pass never judged over.
+        assert re.search(r'latestTs \+ \(Date\.now\(\) / 1000 - latestRecvTs\)', src), \
+            'serverNow must not borrow packetAge: a clock does not stop'
+        assert not re.search(r'latestTs \+ packetAge\(\)', src)
+        assert 'GEN_TS = $int($almanac.time_ts);' in src, \
+            'GEN_TS must be baked from the report generation instant'
+        # The policing 8.3.3 needed, all unreachable now.
+        for gone in ('stationClock', 'feedFresh', 'STALE_PACKET', 'b.over'):
+            assert gone not in src, '%s should have gone with the fallback' % gone
+        # No cross-clock arithmetic anywhere, in either order.
+        assert not re.search(r'nowTs\s*-\s*latestTs', src)
+        assert not re.search(r'latestTs\s*-\s*nowTs', src)
+        assert not re.search(r'Date\.now\(\)[^\n]*-[^\n]*latestTs', src)
+        assert not re.search(r'latestTs[^\n]*-[^\n]*Date\.now\(\)', src)
+        # The four extrapolation sites all take the stopwatch reading.
+        assert len(re.findall(r'var dt = packetAge\(\);', src)) == 4, \
+            'the dial, dome, satellites and pass sweep all extrapolate on packetAge'
+        # The consumers of an absolute instant all take the station's.
+        assert re.search(r"setHtml\('live-clock', fmtHMS\(serverNow\(\)\)\)", src)
+        # The countdown chips and the satellite roster's pass rows (whose
+        # satWhen reads "overhead now" and "in {n} days" off a station
+        # instant) each open on serverNow, taking no browser instant in.
+        for fn in ('renderCountdown', 'renderSatRosters'):
+            assert re.search(r'function %s\(\) \{' % fn, src), fn
+        assert len(re.findall(r'var nowTs = serverNow\(\);', src)) == 2
+        assert re.search(r'function renderPass\(\) \{', src), \
+            'renderPass takes no browser instant: it reads serverNow itself'
+        assert re.search(r'var now = serverNow\(\);', src)
+        # The two renderers that no longer need an instant at all take
+        # none: a browser reading left in a signature is one a later
+        # edit can compare against a station time by accident.
+        assert re.search(r'function renderGeo\(\) \{', src)
+        assert re.search(r'function renderSats\(svg\) \{', src)
+        # The ONE documented exception, deliberate and John's call
+        # 2026-08-16: stationNow -- 8.3.1's backdrop-staleness clock --
+        # still answers with the browser's before the first packet.  It
+        # is a different feature (it must FREEZE when the feed dies,
+        # where serverNow must not), and it is pinned here so its
+        # exceptional status stays visible rather than becoming a second
+        # convention by accident.
+        assert re.search(r'return \(latest === null\) \? nowTs : latestTs;', src)
+        # A record with no station timestamp is dropped whole -- it can
+        # never become the clock's anchor, as it did through 8.3.3.
+        assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
+        assert re.search(r'console\.log\(.loop record has no '
+                         r'current\.dateTime\.raw; ignored.\)', src)
+        assert not re.search(r"latestTs = \(typeof lastTs === 'number'\)", src), \
+            'the browser clock must never be stored as the station time'
+        assert re.search(r'latestTs = lastTs;', src)
+        # The LIVE badge's age is two same-clock terms, never a crossing:
+        # how stale the record already was when the page found it (its
+        # station time against the page's, GEN_TS) plus how long since a
+        # fresh one arrived here (browser against browser).  Without the
+        # first term the badge calls an hour-old re-served file LIVE to
+        # anyone who has just loaded the page.
+        assert re.search(r'var age = Math\.round\(Math\.max\(0, GEN_TS - latestTs\)\s*'
+                         r'\+ \(nowTs - latestRecvTs\)\);', src)
 
     def test_light_pass_chart_fragment(self, wxskyfield_sat_almanac):
         """The Next Visible Pass chart follows the page's plate too --

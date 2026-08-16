@@ -40,7 +40,7 @@ def loader():
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "8.3.3",
+            version = "8.3.4",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

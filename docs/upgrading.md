@@ -28,6 +28,15 @@ appends any fields-line entries a newer version reads (append-only,
 printing each one), and the restart both reloads that line in
 weewx-loopdata and refreshes the deployed `celestial.css` and `sky.js`.
 
+8.3.4 is an internal simplification: the page now reads one clock, the
+station's, for every instant it reasons about — pass rise and set times,
+countdown targets, the header clock — instead of measuring some of them
+against the viewer's own clock.  Once a page has its first loop packet —
+normally a second or two after it loads — nothing looks different on a
+machine whose clock is right.  A loop record carrying no `current.dateTime.raw`
+is now ignored rather than timestamped from the browser; the fields line
+this extension prescribes always carries it.
+
 8.3.3 makes the Next Visible Pass chart's sweeping dot leave the chart
 when the pass ends, instead of jumping back to mid-arc.  The fix reads
 the pass's own rise and set from the chart, which **weewx-skyfield

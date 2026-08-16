@@ -1,6 +1,41 @@
 weewx-celestial change history
 ------------------------------
 
+8.3.4 (2026/08/16)
+------------------
+- The live page now reads one clock, and it is the station's.  Every
+  instant the page reasons about -- a satellite pass's rise and set, a
+  countdown chip's target, the roster's "overhead now", the header
+  clock -- is written by the station, so the page no longer measures any
+  of them against the viewer's own clock, which it has no reason to
+  trust.  It asks the browser only how long something took, never what
+  time it is.  A viewer whose clock was wrong could previously read
+  every countdown off by the same amount, see the marks on the dial and
+  the dome extrapolated up to two minutes from where they belong, and
+  find a perfectly live feed labeled "120s ago"; all three now show
+  the same page a correct clock shows.  Nothing is configured and
+  nothing looks different on a machine whose clock is right.
+- The clock is anchored on each loop packet's own timestamp and carried
+  forward between packets; before the first packet arrives it is
+  anchored on the page's own generation instant, so the countdown chips
+  tick from the moment the page loads exactly as they did in 8.3.3, and
+  the first packet re-anchors them.
+- The Next Visible Pass chart now stands exactly as the station drew it
+  -- the dot at the culmination, under the pass it names -- until the
+  first loop packet arrives, normally a second or two after the page
+  loads, and for as long as the feed stays down if it does not come at
+  all.  8.3.3 hid the dot of an already-finished pass before any
+  packet had landed; it no longer does, because the dot has no position
+  to move to until the feed supplies one, and the page keeps no clock
+  of its own to judge with.  Once the first packet is in, the verdict
+  and the sweep are as they were in 8.3.3.
+- Internal simplification behind all of the above: the clock-freshness
+  test, the clock that could switch source, and the one-way pass-ended
+  latch that policed that switch are all gone -- three functions and a
+  piece of remembered state -- because there is no longer a second clock
+  for them to guard against.  What replaces them is one clock and a
+  stopwatch.  No configuration change, no new fields.
+
 8.3.3 (2026/08/15)
 ------------------
 - The Next Visible Pass chart's sweeping dot leaves the chart when the

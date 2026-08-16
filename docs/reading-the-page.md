@@ -31,9 +31,9 @@ because it reports the feed's actual state rather than a hopeful one:
 | Badge | What it means |
 |---|---|
 | `LIVE` | A packet arrived within the last 6 seconds.  Everything on the page is current. |
-| `12s ago` | The last packet is older than 6 seconds; the number is its age.  Brief gaps are normal; a number that climbs means the feed has stopped. |
+| `12s ago` | The data on show is more than 6 seconds old; the number is its age.  Brief gaps are normal; a number that climbs means the feed has stopped — including the case where the web server goes on serving the same file loopdata stopped writing. |
 | `NO DATA (HTTP 404) — check loop_data_file` | The page fetched the loop-data file and the web server said it isn't there.  This is a wiring problem, not an astronomy problem — see [`loop_data_file`](configuration.md). |
-| `BAD DATA — check loop_data_file` | The file was served but could not be parsed as the expected json. |
+| `BAD DATA — check loop_data_file` | The file was served but could not be parsed as the expected json — or it parsed but carried no `current.dateTime.raw`, which the page needs to place anything at all. |
 | `OFFLINE` | The fetch itself failed — no network, or the web server is down. |
 | `CLICK-ME` | The page stopped polling after `expiration_time` hours.  Click it to resume. |
 
@@ -216,7 +216,11 @@ the satellite has set, exactly as its mark disappears from the sky dome
 at that instant.  The arc, the head line and the rest of the drawn sky
 stay until the next chart arrives a few minutes later, so in that gap the
 panel shows the record of the pass that has just finished, with no
-satellite on it — a page opened in that gap comes up the same way.  The
+satellite on it.  A page opened in that gap comes up the same way once
+its first loop packet lands, normally a second or two after it loads:
+until then the chart stands exactly as the station drew it, dot
+included, and it keeps standing that way for as long as the loop feed is
+down.  The
 page reads the pass's own rise and set from the chart, which needs
 weewx-skyfield 2.3.2 or later.
 

@@ -67,6 +67,11 @@
   }
   ## Station latitude decides the moon disc's lit side (hemisphere flip).
   STATION_LAT = $station.stn_info.latitude_f;
+  ## The instant this page was generated FOR, on the station's clock -- the
+  ## same stamp the dome fragment carries as data-dome-ts.  It is the
+  ## station clock's anchor before the first loop packet arrives; see
+  ## serverNow.
+  GEN_TS = $int($almanac.time_ts);
   ## Distances arrive as raw AU (weewx-loopdata almanac fields); convert to
   ## the report's distance units here.  windrun stands in for group_distance
   ## (this extension registers no observation types).
@@ -327,12 +332,10 @@
   // write cadence, so twenty missed writes is the measure.  No
   // inference, no learning: a number from the configuration.
   var DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
-  // How far a packet's own time may lag the browser's clock at arrival
-  // and still be taken for a live packet with a skewed viewer, rather
-  // than a stale file: a quarter of an hour or more is a stale file, no
-  // viewer's clock is that far out; a smaller lag is tolerated as skew.
-  // Used by feedFresh / stationClock.
-  var STALE_PACKET = 900;
+  // The stopwatch's zero: when this script first ran, by the browser's
+  // clock.  Never compared with a station time -- only subtracted from
+  // another reading of the same clock (serverNow).
+  var PAGE_LOAD = Date.now() / 1000;
   function rOfAu(au) {
     var lg = Math.log(au) / Math.LN10;
     return R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
@@ -610,7 +613,7 @@
       row.className = below ? 'row below' : 'row';
     }
   }
-  function renderGeo(nowTs) {
+  function renderGeo() {
     if (latest === null) {
       return;
     }
@@ -618,9 +621,12 @@
       dialMarks = buildDial();
     }
     // Extrapolate at the derived rates between loop refreshes, re-anchoring
-    // to truth on every packet; stale data stops advancing after
+    // to truth on every packet.  The interval is the stopwatch reading
+    // since the packet arrived (packetAge -- never the browser's clock
+    // minus the station's, which would extrapolate a skewed viewer's page
+    // to the cap and hold it there); stale data stops advancing after
     // EXTRAP_MAX seconds so a dead feed cannot drift the page into fiction.
-    var dt = Math.min(Math.max(nowTs - latestTs, 0), EXTRAP_MAX);
+    var dt = packetAge();
     // The moon's phase, for its dial disc: percent full plus waxing
     // (the next full moon precedes the next new moon).
     var moonFrac = num(latest, 'almanac.moon.phase');
@@ -1003,7 +1009,7 @@
     if (domeBase === null) {
       readDomeBase();
     }
-    var dt = Math.min(Math.max(nowTs - latestTs, 0), EXTRAP_MAX);
+    var dt = packetAge();
     DOME_BODIES.forEach(function(key) {
       var b = domeBase[key];
       if (!b) {
@@ -1031,7 +1037,7 @@
         b.lab.setAttribute('transform', tr);
       }
     });
-    renderSats(nowTs, svg);
+    renderSats(svg);
   }
   // The live satellite layer: our own marker (dot + name), created
   // inside the current backdrop and rebuilt after every swap.  Feature
@@ -1157,7 +1163,7 @@
     }
     setHtml(passId, sub);
   }
-  function renderSatRosters(nowTs) {
+  function renderSatRosters() {
     // The two countdown rows per satellite, one per table (present only
     // when the report almanac served them; setHtml is a no-op
     // otherwise): the dome's next pass of ANY kind, visibility-tagged,
@@ -1174,6 +1180,11 @@
     if (latest === null) {
       return;
     }
+    // A pass's rise and set are the station's instants, so the now they
+    // are measured against is the station's too (serverNow), never the
+    // viewer's: satWhen's "overhead now" / "in {n} days" and the day
+    // count that names the calendar day both read it.
+    var nowTs = serverNow();
     SAT_NAMES.forEach(function(name) {
       if (!hasKey('almanac.' + name + '.az')) {
         return;              // not in the loop feed: first paint stands
@@ -1242,11 +1253,11 @@
       satMarks = null;
     }
   }
-  function renderSats(nowTs, svg) {
+  function renderSats(svg) {
     if (satMarks === null) {
       satMarks = {};
     }
-    var dt = Math.min(Math.max(nowTs - latestTs, 0), EXTRAP_MAX);
+    var dt = packetAge();
     SAT_NAMES.forEach(function(name) {
       var azKey = 'almanac.' + name + '.az';
       var altKey = 'almanac.' + name + '.alt';
@@ -1633,7 +1644,7 @@
   // parse allows rather than until the first tick.
   document.addEventListener('DOMContentLoaded', function() {
     try {
-      renderPass(Date.now() / 1000);
+      renderPass();
     } catch (e) {
       console.log(e);
     }
@@ -1740,31 +1751,48 @@
     // feed at all.
     return (latest === null) ? nowTs : latestTs;
   }
-  function stationClock(nowTs) {
-    // The station's clock, carried forward by the browser's since the
-    // last packet: the last packet's station time plus the browser time
-    // elapsed since it arrived.  A viewer's clock skew cancels out, and
-    // unlike stationNow it keeps advancing when the feed dies -- for a
-    // verdict that must still fall (the pass chart's set) rather than a
-    // staleness judgement that must not.  Only from a FRESH packet,
-    // though: one whose own time was already far behind the browser's
-    // when it arrived (a stale loop file still served with 200 --
-    // loopdata dead, the web server up -- which is not clock skew but
-    // old news) would carry the station's clock hours behind and keep a
-    // finished pass "in its window" for the life of the page.  There
-    // the browser's clock is the better estimate, and it is the only
-    // one before the first packet.  (feedFresh.)
-    return feedFresh(nowTs) ? latestTs + (nowTs - latestRecvTs) : nowTs;
+  function packetAge() {
+    // How long the current packet has been in hand, by the stopwatch:
+    // both readings are the BROWSER's own clock, so a viewer's skew
+    // cancels exactly and never reaches the arithmetic.  Capped at
+    // EXTRAP_MAX so a feed that dies freezes the page rather than
+    // running it on into fiction.
+    return Math.min(Math.max(Date.now() / 1000 - latestRecvTs, 0), EXTRAP_MAX);
   }
-  function feedFresh(nowTs) {
-    // A live packet is in hand whose own time was within STALE_PACKET
-    // of the browser's when it arrived.  Its AGE does not matter: the
-    // carried-forward clock is right for a packet of any age (the skew
-    // cancels), so a feed that has since died changes nothing -- only a
-    // packet that was already old news on arrival (a stale loop file
-    // served with 200) is refused, and a viewer more than STALE_PACKET
-    // off the station gets the browser's clock, the stated exception.
-    return latest !== null && Math.abs(latestTs - latestRecvTs) <= STALE_PACKET;
+  function serverNow() {
+    // THE clock of this page, and the station's: every instant the page
+    // reasons about -- a pass's rise and set, an event's countdown, the
+    // header clock -- was written by the station, so the browser must
+    // never be asked what time it is.  It is asked only how long
+    // something took, which is a difference between two of its own
+    // readings and immune to any skew.
+    //
+    // The anchor is the last packet's own timestamp, carried forward by
+    // the stopwatch since it arrived; before the first packet it is the
+    // page's own generation instant, carried forward by the stopwatch
+    // since load.  That pre-packet anchor is behind by the page's age at
+    // load -- one report cycle at worst, plus any HTTP caching -- and
+    // the first packet erases it, typically within refresh_rate seconds.
+    // It is bounded and self-healing, which the viewer's clock is not:
+    // 8.3.3 fell back to Date.now() here and needed a freshness test and
+    // a latch to police a fallback that could be wrong by hours.
+    // Neither is needed now, and both are gone.
+    //
+    // UNCAPPED, deliberately, and this is the one place packetAge must
+    // not be borrowed: EXTRAP_MAX is how long a POSITION may be
+    // extrapolated, and a clock that stops is a different thing from a
+    // mark that stops moving.  Capped here, a feed dying at 12:00 left
+    // serverNow answering 12:02 for ever -- the header clock visibly
+    // stopped, every countdown chip frozen at a fixed remaining time
+    // with its -60 grace unable to fire, and a pass whose set fell more
+    // than EXTRAP_MAX after the last packet never judged over: the 8.3.3
+    // bug, back, under a dead feed.  It also read absurdly beside the
+    // no-packet branch, which ticks on for ever.  A clock advances; what
+    // freezes on a dead feed is the marks, and they freeze in
+    // renderGeo/renderDome/renderSats where packetAge still caps them.
+    return latest === null
+         ? GEN_TS + (Date.now() / 1000 - PAGE_LOAD)
+         : latestTs + (Date.now() / 1000 - latestRecvTs);
   }
   function domeStaleWhy() {
     var p = domeFetchProblem;
@@ -1929,8 +1957,7 @@
                 stroke: c.getAttribute('stroke'),
                 genLit: ds === null ? null : ds !== '0',
                 rise: attrNum(track, 'data-rise'),
-                set: attrNum(track, 'data-set'),
-                over: false};       // latched by renderPass past the set
+                set: attrNum(track, 'data-set')};
   }
   function attrNum(el, name) {
     // A numeric attribute, or null when absent or not a number.
@@ -1986,7 +2013,7 @@
       b.c.setAttribute('stroke', b.fill);
     }
   }
-  function renderPass(nowTs) {
+  function renderPass() {
     if (passSvg() === null) {
       return;
     }
@@ -2000,6 +2027,21 @@
     if (b.tag === null) {
       return;
     }
+    if (latest === null) {
+      // No packet, so no position to sweep to -- the dot's az and alt
+      // come from the feed, and no clock however good supplies them.
+      // The chart therefore stands exactly as the station drew it: the
+      // dot at the culmination, under the pass it names.  A page opened
+      // mid-pass, or just after one, shows that until the first packet
+      // lands -- normally refresh_rate seconds later, but for as long as
+      // the feed stays down, since nothing else here can set `latest`.
+      // A station whose loop feed is not working has no working pass
+      // panel either; John's ruling of 2026-08-16, and what lets the
+      // verdict below be a plain comparison of two station-written times
+      // with nothing remembered and nothing to police.
+      passStandsAsDrawn(b);
+      return;
+    }
     // The window the chart is judged against is the chart's OWN --
     // data-rise/data-set on the track, skyfield 2.3.2 -- because the
     // feed's next_visible_pass rolls on to the FOLLOWING pass moments
@@ -2011,40 +2053,19 @@
     // (NOAA-21's Aug 15 capture, f0498 at 02:58:35 exactly).  With the
     // chart's own times there is nothing to remember: past the set the
     // pass this chart depicts is over, whether or not the page was
-    // watching when it ended -- and it needs no loop packet to say so,
-    // so a page opened after the set, or one whose feed is down, hides
-    // the mark before the first packet ever lands (inside the window the
-    // sweep still needs the feed, and the drawn dot stands until it
-    // comes).  Once over, over: the verdict latches on the chart, so a
-    // later switch of judging clock (the feed dying, stationClock
-    // falling back to a skewed viewer's) cannot bring a finished pass's
-    // mark back; a new chart starts clean.  The instant is the
-    // station's clock carried forward (stationClock; the 8.3.2 ruling
-    // that station-written times are judged by the station's clock, so
-    // a viewer's fast clock cannot drop the mark while the dome still
-    // flies the satellite -- and carried forward, so a feed that dies
-    // mid-pass still sees the set fall), the browser's until a packet
-    // arrives.  An older chart without the attributes falls back to the
-    // feed's window and 8.3.2's behavior -- restoring the drawn chart
-    // outside the window, the roll-back and all -- judged on this same
-    // clock; no better and no worse.
-    var now = stationClock(nowTs);
+    // watching when it ended.  Both sides of the comparison are written
+    // by the station -- the chart's times by the report, the instant by
+    // serverNow -- so the verdict cannot flip with the viewer's clock
+    // and has nothing to latch.  An older chart without the attributes
+    // falls back to the feed's window and 8.3.2's behavior -- restoring
+    // the drawn chart outside the window, the roll-back and all -- on
+    // this same clock; no better and no worse.
+    var now = serverNow();
     if (b.rise !== null && b.set !== null) {
-      if (b.over || now >= b.set) {
+      if (now >= b.set) {
         // Over.  Hide the mark and its label, exactly as the dome does
         // with a satellite that has set; the arc, the header and the
         // rest of the chart stand until the next refetch replaces them.
-        // The verdict LATCHES only when made on the station's clock (a
-        // fresh feed): a hide judged on the browser's clock before the
-        // first packet -- a viewer's fast clock, minutes before the
-        // real set -- stays provisional, and the packet re-judges it.
-        // What the latch buys is the rare reverse switch: a NEW packet
-        // whose own time is far behind (a stale file starting to be
-        // served, an NTP step) drops feedFresh and the verdict falls to
-        // a viewer's clock that may say the pass is still on.
-        if (feedFresh(nowTs)) {
-          b.over = true;
-        }
         passMarkShown(b, false);
         return;
       }
@@ -2062,26 +2083,18 @@
         return;
       }
     }
-    if (latest === null) {
-      // In the window with nothing to sweep from yet: the drawn dot
-      // stands (and a provisional hide made on the browser's clock
-      // before this packet is undone).
-      passStandsAsDrawn(b);
-      return;
-    }
     var az = num(latest, 'almanac.' + b.tag + '.az');
     var alt = num(latest, 'almanac.' + b.tag + '.alt');
     if (az === null || alt === null) {
-      // Nothing to sweep from.  A dot never yet swept stands as drawn
-      // (undoing a provisional hide made before the first packet); one
-      // already on the arc holds its last position rather than snapping
-      // back to the culmination for a single null packet.
+      // Nothing to sweep from.  A dot never yet swept stands as drawn;
+      // one already on the arc holds its last position rather than
+      // snapping back to the culmination for a single null packet.
       if (!b.g.hasAttribute('transform')) {
         passStandsAsDrawn(b);
       }
       return;
     }
-    var dt = Math.min(Math.max(nowTs - latestTs, 0), EXTRAP_MAX);
+    var dt = packetAge();
     var azNow = (az + (recentRateOf('almanac.' + b.tag + '.az', true) || 0) * dt + 360) % 360;
     var altNow = alt + (recentRateOf('almanac.' + b.tag + '.alt', false) || 0) * dt;
     if (altNow <= 0) {
@@ -2144,8 +2157,10 @@
       sec.removeAttribute('hidden');
       passBase = null;       // baselines belong to the old chart
       // Synchronous, in this same task, so a chart whose pass is already
-      // over is hidden before anything is painted -- packet or no packet.
-      renderPass(Date.now() / 1000);
+      // over is hidden before anything is painted -- once a packet is in
+      // hand.  Without one the chart stands as the station drew it; the
+      // dot has no position to move to until the feed gives it one.
+      renderPass();
     };
     try {
       // Cache-busted, like the dome fragment.
@@ -2209,10 +2224,11 @@
   }
   function chipStaticTs(id) {
     // The generation-baked target instant (the chip's data-ts): a
-    // countdown needs only a target and the browser clock, so the
-    // chips tick from the moment the page loads -- the loop feed's
-    // job is re-anchoring and ROLLING the target when the event
-    // passes, not enabling the tick.
+    // countdown needs only a target and a clock that advances, and
+    // serverNow advances from the page's own generation stamp before
+    // any packet arrives, so the chips tick from the moment the page
+    // loads -- the loop feed's job is re-anchoring and ROLLING the
+    // target when the event passes, not enabling the tick.
     var el = document.getElementById(id);
     if (el === null) {
       return null;
@@ -2265,11 +2281,21 @@
     setHtml(id + '-v', fmtDHMS(ts - nowTs));
     return ts;
   }
-  function renderCountdown(nowTs) {
+  function renderCountdown() {
     // Runs on every local tick, loop feed or none: the sun, shower and
     // darkness chips tick from their generation-baked targets until
     // the feed's event fields arrive to re-anchor and roll them.  The
     // pass chip is feed-only (rolling is its whole story).
+    //
+    // Every target below -- the feed's instants and the generation-baked
+    // data-ts alike -- is written by the STATION, so the instant they
+    // are measured against is the station's too (serverNow), never the
+    // viewer's clock.  8.1 through 8.3.3 subtracted Date.now() from
+    // these, so a viewer whose clock was ninety seconds fast read every
+    // countdown ninety seconds wrong and hid each chip before loopdata
+    // had rolled its target, leaving a gap.  On one clock the -60 grace
+    // and the engine's roll interlock as they were designed to.
+    var nowTs = serverNow();
     var bestTag = null, bestRise = null, bestSet = null, anyPassKey = false;
     SAT_NAMES.forEach(function(sat) {
       var base = 'almanac.' + sat + '.next_visible_pass';
@@ -2525,10 +2551,14 @@
       domeWake();                // the machine was not running; see above
     }
     lastTickTs = nowTs;
-    setHtml('live-clock', fmtHMS(nowTs));
+    // The header clock reads the STATION's time -- it is labeled the
+    // station's, beside the station's coordinates -- so it comes from
+    // serverNow like every other instant on the page, not from the
+    // viewer's clock as it did through 8.3.3.
+    setHtml('live-clock', fmtHMS(serverNow()));
     // The countdowns tick with or without loop data -- their static
     // targets are baked into the page; the feed re-anchors and rolls.
-    renderCountdown(nowTs);
+    renderCountdown();
     // Likewise the backdrop's health: it goes stale on its own schedule,
     // whatever the loop feed is doing.
     updateDomeStale(nowTs);
@@ -2538,13 +2568,13 @@
     // take the roster, the dial and the dome down with it every second
     // (the silent-dead-dial class; see restoreDomeMarks' note).
     try {
-      renderPass(nowTs);
+      renderPass();
     } catch (e) {
       console.log(e);
     }
     if (latest !== null) {
-      renderSatRosters(nowTs);
-      renderGeo(nowTs);
+      renderSatRosters();
+      renderGeo();
       renderDome(nowTs);
     }
   }
@@ -2584,16 +2614,26 @@
         // Check the date
         // "dateTime": 1578965850,
         var lastTs = result["current.dateTime.raw"];
-        if (typeof lastTs === 'number') {
-          var age = Math.round(Math.abs(Date.now() - lastTs * 1000) / 1000);
-          setHtml("live-label", age <= 6 ? T['LIVE'] : fmt('{age}s ago', {age: age}));
-          // Display the time of the last update, in the page's timezone.
-          setHtml("last-update", fmtHMS(lastTs));
+        if (typeof lastTs !== 'number') {
+          // A record with no station timestamp is INVALID and is dropped
+          // whole, exactly as if the fetch had never landed: the page's
+          // clock, its rates and its every placement are anchored on this
+          // field, and a record that cannot say when it was written
+          // cannot serve any of them.  Nothing is stored -- not latest,
+          // not latestTs, not latestRecvTs -- so the feed simply goes on
+          // looking dead, which is what it is, and DEAD_FEED restores the
+          // dome's marks on its own schedule.  8.3.3 and earlier stamped
+          // these from the BROWSER's clock, which is the one clock this
+          // page may not read; the fields line the README prescribes
+          // always carries current.dateTime.raw, so a feed doing this is
+          // misconfigured and the badge says so.  (John, 2026-08-16.)
+          setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
+          console.log('loop record has no current.dateTime.raw; ignored');
+          return;
         }
-
         latest = result;
         var prevTs = latestTs;
-        latestTs = (typeof lastTs === 'number') ? lastTs : nowTs;
+        latestTs = lastTs;
         // Stamped by the browser, for the one question that must not
         // cross clocks: has the feed stopped arriving HERE?  latestTs is
         // the station's own time and belongs to the backdrop-age
@@ -2608,17 +2648,38 @@
         // it the backdrop-age judgement, which reads latestTs -- froze:
         // both restore paths dead at once, and the plate left showing a
         // current star field wearing hour-old bodies.  A repeat of the
-        // same packet is not news.  (A feed with no dateTime at all
-        // stamps from the browser clock above, so this is inert for it:
-        // there is no station clock there to detect anything against.)
+        // same packet is not news.
         if (latestTs !== prevTs) {
           latestRecvTs = nowTs;
         }
+        // How old the data on show is -- two terms, each measured on ONE
+        // clock, never across the two.  How stale this record already was
+        // when the page first found it: its own station time against the
+        // page's generation instant, station against station.  Plus how
+        // long since a fresh record arrived HERE: browser against
+        // browser.  Through 8.3.3 this was Date.now() minus the packet's
+        // station time, which posted a skewed viewer's offset as a
+        // permanent "Ns ago" over a perfectly live feed.
+        //
+        // The first term is zero on any healthy feed, whose packets are
+        // newer than the page that reads them, and the six-second LIVE
+        // threshold absorbs a write that lags the archive instant.  It
+        // earns its place on the dead feed a viewer has just loaded:
+        // loopdata stopped an hour ago, the web server still serves the
+        // last file, and the first fetch stamps latestRecvTs -- so the
+        // second term alone reads zero and the badge would call hour-old
+        // data LIVE, resetting on every reload.  Against GEN_TS it reads
+        // the hour.
+        var age = Math.round(Math.max(0, GEN_TS - latestTs)
+                             + (nowTs - latestRecvTs));
+        setHtml("live-label", age <= 6 ? T['LIVE'] : fmt('{age}s ago', {age: age}));
+        // Display the time of the last update, in the page's timezone.
+        setHtml("last-update", fmtHMS(lastTs));
         pushHistory(latestTs, result);
-        renderSatRosters(nowTs);
-        renderGeo(nowTs);
+        renderSatRosters();
+        renderGeo();
         renderDome(nowTs);
-        renderPass(nowTs);
+        renderPass();
       } catch (e) {
         console.log(e);
       }
