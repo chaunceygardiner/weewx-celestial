@@ -211,6 +211,15 @@ sweeps the satellite's dot along the drawn arc in real time, flipping it
 between the solid sunlit dot and the hollow in-shadow ring in step with
 the dome's marker.
 
+When the pass ends, the moving dot and its name label leave the chart —
+the satellite has set, exactly as its mark disappears from the sky dome
+at that instant.  The arc, the head line and the rest of the drawn sky
+stay until the next chart arrives a few minutes later, so in that gap the
+panel shows the record of the pass that has just finished, with no
+satellite on it — a page opened in that gap comes up the same way.  The
+page reads the pass's own rise and set from the chart, which needs
+weewx-skyfield 2.3.2 or later.
+
 ![The Next Visible Pass panel during a NOAA-21 pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-NOAA21-shadow-entry.gif)
 
 The chart refetches every five minutes and rolls over to the next pass by

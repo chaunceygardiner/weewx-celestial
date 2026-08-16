@@ -20,7 +20,7 @@ separately.
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    6.9 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.1 or later, both per their instructions.  (weewx-skyfield's installer
+   2.3.2 or later, both per their instructions.  (weewx-skyfield's installer
    configures its default satellites — the ISS and Tiangong — and its
    default comets — Halley and Hale-Bopp — which is what the fields line
    below assumes.)

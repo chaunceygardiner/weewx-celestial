@@ -188,7 +188,8 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.1** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.3.2** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.1** | Everything but the pass chart's dot leaving the chart when the pass ends — the chart states its own rise and set only from 2.3.2, so the page falls back to the loop feed's window and the dot returns to its drawn place at set |
 | **weewx-skyfield 2.0** | Everything but the comets and the shower/supermoon chips (the sunset, darkness and pass chips still tick) |
 | **weewx-skyfield** (earlier) | Everything but the satellites and their chart; the dome's sun/moon/planet marks step only at the backdrop step (the live-nudge hooks are 2.0's) |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |

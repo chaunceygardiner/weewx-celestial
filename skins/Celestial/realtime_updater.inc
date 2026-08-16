@@ -327,6 +327,12 @@
   // write cadence, so twenty missed writes is the measure.  No
   // inference, no learning: a number from the configuration.
   var DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
+  // How far a packet's own time may lag the browser's clock at arrival
+  // and still be taken for a live packet with a skewed viewer, rather
+  // than a stale file: a quarter of an hour or more is a stale file, no
+  // viewer's clock is that far out; a smaller lag is tolerated as skew.
+  // Used by feedFresh / stationClock.
+  var STALE_PACKET = 900;
   function rOfAu(au) {
     var lg = Math.log(au) / Math.LN10;
     return R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
@@ -907,7 +913,11 @@
   }
   function numOr(primary, fallback) {
     // The pinned-unit spelling first, the bare .raw as the fallback --
-    // the same drop-in idiom as the 7.6 moon keys.
+    // the same drop-in idiom as the 7.6 moon keys.  Null before the
+    // first packet, like everything else read from the feed.
+    if (latest === null) {
+      return null;
+    }
     var v = num(latest, primary);
     return v !== null ? v : num(latest, fallback);
   }
@@ -1008,18 +1018,16 @@
       var altNow = alt + (rateOf('almanac.' + key + '.alt', false) || 0) * dt;
       if (altNow <= 0) {
         // Set since generation: hide rather than pin to the rim.
-        b.g.setAttribute('display', 'none');
-        if (b.lab !== null) {
-          b.lab.setAttribute('display', 'none');
-        }
+        setShown(b.g, false);
+        setShown(b.lab, false);
         return;
       }
-      b.g.removeAttribute('display');
+      setShown(b.g, true);
+      setShown(b.lab, true);
       var p = domeXY(azNow, altNow);
       var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
       b.g.setAttribute('transform', tr);
       if (b.lab !== null) {
-        b.lab.removeAttribute('display');
         b.lab.setAttribute('transform', tr);
       }
     });
@@ -1214,7 +1222,9 @@
     // XHR2's onloadend.  Those same engines have no NodeList.forEach, so
     // the tidier spelling would throw inside renderDome, which localTick
     // calls with no try/catch: every tick after the dome went stale
-    // would abort before renderPass, for the life of the page.
+    // would abort there, for the life of the page (renderPass runs
+    // ahead of it in the tick since 8.3.3, so it would survive; the
+    // point stands).
     Array.prototype.forEach.call(
         svg.querySelectorAll('g.dome-body, text[data-body]'),
         function(e) {
@@ -1617,6 +1627,17 @@
     seedAppliedFrag();
     refreshDome();
   });
+  // The pass chart's verdict as soon as the chart is in the document
+  // (DOMContentLoaded, ahead of the load event), so a page opened after
+  // its chart's pass has ended shows the drawn dot for as little as the
+  // parse allows rather than until the first tick.
+  document.addEventListener('DOMContentLoaded', function() {
+    try {
+      renderPass(Date.now() / 1000);
+    } catch (e) {
+      console.log(e);
+    }
+  });
 
   // A laptop closed and reopened, or a tab left in the background and
   // brought forward: the timers stopped with the machine, and on the way
@@ -1718,6 +1739,32 @@
     // is delivering, the browser's before the first packet or with no
     // feed at all.
     return (latest === null) ? nowTs : latestTs;
+  }
+  function stationClock(nowTs) {
+    // The station's clock, carried forward by the browser's since the
+    // last packet: the last packet's station time plus the browser time
+    // elapsed since it arrived.  A viewer's clock skew cancels out, and
+    // unlike stationNow it keeps advancing when the feed dies -- for a
+    // verdict that must still fall (the pass chart's set) rather than a
+    // staleness judgement that must not.  Only from a FRESH packet,
+    // though: one whose own time was already far behind the browser's
+    // when it arrived (a stale loop file still served with 200 --
+    // loopdata dead, the web server up -- which is not clock skew but
+    // old news) would carry the station's clock hours behind and keep a
+    // finished pass "in its window" for the life of the page.  There
+    // the browser's clock is the better estimate, and it is the only
+    // one before the first packet.  (feedFresh.)
+    return feedFresh(nowTs) ? latestTs + (nowTs - latestRecvTs) : nowTs;
+  }
+  function feedFresh(nowTs) {
+    // A live packet is in hand whose own time was within STALE_PACKET
+    // of the browser's when it arrived.  Its AGE does not matter: the
+    // carried-forward clock is right for a packet of any age (the skew
+    // cancels), so a feed that has since died changes nothing -- only a
+    // packet that was already old news on arrival (a stale loop file
+    // served with 200) is refused, and a viewer more than STALE_PACKET
+    // off the station gets the browser's clock, the stated exception.
+    return latest !== null && Math.abs(latestTs - latestRecvTs) <= STALE_PACKET;
   }
   function domeStaleWhy() {
     var p = domeFetchProblem;
@@ -1855,7 +1902,9 @@
     // skyfield): nothing sweeps, the chart stands as drawn.  The
     // baseline also records the dot's generated look -- fill, stroke,
     // and the data-sunlit hook's verdict -- so the sweep can flip and
-    // restore it (passDotLit below).
+    // restore it (passDotLit below) -- and the pass's OWN window,
+    // data-rise/data-set on the track (skyfield 2.3.2), null on an
+    // older chart.
     passBase = {tag: null};
     var svg = passSvg();
     if (svg === null) {
@@ -1878,7 +1927,46 @@
                 y: parseFloat(c.getAttribute('cy')),
                 fill: c.getAttribute('fill'),
                 stroke: c.getAttribute('stroke'),
-                genLit: ds === null ? null : ds !== '0'};
+                genLit: ds === null ? null : ds !== '0',
+                rise: attrNum(track, 'data-rise'),
+                set: attrNum(track, 'data-set'),
+                over: false};       // latched by renderPass past the set
+  }
+  function attrNum(el, name) {
+    // A numeric attribute, or null when absent or not a number.
+    var v = parseFloat(el.getAttribute(name));
+    return isFinite(v) ? v : null;
+  }
+  function setShown(el, shown) {
+    // Show or hide one SVG element by its display attribute; null-safe.
+    if (el === null) {
+      return;
+    }
+    if (shown) {
+      el.removeAttribute('display');
+    } else {
+      el.setAttribute('display', 'none');
+    }
+  }
+  function passMarkShown(b, shown) {
+    // The dot and its name label move as one: a label left standing
+    // alone is the ghost name renderSats guards against.  An open tap
+    // chip on the mark is left to the next tap or fragment swap, as
+    // every other panel's hidden marks leave theirs -- sky.js has one
+    // chip for the whole page, and dismissing it here would take a chip
+    // the viewer opened on Jupiter because Terra set.
+    setShown(b.g, shown);
+    setShown(b.lab, shown);
+  }
+  function passStandsAsDrawn(b) {
+    // The chart is a prediction: the dot at its generated position, in
+    // its generated look, shown.
+    b.g.removeAttribute('transform');
+    passDotLit(b, b.genLit);
+    if (b.lab !== null) {
+      b.lab.removeAttribute('transform');
+    }
+    passMarkShown(b, true);
   }
   function passDotLit(b, lit) {
     // Solid vs hollow ring on the chart's dot.  The generator draws a
@@ -1899,34 +1987,98 @@
     }
   }
   function renderPass(nowTs) {
-    if (passSvg() === null || latest === null) {
+    if (passSvg() === null) {
       return;
     }
     if (passBase === null) {
+      if (document.readyState === 'loading') {
+        return;                // the chart may be half-parsed: no baseline yet
+      }
       readPassBase();
     }
     var b = passBase;
     if (b.tag === null) {
       return;
     }
-    var rise = numOr('almanac.' + b.tag + '.next_visible_pass.rise.unix_epoch.raw',
-                     'almanac.' + b.tag + '.next_visible_pass.rise.raw');
-    var setTs = numOr('almanac.' + b.tag + '.next_visible_pass.set.unix_epoch.raw',
-                      'almanac.' + b.tag + '.next_visible_pass.set.raw');
-    if (rise === null || setTs === null || nowTs < rise || nowTs >= setTs) {
-      // Not in the pass: the chart is a prediction and stands as drawn
-      // (after the pass the next refetch brings the next chart).
-      b.g.removeAttribute('transform');
-      b.g.removeAttribute('display');
-      passDotLit(b, b.genLit);
-      if (b.lab !== null) {
-        b.lab.removeAttribute('transform');
+    // The window the chart is judged against is the chart's OWN --
+    // data-rise/data-set on the track, skyfield 2.3.2 -- because the
+    // feed's next_visible_pass rolls on to the FOLLOWING pass moments
+    // after this one sets.  8.0 through 8.3.2 judged against the feed:
+    // at the set instant the mark, having just ridden the arc to its
+    // end, was put back at its generated position -- the culmination,
+    // MID-ARC -- under a header still naming the finished pass, and
+    // stayed there until the next refetch brought the next chart
+    // (NOAA-21's Aug 15 capture, f0498 at 02:58:35 exactly).  With the
+    // chart's own times there is nothing to remember: past the set the
+    // pass this chart depicts is over, whether or not the page was
+    // watching when it ended -- and it needs no loop packet to say so,
+    // so a page opened after the set, or one whose feed is down, hides
+    // the mark before the first packet ever lands (inside the window the
+    // sweep still needs the feed, and the drawn dot stands until it
+    // comes).  Once over, over: the verdict latches on the chart, so a
+    // later switch of judging clock (the feed dying, stationClock
+    // falling back to a skewed viewer's) cannot bring a finished pass's
+    // mark back; a new chart starts clean.  The instant is the
+    // station's clock carried forward (stationClock; the 8.3.2 ruling
+    // that station-written times are judged by the station's clock, so
+    // a viewer's fast clock cannot drop the mark while the dome still
+    // flies the satellite -- and carried forward, so a feed that dies
+    // mid-pass still sees the set fall), the browser's until a packet
+    // arrives.  An older chart without the attributes falls back to the
+    // feed's window and 8.3.2's behavior -- restoring the drawn chart
+    // outside the window, the roll-back and all -- judged on this same
+    // clock; no better and no worse.
+    var now = stationClock(nowTs);
+    if (b.rise !== null && b.set !== null) {
+      if (b.over || now >= b.set) {
+        // Over.  Hide the mark and its label, exactly as the dome does
+        // with a satellite that has set; the arc, the header and the
+        // rest of the chart stand until the next refetch replaces them.
+        // The verdict LATCHES only when made on the station's clock (a
+        // fresh feed): a hide judged on the browser's clock before the
+        // first packet -- a viewer's fast clock, minutes before the
+        // real set -- stays provisional, and the packet re-judges it.
+        // What the latch buys is the rare reverse switch: a NEW packet
+        // whose own time is far behind (a stale file starting to be
+        // served, an NTP step) drops feedFresh and the verdict falls to
+        // a viewer's clock that may say the pass is still on.
+        if (feedFresh(nowTs)) {
+          b.over = true;
+        }
+        passMarkShown(b, false);
+        return;
       }
+      if (now < b.rise) {
+        passStandsAsDrawn(b);
+        return;
+      }
+    } else {
+      var rise = numOr('almanac.' + b.tag + '.next_visible_pass.rise.unix_epoch.raw',
+                       'almanac.' + b.tag + '.next_visible_pass.rise.raw');
+      var setTs = numOr('almanac.' + b.tag + '.next_visible_pass.set.unix_epoch.raw',
+                        'almanac.' + b.tag + '.next_visible_pass.set.raw');
+      if (rise === null || setTs === null || now < rise || now >= setTs) {
+        passStandsAsDrawn(b);
+        return;
+      }
+    }
+    if (latest === null) {
+      // In the window with nothing to sweep from yet: the drawn dot
+      // stands (and a provisional hide made on the browser's clock
+      // before this packet is undone).
+      passStandsAsDrawn(b);
       return;
     }
     var az = num(latest, 'almanac.' + b.tag + '.az');
     var alt = num(latest, 'almanac.' + b.tag + '.alt');
     if (az === null || alt === null) {
+      // Nothing to sweep from.  A dot never yet swept stands as drawn
+      // (undoing a provisional hide made before the first packet); one
+      // already on the arc holds its last position rather than snapping
+      // back to the culmination for a single null packet.
+      if (!b.g.hasAttribute('transform')) {
+        passStandsAsDrawn(b);
+      }
       return;
     }
     var dt = Math.min(Math.max(nowTs - latestTs, 0), EXTRAP_MAX);
@@ -1935,10 +2087,10 @@
     if (altNow <= 0) {
       // The in-progress window's first and last seconds can dip below
       // the rim: hide rather than pin, like the dome's marks.
-      b.g.setAttribute('display', 'none');
+      passMarkShown(b, false);
       return;
     }
-    b.g.removeAttribute('display');
+    passMarkShown(b, true);
     // Mid-ride the ring/solid state is the satellite's LIVE state, the
     // dome's own toggle (renderSats above): 8.0 shipped the sweeping dot
     // wearing the culmination's sunlit state all pass, so the two panels
@@ -1991,9 +2143,9 @@
       chart.removeAttribute('hidden');
       sec.removeAttribute('hidden');
       passBase = null;       // baselines belong to the old chart
-      if (latest !== null) {
-        renderPass(Date.now() / 1000);
-      }
+      // Synchronous, in this same task, so a chart whose pass is already
+      // over is hidden before anything is painted -- packet or no packet.
+      renderPass(Date.now() / 1000);
     };
     try {
       // Cache-busted, like the dome fragment.
@@ -2065,8 +2217,7 @@
     if (el === null) {
       return null;
     }
-    var v = parseFloat(el.getAttribute('data-ts'));
-    return isFinite(v) ? v : null;
+    return attrNum(el, 'data-ts');
   }
   function seasonKey(ts) {
     // The season the instant begins, hemisphere-aware, named by the
@@ -2161,8 +2312,7 @@
       var passStatic = chipStaticTs('chip-pass');
       if (passStatic !== null) {
         var passEl = document.getElementById('chip-pass');
-        var passSetRaw = parseFloat(passEl.getAttribute('data-set'));
-        var passSetStatic = isFinite(passSetRaw) ? passSetRaw : null;
+        var passSetStatic = attrNum(passEl, 'data-set');
         if (nowTs < passStatic) {
           chipShow('chip-pass', true);
           setHtml('chip-pass-d', T['appears in']);
@@ -2382,11 +2532,20 @@
     // Likewise the backdrop's health: it goes stale on its own schedule,
     // whatever the loop feed is doing.
     updateDomeStale(nowTs);
+    // And the pass chart's over/ahead verdict: the chart's own window,
+    // no packet needed (the sweep inside the window does need one, and
+    // renderPass waits for it itself).  Contained: a throw here must not
+    // take the roster, the dial and the dome down with it every second
+    // (the silent-dead-dial class; see restoreDomeMarks' note).
+    try {
+      renderPass(nowTs);
+    } catch (e) {
+      console.log(e);
+    }
     if (latest !== null) {
       renderSatRosters(nowTs);
       renderGeo(nowTs);
       renderDome(nowTs);
-      renderPass(nowTs);
     }
   }
   function updateCurrent() {

@@ -146,6 +146,26 @@ def make_sky_page(texts=None, theme=None):
     return wxskyfield_sky.SkyPage(skin_dict)
 
 
+def rewindow_pass_chart(markup, rise, sset):
+    """Move a rendered pass chart's OWN window (skyfield 2.3.2's
+    data-rise/data-set on the track) to the given epochs.  The fixture
+    pass is in June 2025; a browser test that wants the sweep to run must
+    put the chart's window around its real clock, because renderPass
+    judges the chart against these, not the feed.  `rise=None` STRIPS the
+    window instead -- a pre-2.3.2 chart, for the fallback path.  Skips
+    when the rendered chart carries no window (an older weewx-skyfield),
+    where neither move nor strip would mean anything."""
+    repl = (r'\1' if rise is None
+            else r'\1data-rise="%d" data-set="%d" ' % (rise, sset))
+    out, n = re.subn(r'(<g class="dome-track" data-body="[^"]+" )'
+                     r'data-rise="\d+" data-set="\d+" ', repl, markup)
+    if n == 0:
+        if rise is None:
+            return markup       # nothing to strip: already the state wanted
+        pytest.skip('this weewx-skyfield emits no data-rise/data-set (pre-2.3.2)')
+    return out
+
+
 def load_loopdata():
     """Import the sibling weewx-loopdata checkout's module, or skip the
     calling test."""
@@ -1125,6 +1145,36 @@ class TestSampleSkinRenders:
             'almanac': wxskyfield_sat_almanac, 'sky_page': None}]))
         assert empty.strip() == ''
 
+    def test_pass_chart_states_its_own_window(self, wxskyfield_sat_almanac):
+        """In-step pin against the sibling: the chart weewx-skyfield emits
+        carries data-rise/data-set on the track, in exactly the shape
+        readPassBase reads and rewindow_pass_chart rewrites -- integer
+        epochs, on the dome-track element, after data-body.  Without this
+        pin a sibling that reordered or reshaped the attributes would turn
+        every 8.3.3 browser test into a silent skip while renderPass fell
+        back to the feed's window in the field.  Skips only when the
+        sibling is older than 2.3.2 (the fallback tier), never on shape."""
+        from Cheetah.Template import Template
+        wxskyfield, _ = load_wxskyfield()
+        if tuple(int(x) for x in wxskyfield.WXSKYFIELD_VERSION.split('.')[:3]) < (2, 3, 2):
+            pytest.skip('weewx-skyfield %s predates data-rise/data-set (2.3.2)'
+                        % wxskyfield.WXSKYFIELD_VERSION)
+        source = open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read()
+        out = str(Template(source, searchList=[{
+            'almanac': wxskyfield_sat_almanac, 'sky_page': make_sky_page()}]))
+        m = re.search(r'<g class="dome-track" data-body="iss" '
+                      r'data-rise="(\d+)" data-set="(\d+)" ', out)
+        assert m, 'the track carries no data-rise/data-set in the expected shape'
+        rise, sset = int(m.group(1)), int(m.group(2))
+        nvp = wxskyfield_sat_almanac.iss.next_visible_pass
+        assert rise == int(round(nvp.rise.raw)) and sset == int(round(nvp.set.raw))
+        assert rise < sset
+        # And the include reads exactly these two names off the track.
+        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
+                   encoding='utf-8').read()
+        assert "attrNum(track, 'data-rise')" in src
+        assert "attrNum(track, 'data-set')" in src
+
     def test_light_pass_chart_fragment(self, wxskyfield_sat_almanac):
         """The Next Visible Pass chart follows the page's plate too --
         the other refetched fragment, the same flicker trap (it
@@ -1425,6 +1475,8 @@ class TestSampleSkinRenders:
             "        'anysub': page.inner_text('#sat-any-pass-iss'),\n"
             "        'passnudged': page.eval_on_selector_all(\n"
             "            '#pass-chart g.dome-body[transform]', 'els => els.length'),\n"
+            "        'passdot': page.get_attribute(\n"
+            "            '#pass-chart g.dome-body[data-body=iss]', 'display'),\n"
             '    }\n'
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -1456,11 +1508,22 @@ class TestSampleSkinRenders:
         assert 'just set' in out['satline']
         assert 'in 1 min' not in out['satline']
         # The Next Visible Pass chart came up (the fixture ISS pass is tomorrow
-        # morning) and its featured dot was NOT swept: the pass is not in
-        # progress, so renderPass leaves the chart standing as drawn.
+        # morning, June 2025) and its featured dot was NOT swept.  Judged
+        # by the chart's OWN data-rise/data-set against the browser's real
+        # clock that pass is long over, so the dot is hidden -- the
+        # load-after-set case, a page opened after the pass ended and
+        # before the next chart arrived, which 8.3.3 fixes by reading the
+        # chart's window rather than remembering whether it swept.
         assert out['passchart'] == 1
         assert '03:11' in out['passwhen']
         assert out['passnudged'] == 0
+        if re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
+            assert out['passdot'] == 'none'
+        else:
+            # A pre-2.3.2 skyfield's chart states no window: the feed's
+            # governs, and it too is long past, so the chart stands as
+            # drawn -- the documented fallback.
+            assert out['passdot'] is None
         # The dome-side any-pass roster went live: the ISS's next
         # crossing is the fixture's daytime Jun 21 pass, tagged not
         # visible.
@@ -1565,8 +1628,15 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         sky_page = make_sky_page()
-        (tmp_path / 'index.html').write_text(
-            self.render(wxskyfield_sat_almanac, sky_page=sky_page))
+        html = self.render(wxskyfield_sat_almanac, sky_page=sky_page)
+        # The pass chart's featured dot must be ON the chart to be tapped:
+        # judged by the chart's own window (skyfield 2.3.2) against the
+        # page clock, the June 2025 fixture pass is long over and the dot
+        # hidden, so the window is put a day AHEAD -- the chart then
+        # stands as drawn, which is the tappable state.
+        far = int(time.time()) + 86400
+        html = rewindow_pass_chart(html, far, far + 600)
+        (tmp_path / 'index.html').write_text(html)
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
@@ -1750,6 +1820,11 @@ class TestSampleSkinRenders:
         # production the page and the packets come from one station.
         html = relib.sub(r'data-dome-ts="\d+"',
                          'data-dome-ts="%d"' % int(time.time()), html, count=1)
+        # Likewise the chart's OWN window (skyfield 2.3.2's data-rise /
+        # data-set): the sweep runs only inside it, so it is put around
+        # the browser's clock like the feed's window below.
+        html = rewindow_pass_chart(html, int(time.time()) - 60,
+                                   int(time.time()) + 600)
         (tmp_path / 'index.html').write_text(html)
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
@@ -1865,6 +1940,324 @@ class TestSampleSkinRenders:
         assert out['errors'] == []
         assert out['swept'] == 1           # still mid-pass at the final sample
         assert served['n'] >= 5            # every phase of the walk was served
+
+    def test_pass_sweep_dot_hides_when_the_pass_ends_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """8.3.3: when the pass ENDS the sweeping dot leaves the chart; it
+        never jumps back up the arc it just rode.  8.0 through 8.3.2 put
+        the dot back at its generated position at that instant -- the
+        culmination, MID-ARC -- under a header still naming the finished
+        pass, for up to CHART_REFRESH seconds (weewx-loopdata's NOAA-21
+        capture of 2026-08-15, frame f0498 at the 02:58:35 set instant).
+        The cause was judging the chart against the FEED's next_visible_pass,
+        which rolls to the following pass moments after set; the fix
+        judges it against the chart's OWN window, skyfield 2.3.2's
+        data-rise/data-set on the track, so nothing has to be remembered.
+
+        The chart's window is put around the browser's real clock -- in
+        progress at load, ending a few seconds later -- and the feed lies
+        the satellite overhead, then rolls to the following pass exactly as
+        loopdata's event expiry does.  Proven: the sweep engages, the dot
+        and its label hide at the set and stay hidden through the roll; a
+        refetch that re-serves the SAME finished chart (the report has not
+        rerun) hides it again with nothing carried over; and a page LOADED
+        after the set -- the case no memory could reach -- comes up hidden
+        on its first packet.  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+        from Cheetah.Template import Template
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        sky_page = make_sky_page()
+        html = self.render(wxskyfield_sat_almanac, sky_page=sky_page)
+        # The refetched fragment is the REAL fragment template's output --
+        # what production serves -- re-windowed identically below, so a
+        # refetch brings back the same finished chart.
+        frag = str(Template(open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read(),
+                            searchList=[{'almanac': wxskyfield_sat_almanac,
+                                         'sky_page': sky_page}]))
+        # The chart's own window -- in progress now, over in a few
+        # seconds -- is anchored to the browser's FIRST REQUEST for the
+        # page, at serve time, so nothing that precedes it (a fresh
+        # python, chromium's launch) can eat the margin: the handler
+        # re-windows index.html and the fragment when first asked for
+        # them.  A pre-2.3.2 sibling skips here, as everywhere.
+        if not re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
+            pytest.skip('this weewx-skyfield emits no data-rise/data-set (pre-2.3.2)')
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        win = {}
+
+        def windowed(markup):
+            if not win:
+                t0 = int(time.time())
+                win['rise'], win['set'] = t0 - 60, t0 + 30
+                win['t0'] = t0
+            out = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % win['t0'],
+                            markup, count=1)
+            return rewindow_pass_chart(out, win['rise'], win['set'])
+
+        # The generated dot's position: what the mark must NOT snap back
+        # to once the pass is over.
+        m = relib.search(r'<g class="dome-body" data-body="iss" data-sunlit="\d">'
+                         r'<circle cx="([0-9.]+)" cy="([0-9.]+)"', html)
+        assert m is not None
+        gen_cx = m.group(1)
+
+        state = {'n': 0, 'charts': 0}
+
+        def packet():
+            # The satellite overhead throughout; the feed's window in
+            # progress for the first polls, then rolled to the following
+            # pass an hour out (loopdata's event expiry) -- which the
+            # chart's own window makes irrelevant, and the test proves so.
+            i = state['n']
+            now = time.time()
+            chart_rise, chart_set = win.get('rise', now - 60), win.get('set', now + 30)
+            rolled = now >= chart_set
+            return jsonlib.dumps({
+                'current.dateTime.raw': now,
+                'almanac.sun.alt': -30.0,
+                'almanac.iss.az': 120.0 + 0.5 * i,
+                'almanac.iss.alt': 45.0 - 0.5 * i,
+                'almanac.iss.sunlit': True,
+                'almanac.iss.label': 'ISS',
+                'almanac.iss.next_visible_pass.rise.unix_epoch.raw':
+                    chart_rise + (3600 if rolled else 0),
+                'almanac.iss.next_visible_pass.set.unix_epoch.raw':
+                    chart_set + (3600 if rolled else 0),
+            }).encode()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packet()
+                    state['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path.startswith('/pass-chart.txt'):
+                    state['charts'] += 1
+                    self._text(windowed(frag))
+                    return
+                if self.path.split('?')[0] == '/index.html':
+                    self._text(windowed(html))
+                    return
+                return super().do_GET()
+
+            def _text(self, text):
+                body = text.encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            "G = '#pass-chart g.dome-body[data-body=iss]'\n"
+            'HIDDEN = """() => {\n'
+            "  var g = document.querySelector('\"\"\" + G + \"\"\"');\n"
+            "  var t = document.querySelector('#pass-chart text[data-body=iss]');\n"
+            "  return g !== null && g.getAttribute('display') === 'none' &&\n"
+            "         (t === null || t.getAttribute('display') === 'none');\n"
+            '}"""\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            "    # The chart's own set, read where the page reads it.\n"
+            '    CHART_SET = float(page.evaluate("""() =>\n'
+            "      document.querySelector('#pass-chart g.dome-track').getAttribute('data-set')\"\"\"))\n"
+            '    # In the window: the sweep engages.\n'
+            "    page.wait_for_selector(G + '[transform]', timeout=15000)\n"
+            '    # The set instant: dot and label hide -- and stay hidden\n'
+            '    # once the feed rolls (the roll follows the set in the\n'
+            "    # handler; the roll's arrival is awaited below).\n"
+            '    page.wait_for_function(HIDDEN, timeout=35000)\n'
+            '    page.wait_for_function("""() => latest !== null &&\n'
+            "      latest['almanac.iss.next_visible_pass.rise.unix_epoch.raw'] > \"\"\" + str(CHART_SET),\n"
+            '      timeout=15000)\n'
+            '    page.wait_for_timeout(1500)      # one localTick after the roll\n'
+            "    out = {'errors': errors,\n"
+            "           'display': page.get_attribute(G, 'display'),\n"
+            "           'cx': page.get_attribute(G + ' circle', 'cx')}\n"
+            '    # A refetch of the unchanged chart: the swapped-in chart is\n'
+            '    # judged on its own window and comes up hidden at once.\n'
+            "    page.evaluate('() => { window.__g0 = passBase.g; }')\n"
+            "    page.evaluate('refreshPass()')\n"
+            "    page.wait_for_function('() => passBase !== null && passBase.g !== window.__g0',\n"
+            '                           timeout=10000)\n'
+            "    out['display_after_refetch'] = page.get_attribute(G, 'display')\n"
+            "    out['transform_after_refetch'] = page.get_attribute(G, 'transform')\n"
+            "    out['cx_after_refetch'] = page.get_attribute(G + ' circle', 'cx')\n"
+            '    # A page LOADED after the set: hidden on its first packet.\n'
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
+            '    page.wait_for_function(HIDDEN, timeout=15000)\n'
+            "    out['transform_after_reload'] = page.get_attribute(G, 'transform')\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % {'port': port})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        # Hidden through the set and the roll; the circle itself never
+        # rewritten -- the mark hides, it is not re-placed.
+        assert out['display'] == 'none'
+        assert out['cx'] == gen_cx
+        # The refetch really happened, and the fresh chart -- no transform
+        # yet, nothing carried over -- is hidden on its own window.
+        assert state['charts'] >= 1, 'the chart was never refetched'
+        assert out['display_after_refetch'] == 'none'
+        assert out['transform_after_refetch'] is None
+        assert out['cx_after_refetch'] == gen_cx
+        # And a page that was not watching comes up hidden too.
+        assert out['transform_after_reload'] is None
+
+    def test_pass_chart_without_its_own_window_falls_back_to_the_feed_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """An older weewx-skyfield's chart carries no data-rise/data-set;
+        renderPass then judges the chart against the FEED's
+        next_visible_pass window -- 8.3.2's behavior exactly, the fix
+        needing the chart's own times.  Exercised, not grepped: the
+        chart's window is STRIPPED, the feed lies the pass into progress
+        and then past its set, and the dot must sweep on the feed's
+        window and, at the feed's set, be RESTORED to the drawn chart
+        (the old behavior -- no better, and no hide the old code did not
+        do).  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        html = relib.sub(r'data-dome-ts="\d+"',
+                         'data-dome-ts="%d"' % int(time.time()), html, count=1)
+        html = rewindow_pass_chart(html, None, None)      # a pre-2.3.2 chart
+        assert 'data-set=' not in html.split('id="pass-chart"', 1)[1].split('</svg>', 1)[0]
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        state = {'n': 0, 't0': None}
+
+        def packet():
+            # The feed's window, anchored to the browser's first poll: in
+            # progress for the first three polls, then past its set.
+            if state['t0'] is None:
+                state['t0'] = time.time()
+            i, t0 = state['n'], state['t0']
+            past = i >= 3
+            return jsonlib.dumps({
+                'current.dateTime.raw': time.time(),
+                'almanac.sun.alt': -30.0,
+                'almanac.iss.az': 120.0 + 0.5 * i,
+                'almanac.iss.alt': 45.0,
+                'almanac.iss.sunlit': True,
+                'almanac.iss.label': 'ISS',
+                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': t0 - 60,
+                'almanac.iss.next_visible_pass.set.unix_epoch.raw':
+                    t0 - 1 if past else t0 + 600,
+            }).encode()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packet()
+                    state['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            "G = '#pass-chart g.dome-body[data-body=iss]'\n"
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The feed window governs: the sweep engages on it.\n'
+            "    page.wait_for_selector(G + '[transform]', timeout=15000)\n"
+            "    # The feed's set passes: RESTORED, not hidden -- the drawn\n"
+            '    # chart, transform gone, display untouched.\n'
+            '    page.wait_for_function("""() => {\n'
+            "      var g = document.querySelector('\"\"\" + G + \"\"\"');\n"
+            "      return g !== null && !g.hasAttribute('transform') &&\n"
+            "             g.getAttribute('display') !== 'none';\n"
+            '    }""", timeout=20000)\n'
+            "    out = {'errors': errors}\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % {'port': port})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert state['n'] >= 4, 'the past-set packets were never served'
 
     def test_dome_seed_waits_for_the_document(self):
         """The include is inline at the TOP of <body> and the dome sits

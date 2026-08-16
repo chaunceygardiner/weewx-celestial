@@ -1,6 +1,31 @@
 weewx-celestial change history
 ------------------------------
 
+8.3.3 (2026/08/15)
+------------------
+- The Next Visible Pass chart's sweeping dot leaves the chart when the
+  pass ends, instead of jumping backwards up the arc it has just ridden.
+  At the set instant the dot was put back where the almanac drew it --
+  the culmination, mid-arc -- and stayed there, beneath a header still
+  naming the pass that had finished, until the next chart arrived up to
+  five minutes later.  The dome did the right thing at the same instant
+  (its mark disappears and the roster rolls to the next pass), so the
+  two panels disagreed for the whole of that window.  The page was
+  judging the chart against the loop feed's next_visible_pass, which
+  rolls on to the FOLLOWING pass moments after this one sets; it now
+  judges it against the chart's own rise and set, which weewx-skyfield
+  2.3.2 writes on the pass arc (data-rise/data-set), so past the set the
+  mark and its name label hide together, as they do on the dome, whether
+  or not the page was open when the pass ended -- a page loaded in the
+  gap before the next chart comes up with the mark already gone.  The
+  arc, the header and the rest of the chart stand until the next chart
+  replaces them.  On an older weewx-skyfield the chart carries no times
+  of its own and the page falls back to the feed's window and 8.3.2's
+  judgement of it -- the dot returns to its drawn place at set (its name
+  label now leaves with it when the dot dips below the rim, which 8.3.2
+  left standing).  Found in a live capture of NOAA-21's
+  2026-08-15 pass, at the 02:58:35 set instant exactly.
+
 8.3.2 (2026/08/15)
 ------------------
 - ACTION: the sky dome's star field advances again on stations whose

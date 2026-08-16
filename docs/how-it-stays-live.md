@@ -112,7 +112,11 @@ fragments:
   [The star field is frozen](troubleshooting.md#the-star-field-is-frozen).
 - **The pass chart**, refetched every five minutes, which is how a
   completed pass's chart rolls over to the next pass, and how the panel
-  reappears when a pass enters the window.
+  reappears when a pass enters the window.  The moving dot does not wait
+  for that: the chart states its pass's own rise and set (weewx-skyfield
+  2.3.2), and past the set the dot leaves the chart, so the gap before
+  the next chart shows the finished arc without a satellite on it, rather
+  than a mark parked somewhere it no longer is.
 
 Satellites are the exception to all of this: their markers move at loop
 rates, continuously, because they are the one class of thing overhead

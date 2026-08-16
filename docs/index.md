@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.3.2**, the current release.
+This manual documents weewx-celestial **8.3.3**, the current release.
 
 ## Start here
 
@@ -133,7 +133,9 @@ across it under a dated head line, with the visible-pass roster beside
 it.  During the pass itself the page sweeps the satellite's dot live
 along the drawn arc — flipping it between the solid sunlit dot and the
 hollow in-shadow ring as the satellite crosses the shadow line, in step
-with the dome's marker (8.1).  When no configured satellite has a visible pass
+with the dome's marker (8.1) — and when the pass ends the dot leaves the
+chart (8.3.3), the arc and head line standing until the next chart
+arrives.  When no configured satellite has a visible pass
 coming, the chart hides and the roster's honest rows say why.
 
 The same July 24 pass on this panel — the chart features it, so the
@@ -198,7 +200,7 @@ What installs:
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.1 everything, and less at each tier below it, down to
+weewx-skyfield 2.3.2 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -222,5 +224,6 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
   strongly recommended (required for Proxima Centauri; 2.0 or later
   required for the sky dome's satellites and the Next Visible Pass
   chart; 2.1 or later for the comets, the meteor showers and the full
-  countdown row; 1.15 or later for the light plate, which is the paper
-  its charts are drawn on), or PyEphem
+  countdown row; 2.3.2 or later for the pass chart's dot to leave the
+  chart when the pass ends; 1.15 or later for the light plate, which is
+  the paper its charts are drawn on), or PyEphem

@@ -28,6 +28,13 @@ appends any fields-line entries a newer version reads (append-only,
 printing each one), and the restart both reloads that line in
 weewx-loopdata and refreshes the deployed `celestial.css` and `sky.js`.
 
+8.3.3 makes the Next Visible Pass chart's sweeping dot leave the chart
+when the pass ends, instead of jumping back to mid-arc.  The fix reads
+the pass's own rise and set from the chart, which **weewx-skyfield
+2.3.2** writes there; on an older weewx-skyfield the chart carries no
+times and the page keeps 8.3.2's window judgement — the dot returns
+to its drawn place at set.  Upgrade both.
+
 8.3 adds the light plate.  Nothing moves on your page: `theme` defaults
 to `dark`, which is the page exactly as it was.  Set `theme = light` (or
 `auto`) in `[[CelestialReport]]` — beside `lang`, not inside
@@ -60,10 +67,11 @@ per-comet entries.  As of 8.1 the install itself appends them —
 append-only, each one printed — so restart weewxd afterwards to make
 weewx-loopdata reload the line, and that is the whole upgrade.
 
-Run weewx-skyfield 2.1 for the comets and the shower/supermoon chips;
-2.0 still serves the satellites, and the sunset, darkness and pass chips
-tick on either.  Without the entries the page simply hides those layers
-and chips.  Everything else is drop-in, and the rest of the fields line
+Run weewx-skyfield 2.3.2 — 2.1 brought the comets and the
+shower/supermoon chips, 2.3.2 the pass chart's own rise and set that
+lets its dot leave the chart when the pass ends; 2.0 still serves the
+satellites, and the sunset, darkness and pass chips tick on any of them.
+Without the entries the page simply hides those layers and chips.  Everything else is drop-in, and the rest of the fields line
 is untouched.
 
 The `--migrate-loopdata-fields` utility remains available and appends the
@@ -136,7 +144,7 @@ this extension, so the new version must be installed before it can run:
 
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    6.9+ and [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.1+ if you have not already, then install this version.
+   2.3.2+ if you have not already, then install this version.
 
 1. Run the bundled utility to rewrite your `[LoopData] [[Include]] fields`
    line — every celestial entry (including pre-3.0 PascalCase names)

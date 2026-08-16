@@ -97,16 +97,18 @@ weewx-skyfield is the atlas; weewx-celestial is the live instrument.
 **This extension requires Python 3.9 or later, WeeWX 5.2 or later,
 [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 6.9 or
 later, and (strongly recommended)
-[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.1 or
-later for the comets, the meteor showers and the full countdown row; 2.0
-serves the sky dome's satellites and the Next Visible Pass chart; 1.15 or
-later for the light plate, which is the paper those charts are drawn on.**
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.3.2
+or later for the Next Visible Pass chart's dot to leave the chart when the
+pass ends; 2.1 or later for the comets, the meteor showers and the full
+countdown row; 2.0 serves the sky dome's satellites and the pass chart
+itself; 1.15 or later for the light plate, which is the paper those charts
+are drawn on.**
 
 ## Installing
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    6.9+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.1+, per their instructions.
+   2.3.2+, per their instructions.
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)
