@@ -1,6 +1,28 @@
 weewx-celestial change history
 ------------------------------
 
+8.3.6 (in progress)
+------------------
+- A station whose console clock runs fast is no longer accused of
+  writing no backdrops.  Its archive records are stamped ahead of its
+  own loop packets, so every backdrop it serves depicts a time the page
+  has not reached; the page refuses them -- it will not draw a sky from
+  the future -- and the star field freezes.  That much is right, but the
+  line under the panel read "no newer backdrop has arrived", which sent
+  the reader looking for a report cycle that was running perfectly the
+  whole time.  The line now names this case as its own, and the manual
+  has a section for it.
+- On an archive interval the fragment spacing does not divide -- 350
+  seconds, say, against 60-second slots -- the station rendered a sixth
+  backdrop every report cycle that no page could ever ask for, and the
+  last 50 seconds of each cycle showed the slot before.  The set now
+  counts what it writes.  Every standard WeeWX archive interval divides
+  exactly and is unaffected.
+- The Next Visible Pass chart stops rewriting its dot's hidden state
+  twice a second through the minutes after a pass ends (8.3.5 fixed the
+  same churn in the hours before one rises).
+- Drop-in over 8.3.5; no configuration change.
+
 8.3.5 (2026/08/17)
 ------------------
 - The page's clock is the loop packet's own timestamp -- and, before the

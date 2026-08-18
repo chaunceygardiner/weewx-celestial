@@ -625,7 +625,10 @@
             #set $frag_interval = 300
             #end if
             #set $frag_step = max(60, $frag_interval // 10)
-            #set $frag_count = min(10, max(1, $frag_interval // $frag_step))
+            ## Ceil, exactly as dome-svg-frag.inc computes it -- the two
+            ## wrappers describe the same set of fragments and must agree
+            ## on how many there are.  See the note there.
+            #set $frag_count = min(10, max(1, -(-$frag_interval // $frag_step)))
             #set $frag_ts = int($almanac.time_ts)
             <div id="dome-svg"><div class="domefrag" data-dome-ts="$frag_ts" data-dome-step="$frag_step" data-dome-count="$frag_count" data-dome-interval="$frag_interval">$dome_html</div></div>
             <p class="caption dialcaption">$gettext("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon.") $gettext("Hover or tap any mark for its coordinates.")</p>

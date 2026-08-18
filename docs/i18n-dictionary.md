@@ -143,5 +143,6 @@ here.
     "{file} is not a sky fragment" = "{file} is not a sky fragment"
     "{file} is empty" = "{file} is empty"
     "no response for {file}" = "no response for {file}"
+    "{file} is stamped ahead of the station's clock" = "{file} is stamped ahead of the station's clock"
     "what to check" = "what to check"
 ```

@@ -42,7 +42,19 @@
 #set $frag_interval = 300
 #end if
 #set $frag_step = max(60, $frag_interval // 10)
-#set $frag_count = min(10, max(1, $frag_interval // $frag_step))
+## Ceil, not floor: the emission gate below is $frag_offset <
+## $frag_interval, so a step that does not divide the interval
+## emits one more fragment than floor division declares -- a 350 s
+## interval writes six 60 s slots and called itself five.  The
+## sixth was rendered every cycle and could never be asked for
+## (the walk clamps to count - 1), so the station paid for a whole
+## dome nobody could see and the last 50 s of every cycle showed
+## the slot before it.  Integer ceil is spelled -(-a // b): no
+## template here imports math, and this is an include whose
+## importers cannot be relied on for one.  The min(10, ...) cap
+## stays -- there are ten fragment templates and no more, so a
+## very long interval still just leaves a tail uncovered.
+#set $frag_count = min(10, max(1, -(-$frag_interval // $frag_step)))
 #set $frag_offset = $frag_k * $frag_step
 #if $frag_offset < $frag_interval
 #set $frag_ts = int($almanac.time_ts) + $frag_offset

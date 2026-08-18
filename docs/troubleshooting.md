@@ -131,34 +131,19 @@ The reason is the last refetch's outcome, and it says where to look:
 | `dome-svg-3.txt is not a sky fragment` | Something answers, but it is not SVG | A web server returning an error page with status 200 |
 | `dome-svg.txt is empty` | The file is there and has nothing in it | If it names a numbered slot, the page is asking for a slot beyond the current archive interval — harmless, and it corrects itself on the next cycle.  If it names `dome-svg.txt` itself, the station is writing no backdrop at all: check that weewx-skyfield is serving the report (the dome would show an install hint), and that a report cycle has run since the last restart.  **Before 8.3.2 a station with a non-default `group_interval` emptied every fragment** — upgrade if you are on anything earlier |
 | `no response for dome-svg-3.txt` | The request failed, or hung until it timed out | The network between browser and server; a page left open through a server restart |
+| `dome-svg.txt is stamped ahead of the station's clock` | The station answered, and the sky it sent depicts a time the station's own loop packets have not reached | The clock that stamps your **archive records** against the one weewxd runs on — see below.  Nothing is wrong with the report: it is generating backdrops perfectly, and the page is refusing them because it will not draw a sky from the future |
+
+Two things this is not.  The **LIVE badge is a different instrument**: it
+watches `loop_data_file`, which is usually a different URL in a different
+directory, so a healthy badge says nothing about the fragments (and a
+frozen star field says nothing about your loop data).  And a **dead loop
+feed does not raise this line at all** — the backdrop's age is measured
+against the station's clock, which the loop packets carry, so that the
+viewer's own clock can never freeze a healthy sky; when the feed stops,
+or never started, the badge is the fault to read, and the dome's marks
+stop by themselves.
 
 ### If it says `no newer backdrop has arrived` and the files *are* being written
-
-Check your station's clock — specifically, whether the clock that stamps
-your **archive records** agrees with the one weewxd is running on.
-
-The page works out which backdrop it wants from the time your loop
-packets carry, and it refuses any backdrop depicting a time your station
-has not reached yet — that refusal is what stops it drawing a sky from
-the future.  If a hardware console's clock runs *fast*, its archive
-records are stamped ahead of the loop packets, so every backdrop looks
-like the future to the page and is refused.  Ahead by more than one
-archive interval, none is ever accepted, and after three cycles the panel
-reports a frozen star field against a station that is writing backdrops
-perfectly well.
-
-This is a misconfigured station rather than a fault in the page, and it
-is worth fixing on its own account: every archive record you are storing
-carries the same wrong time.  WeeWX checks a Vantage console's clock
-periodically and logs the result:
-
-```sh
-grep "Clock error" /var/log/syslog | tail
-```
-
-A healthy station reads a second or two.  Anything approaching a minute
-deserves attention; more than one archive interval will freeze the dome
-as described.
 
 On the station:
 
@@ -173,7 +158,8 @@ ls -l <HTML_ROOT>/celestial/dome-svg*.txt
 sudo journalctl -u weewx | grep -i dome
 ```
 
-**If you set `report_timing` on this report, this is what you will see.**
+**If you set `report_timing` on this report, this is the line you will
+see.**
 The Celestial skin does not support a `report_timing` that makes its
 reports run less often than the archive interval — see
 [Report timing is not supported](configuration.md#report-timing-is-not-supported).
@@ -185,15 +171,37 @@ tell a deliberately slow report apart from a station that has stopped.
 Remove the `report_timing` line and the dome runs normally again.  Nothing needs
 configuring, and the dome resumes stepping as soon as a backdrop lands.
 
-Two things this is not.  The **LIVE badge is a different instrument**: it
-watches `loop_data_file`, which is usually a different URL in a different
-directory, so a healthy badge says nothing about the fragments (and a
-frozen star field says nothing about your loop data).  And a **dead loop
-feed does not raise this line at all** — the backdrop's age is measured
-against the station's clock, which the loop packets carry, so that the
-viewer's own clock can never freeze a healthy sky; when the feed stops,
-or never started, the badge is the fault to read, and the dome's marks
-stop by themselves.
+### If it says `stamped ahead of the station's clock`
+
+Check your station's clock — specifically, whether the clock that stamps
+your **archive records** agrees with the one weewxd is running on.
+
+The page works out which backdrop it wants from the time your loop
+packets carry, and it refuses any backdrop depicting a time your station
+has not reached yet — that refusal is what stops it drawing a sky from
+the future.  If a hardware console's clock runs *fast*, its archive
+records are stamped ahead of the loop packets, so every backdrop looks
+like the future to the page and is refused.  Ahead by more than one
+archive interval, none is ever accepted, and after three cycles the dome
+freezes.
+
+This is a misconfigured station rather than a fault in the page, and it
+is worth fixing on its own account: every archive record you are storing
+carries the same wrong time.  WeeWX checks a Vantage console's clock
+periodically and logs the result:
+
+```sh
+grep "Clock error" /var/log/syslog | tail
+```
+
+A healthy station reads a second or two.  Anything approaching a minute
+deserves attention; more than one archive interval will freeze the dome
+as described.
+
+The line names this case as its own from 8.3.6.  Earlier versions marked
+the fetch healthy before refusing the answer, so the panel read `no newer
+backdrop has arrived` — which sent readers looking for a report cycle
+that was running the whole time.
 
 ## A panel shows an install hint instead of a chart
 

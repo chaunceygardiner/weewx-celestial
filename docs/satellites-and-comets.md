@@ -123,3 +123,11 @@ configured comet gets a diamond and tail on the Geocentric dial, a roster
 row between Pluto and Proxima, and a windowed perihelion chip.  What each
 mark's shape and brightness mean is in
 [Reading the page](reading-the-page.md).
+
+Configure several and they fly together: the dome draws every satellite
+that is up, and each keeps its own pair of roster rows.  Three overhead
+at once, on the morning of 18 August 2026 — the ISS climbing through the
+zenith, Tiangong crossing to the north, and NOAA-21 skimming the western
+horizon at four degrees.
+
+![Three satellites overhead at once: the ISS through the zenith, Tiangong to the north, NOAA-21 low in the west](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDome-triple-pass.gif)

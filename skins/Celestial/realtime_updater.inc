@@ -189,6 +189,7 @@
   #silent $t.update({'{file} is not a sky fragment': $gettext('{file} is not a sky fragment')})
   #silent $t.update({'{file} is empty': $gettext('{file} is empty')})
   #silent $t.update({'no response for {file}': $gettext('no response for {file}')})
+  #silent $t.update({"{file} is stamped ahead of the station's clock": $gettext("{file} is stamped ahead of the station's clock")})
   T = $json.dumps($t);
   // Composed translations: look the English key up in T (falling back to
   // the key, so a missing entry renders English) and fill the {named}
@@ -1421,21 +1422,37 @@
       return null;
     }
     // ts is the displayed fragment's OWN depicted time; the slot number
-    // recovers the cycle base.  Computing the walk from ts directly made
-    // the next slot RELATIVE to whichever slot was showing -- the dome
-    // stepped 0,2,1,3,2, visibly zigzagging in the NOAA-21 live capture.
+    // is what turns it back into a cycle base, and since 8.3.5 into the
+    // record PHASE (see domeWant).  Computing the walk from ts directly
+    // made the next slot RELATIVE to whichever slot was showing -- the
+    // dome stepped 0,2,1,3,2, visibly zigzagging in the NOAA-21 live
+    // capture.
+    //
+    // Falling back to 0 is the RIGHT answer for the case that fires on
+    // every page load: the wrapper the page bakes around its own dome
+    // carries no data-dome-slot, because that dome is the cycle instant
+    // itself -- slot 0 by construction.  A refetched fragment always
+    // carries one.  The out-of-range half of the test is the guess: a
+    // hand-edited or truncated attribute costs a phase wrong by a
+    // multiple of the step, which moves the wanted slot but cannot ask
+    // for a sky ahead of the station (the base is floored to at or
+    // before the clock either way), and the next fragment that parses
+    // puts it right.
     var slot = parseInt(d.getAttribute('data-dome-slot'), 10);
     if (!isFinite(slot) || slot < 0 || slot >= count) {
       slot = 0;
     }
     // The archive interval, which is the report cycle's own length and
     // the quantum every cycle base is a multiple of.  NOT step*count:
-    // the slot spacing is floor-divided (a 350 s interval gives five
-    // 60 s slots, covering 300), so the product understates the cycle by
-    // the uncovered tail and a page computing with it would think the
-    // cycle over while the station was still inside it.  The product is
-    // the fallback for a wrapper generated before 8.3.5 wrote this
-    // attribute, where it is exact for every interval that divides.
+    // a set counts the fragments it writes, which is a ceil, so on an
+    // interval the step does not divide the product OVERSTATES the cycle
+    // -- 350 s writes six 60 s slots, and 360 is past the boundary the
+    // station puts at 350 -- and a page computing with it would still be
+    // inside a cycle the station had left.  The product is the fallback
+    // for a wrapper generated before 8.3.5 wrote this attribute, where
+    // the count was floor-divided instead: exact for every interval that
+    // divides, and short of the true interval rather than past it for
+    // one that does not.
     var interval = parseFloat(d.getAttribute('data-dome-interval'));
     if (!isFinite(interval) || interval <= 0) {
       interval = step * count;
@@ -1470,13 +1487,12 @@
     // int(t/interval)*interval, which is an epoch multiple by
     // construction; a HARDWARE logger stamps them on its OWN boundaries,
     // by its own clock, so they can sit at a constant offset from that
-    // grid -- a console in a half-hour UTC zone writing hourly records,
-    // or a console clock more than a slot out of true (loop packets
-    // carry weewxd's system time, so the disagreement is permanent).
-    // Assuming a zero phase was worse than wrong: every reply would be
-    // stamped ahead of the page's clock, the ceiling below would refuse
-    // ALL of them, and the dome would freeze for the life of the page
-    // and then blame the station for it.
+    // grid -- a console in a half-hour UTC zone writing hourly records.
+    // Assuming a zero phase would be worse than wrong on a station that
+    // is not: the wanted slot would come out one too high, the reply
+    // would be stamped ahead of the page's clock, the ceiling in the
+    // response handler would refuse it, and the sky would step at half
+    // rate or stand still.
     //
     // So the phase is read off the fragment on the page -- its own cycle
     // base is ts - slot*step -- while the CYCLE still comes from the
@@ -1487,12 +1503,31 @@
     // exists to prevent.  (An interval change or a console clock resync
     // moves the phase; the page carries the old one for one cycle, and
     // the ceiling still refuses anything ahead meanwhile.)
+    //
+    // What the phase does NOT correct -- because nothing here can -- is
+    // a station whose records are stamped ahead of its own loop packets,
+    // a console clock out of true against weewxd's system time.  A
+    // remainder modulo the interval cannot see an offset of a whole
+    // interval and cannot undo one of any size, and there is nothing to
+    // undo it WITH: the page has one clock, the packet's own stamp, and
+    // a fragment stamped past it is indistinguishable from the sky out
+    // of the next cycle that the ceiling exists to refuse.  Such a
+    // station freezes rather than draw a sky its own clock says has not
+    // happened yet, and the line under the plate names that fault by its
+    // own kind (domeStaleWhy) instead of accusing a station that is
+    // generating backdrops perfectly.
     var phase = ((m.ts - m.slot * m.step) % m.interval + m.interval) % m.interval;
     var base = Math.floor((serverNow() - phase) / m.interval) * m.interval + phase;
     var k = Math.floor((serverNow() - base) / m.step);
-    // The slots may not cover the whole interval (floor division: 350 s
-    // gives five 60 s slots), so the tail past the last one is served by
-    // the last one.
+    // A set covers its whole interval unless it runs out of fragments:
+    // there are ten templates and no more, so an interval longer than
+    // ten steps -- 605 s, whose ten 60 s slots reach 600 -- leaves a
+    // tail no slot depicts, and a clock inside it names a k of 10
+    // against a count of 10.  That tail is served by the last slot.
+    // (Before 8.3.6 every non-dividing interval had one, because the
+    // count was floor-divided while the set wrote the extra fragment
+    // anyway: a 350 s station declared five 60 s slots, and the sixth it
+    // had written was unaskable.)
     if (k < 0) {
       k = 0;
     } else if (k > m.count - 1) {
@@ -1750,8 +1785,27 @@
       // the current cycle, far ahead of a clock that has not moved --
       // would be refused here and the dome would freeze awake.
       var cur = domeFragMeta();
-      if (cur !== null && m !== null
-          && (parseFloat(m[1]) <= cur.ts || parseFloat(m[1]) > serverNow())) {
+      if (m !== null && parseFloat(m[1]) > serverNow()) {
+        // Ahead of the station's own clock.  Recorded, and only this
+        // half is: a roll caught mid-fetch lands here once and clears on
+        // the next apply, long before the sky is stale enough for the
+        // line to post, whereas a station whose records run ahead of its
+        // loop packets lands here every single time and would otherwise
+        // be accused of not generating backdrops at all.
+        //
+        // Judged without reference to the dome on the page, unlike the
+        // backward half below: "ahead of this page's clock" is a
+        // property of the reply alone, so it holds for the blind slot-0
+        // ask a page with no readable meta makes as well.  On a healthy
+        // station it cannot fire -- the cycle is generated for an
+        // archive record, which is older than the packets the clock is
+        // read from.
+        domeFetchProblem = {kind: 'ahead', file: fragName};
+        return;
+      }
+      if (cur !== null && m !== null && parseFloat(m[1]) <= cur.ts) {
+        // Backward or identical: normal at a late cycle, resolves
+        // itself, and says nothing about the station's health.
         return;
       }
       appliedDomeFrag = ident;
@@ -2050,6 +2104,12 @@
     if (p.kind === 'empty') {
       return fmt('{file} is empty', {file: file});
     }
+    if (p.kind === 'ahead') {
+      // Not the station's fault: it answered, and the answer was for a
+      // time this page's own clock has not reached.
+      return fmt("{file} is stamped ahead of the station's clock",
+                 {file: file});
+    }
     return fmt('{file} is not a sky fragment', {file: file});
   }
   function fmtBackdropWhen(ts, refTs) {
@@ -2207,12 +2267,22 @@
   }
   function setShown(el, shown) {
     // Show or hide one SVG element by its display attribute; null-safe.
+    //
+    // Written only when the state actually CHANGES.  setAttribute
+    // records a mutation whether or not the value differs, and hiding is
+    // what the steady states do: past a pass's set renderPass hides the
+    // dot and its label on every tick and returns, so an unconditional
+    // write costs two attribute mutations a second until the chart is
+    // refetched.  Same class as the asDrawn latch, on the other branch
+    // -- and the latch cannot cover this one, because a hidden mark is
+    // deliberately NOT the drawn state.  removeAttribute needs no such
+    // test: removing an attribute that is not there records nothing.
     if (el === null) {
       return;
     }
     if (shown) {
       el.removeAttribute('display');
-    } else {
+    } else if (el.getAttribute('display') !== 'none') {
       el.setAttribute('display', 'none');
     }
   }

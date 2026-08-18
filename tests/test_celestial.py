@@ -432,7 +432,7 @@ class TestSampleSkinRenders:
 
     @staticmethod
     def render(almanac_obj, with_time_zone=True, lang='en', texts=None, labels=None,
-               sky_page=None):
+               sky_page=None, current=None):
         from Cheetah.Template import Template
 
         class Obj:
@@ -474,7 +474,11 @@ class TestSampleSkinRenders:
             extras['time_zone'] = 'America/Los_Angeles'
         template = Template(source, searchList=[{
             'almanac': almanac_obj,
-            'current': Obj(dateTime=Obj(raw=TIME_TS), interval=Obj(raw=5)),
+            # The default carries no $current.interval.second, the shape
+            # a pre-8.3.2 report hands the page: the wrapper's #try then
+            # falls back to 300 s.  A test that cares about the fragment
+            # set passes its own.
+            'current': current or Obj(dateTime=Obj(raw=TIME_TS), interval=Obj(raw=5)),
             # windrun stands in for group_distance (this extension registers
             # no observation types).
             'unit': Obj(label=Obj(windrun=' miles'),
@@ -1089,6 +1093,66 @@ class TestSampleSkinRenders:
         assert 'data-dome-step="720"' in slow9
         assert 'data-dome-count="10"' in slow9
 
+    def test_dome_fragment_count_declares_what_it_emits(self, wxskyfield_almanac):
+        """The emission gate is `offset < interval`, so a step that does
+        not divide the archive interval writes one more fragment than
+        floor division counts: a 350 s interval emits six 60 s slots and
+        through 8.3.5 both wrappers declared five.  The generator paid for
+        that sixth dome every cycle -- the most expensive thing this skin
+        does -- and the walk, which clamps to count - 1, could never ask
+        for it, so the last 50 s of every cycle showed the slot before.
+        Declared == emitted, and the last slot askable, on intervals that
+        do NOT divide: neither this repo nor liveseasons had such a
+        station, which is how it survived four review rounds."""
+        from types import SimpleNamespace
+
+        def current(seconds):
+            return SimpleNamespace(
+                dateTime=SimpleNamespace(raw=TIME_TS),
+                interval=SimpleNamespace(
+                    raw=seconds / 60.0,
+                    second=SimpleNamespace(raw=float(seconds))))
+
+        def emitted(seconds):
+            """The slots this interval actually writes, and what each one
+            says about the set it belongs to."""
+            out = []
+            for k in range(10):
+                name = 'dome-svg.txt.tmpl' if k == 0 else 'dome-svg-%d.txt.tmpl' % k
+                frag = self.render_dome_fragment(name, {
+                    'almanac': wxskyfield_almanac, 'sky_page': make_sky_page(),
+                    'current': current(seconds)})
+                if frag.strip():
+                    out.append((k, frag))
+            return out
+
+        # 350 s / 60 s: six slots, covering 300 of the 350; the tail is
+        # left to the last one by the walk's clamp, which is why that slot
+        # has to be inside the declared count.
+        for interval, step, want in ((350, 60, 6), (90, 60, 2), (150, 60, 3)):
+            slots = emitted(interval)
+            assert [k for k, _ in slots] == list(range(want)), interval
+            for k, frag in slots:
+                assert 'data-dome-count="%d"' % want in frag, (interval, k)
+                assert 'data-dome-step="%d"' % step in frag, (interval, k)
+                assert 'data-dome-interval="%d"' % interval in frag, (interval, k)
+                assert 'data-dome-slot="%d"' % k in frag, (interval, k)
+            # Askable: the highest slot written is the highest the walk
+            # can name (domeWant clamps k to count - 1).
+            assert slots[-1][0] == want - 1, interval
+            # The page's own baked wrapper counts the same set -- it is
+            # the one the open page reads its meta from.
+            html = self.render(wxskyfield_almanac, sky_page=make_sky_page(),
+                               current=current(interval))
+            assert 'data-dome-count="%d"' % want in html, interval
+            assert 'data-dome-interval="%d"' % interval in html, interval
+
+        # A dividing interval is untouched: floor and ceil agree there,
+        # which is every standard WeeWX interval and every one a Vantage
+        # console can be set to.
+        assert [k for k, _ in emitted(300)] == [0, 1, 2, 3, 4]
+        assert 'data-dome-count="5"' in emitted(300)[0][1]
+
     def test_dome_slot_walk_is_monotonic(self):
         """The zigzag regression (caught in the NOAA-21 live capture): the
         fragment's data-dome-ts is its OWN depicted time, so the walk must
@@ -1236,9 +1300,13 @@ class TestSampleSkinRenders:
         int(t/interval)*interval, so the phase is zero by construction; a
         HARDWARE logger stamps them on its own local boundaries by its
         own clock, so they can sit at a constant offset -- a console in a
-        half-hour UTC zone writing hourly records, or a console clock
-        more than a slot out of true (loop packets carry weewxd's system
-        time, so the disagreement is permanent).
+        half-hour UTC zone writing hourly records.  That is the case the
+        phase read covers, and the only one it can: a remainder modulo
+        the interval cannot see an offset of a whole interval and cannot
+        undo one of any size, so a console clock out of true against
+        weewxd's system time is a different fault with a different
+        answer (the dome freezes and says so; see
+        test_a_station_stamped_ahead_is_not_accused_of_writing_nothing).
 
         Assuming a zero phase names a slot too high by phase/step, so
         most replies come back stamped ahead of the page's clock and the
@@ -2003,12 +2071,22 @@ class TestSampleSkinRenders:
 
         sky_page = make_sky_page()
         html = self.render(wxskyfield_sat_almanac, sky_page=sky_page)
+        # Everything here is staged against the page's BAKED dome stamp,
+        # never wall-clock: the slot the page asks for follows from its
+        # own clock (the loop packet's stamp) against the archive
+        # interval, so a packet stamped `int(time.time())` made the asked
+        # slot depend on the minute the suite happened to run in -- and
+        # the assertion below could then only say "some fragment", which
+        # a walk regressed to always naming slot 0 would satisfy.  Three
+        # 60 s slots past the cycle base the page was generated for: the
+        # page must ask for slot 3, every run.
+        PACKET_TS = TIME_TS + 3 * 60
         # The pass chart's featured dot must be ON the chart to be tapped:
         # judged by the chart's own window (skyfield 2.3.2) against the
         # page clock, the June 2025 fixture pass is long over and the dot
         # hidden, so the window is put a day AHEAD -- the chart then
         # stands as drawn, which is the tappable state.
-        far = int(time.time()) + 86400
+        far = TIME_TS + 86400
         html = rewindow_pass_chart(html, far, far + 600)
         (tmp_path / 'index.html').write_text(html)
         for asset in ('celestial.css', 'sky.js'):
@@ -2020,16 +2098,23 @@ class TestSampleSkinRenders:
         # data (the swap dismissal must be too); only the dial's titles
         # below need the packet.
         # The staged timestamps must be NEWER than the rendered page's
-        # (TIME_TS): the backward guard rejects an older sky.  TWO of
-        # them, because the page refetches once when its first loop packet
-        # lands (8.3.5; at load through 8.3.4): the first lands then, and
-        # the SECOND is the one the fast-forwarded minute brings -- which
-        # is the swap whose chip-dismissal is under test.
-        def staged(ts):
+        # (TIME_TS) and no newer than the page's CLOCK: the backward guard
+        # rejects an older sky and the ceiling refuses one the station has
+        # not reached.  TWO of them, because the page refetches once when
+        # its first loop packet lands (8.3.5; at load through 8.3.4): the
+        # first lands then, and the SECOND is the one the fast-forwarded
+        # minute brings -- which is the swap whose chip-dismissal is under
+        # test.  Each describes itself exactly as a real fragment does, so
+        # the walk goes on working off the sky it has applied.
+        def staged(ts, slot):
             return ('<div class="domefrag" data-dome-ts="%d" '
-                    'data-dome-step="60" data-dome-count="1">%s</div>'
-                    % (ts, str(sky_page.dome_svg(wxskyfield_sat_almanac))))
-        domefrags = [staged(TIME_TS + 60), staged(TIME_TS + 120)]
+                    'data-dome-slot="%d" data-dome-step="60" '
+                    'data-dome-count="5" data-dome-interval="300">%s</div>'
+                    % (ts, slot, str(sky_page.dome_svg(wxskyfield_sat_almanac))))
+        # The first answer is a slot behind the ask -- a station late
+        # writing the cycle, and the everyday reason a want goes unmet --
+        # so the second fetch has somewhere to move to.
+        domefrags = [staged(PACKET_TS - 60, 2), staged(PACKET_TS, 3)]
         assert '<svg' in domefrags[0]
         fetched = {'n': 0}
         # One loop packet with known mars numbers: the dial's marks and
@@ -2037,7 +2122,7 @@ class TestSampleSkinRenders:
         # packet derives no rates, so the title holds exactly these values.
         (tmp_path / 'gauge-data').mkdir()
         (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(jsonlib.dumps({
-            'current.dateTime.raw': int(time.time()),
+            'current.dateTime.raw': PACKET_TS,
             'almanac.mars.az': 120.0,
             'almanac.mars.alt': 30.0,
             'almanac.mars.earth_distance': 1.66}))
@@ -2147,12 +2232,13 @@ class TestSampleSkinRenders:
         assert out['iss_chip'] == {'shown': True, 'text': out['iss_title']}
         # The fragment swap really happened (the staged wrapper's identity
         # replaced the rendered one) and dismissed the open chip.  The
-        # slot is whichever one the station's clock names -- 8.3.5 stopped
-        # spending a request on slot 0, the sky the page already has,
-        # before the first packet had said what time it was.
-        assert any(r.startswith('/dome-svg') and r.endswith('.txt')
-                   for r in requested), requested
-        assert out['swapped_dome_ts'] == str(TIME_TS + 120)
+        # slot is the one the station's clock names, asserted by number:
+        # 8.3.5 stopped spending a request on slot 0, the sky the page
+        # already has, before the first packet had said what time it was,
+        # and this is the walk saying so out loud.
+        assert [r for r in requested if r.startswith('/dome-svg')] == \
+            ['/dome-svg-3.txt', '/dome-svg-3.txt'], requested
+        assert out['swapped_dome_ts'] == str(PACKET_TS)
         assert out['after_swap']['shown'] is False
         # Delegation binds to nothing, so the swapped-in dome's marks work
         # untouched -- and the same almanac instant renders the same title.
@@ -2344,7 +2430,9 @@ class TestSampleSkinRenders:
         refetch that re-serves the SAME finished chart (the report has not
         rerun) hides it again with nothing carried over; and a page LOADED
         after the set -- the case no memory could reach -- comes up hidden
-        on its first packet.  Skips when the playwright env is absent."""
+        on its first packet.  Also (8.3.6) that STAYING hidden is free:
+        the ticks past the set write no attributes at all.  Skips when
+        the playwright env is absent."""
         import http.server
         import json as jsonlib
         import re as relib
@@ -2469,6 +2557,15 @@ class TestSampleSkinRenders:
             "  return g !== null && g.getAttribute('display') === 'none' &&\n"
             "         (t === null || t.getAttribute('display') === 'none');\n"
             '}"""\n'
+            'OBSERVE = """() => {\n'
+            '  window.__muts = 0;\n'
+            '  var els = [document.querySelector(\'"""  + G + """\'),\n'
+            "             document.querySelector('#pass-chart text[data-body=iss]')];\n"
+            '  window.__obs = new MutationObserver(function(rs) {\n'
+            '    window.__muts += rs.length; });\n'
+            '  els.forEach(function(el) {\n'
+            "    if (el !== null) { window.__obs.observe(el, {attributes: true}); } });\n"
+            '}"""\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
@@ -2489,7 +2586,12 @@ class TestSampleSkinRenders:
             "      latest['almanac.iss.next_visible_pass.rise.unix_epoch.raw'] > \"\"\" + str(CHART_SET),\n"
             '      timeout=15000)\n'
             '    page.wait_for_timeout(1500)      # one localTick after the roll\n'
+            '    # Past the set, renderPass hides the mark on every tick:\n'
+            '    # hiding what is already hidden must write NOTHING.\n'
+            '    page.evaluate(OBSERVE)\n'
+            '    page.wait_for_timeout(5000)      # five localTicks\n'
             "    out = {'errors': errors,\n"
+            "           'muts': page.evaluate('() => window.__muts'),\n"
             "           'display': page.get_attribute(G, 'display'),\n"
             "           'cx': page.get_attribute(G + ' circle', 'cx')}\n"
             '    # A refetch of the unchanged chart: the swapped-in chart is\n'
@@ -2519,6 +2621,13 @@ class TestSampleSkinRenders:
         # Hidden through the set and the roll; the circle itself never
         # rewritten -- the mark hides, it is not re-placed.
         assert out['display'] == 'none'
+        # ...and staying hidden is free: five seconds of ticks past the
+        # set write not one attribute.  Through 8.3.5 setShown wrote
+        # display="none" unconditionally, so the dot group and its label
+        # took two mutations a second until the next chart refetch --
+        # the asDrawn latch's twin, on the branch that latch cannot
+        # reach (hidden is deliberately not the drawn state).
+        assert out['muts'] == 0, out['muts']
         assert out['cx'] == gen_cx
         # The refetch really happened, and the fresh chart -- no transform
         # yet, nothing carried over -- is hidden on its own window.
@@ -2528,6 +2637,120 @@ class TestSampleSkinRenders:
         assert out['cx_after_refetch'] == gen_cx
         # And a page that was not watching comes up hidden too.
         assert out['transform_after_reload'] is None
+
+    def test_chart_standing_as_drawn_before_a_pass_costs_nothing_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The other end of the window from the churn above.  Through the
+        hours before a pass rises renderPass has nothing to sweep, so it
+        restores the chart to the state the station drew it in -- and did
+        so on every one-second tick, rewriting the same attributes to the
+        same values for hours on a chart nothing had touched.  8.3.5 put
+        the asDrawn latch in front of that; 8.3.6 pins it, because the
+        fix had no test of its own on this side (liveseasons measured it,
+        celestial took it on trust).
+
+        The chart's window is moved an hour ahead of the page's clock, a
+        packet lands so renderPass runs at all, and every attribute write
+        on the mark -- group, label and the dot circle whose fill/stroke
+        pair passDotLit rewrites -- is counted across five ticks.  Staged
+        against the page's own baked instant, never wall-clock.  Skips
+        when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        PACKET_TS = TIME_TS + 60
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        # An hour out: well past the sweep, and past the "today" wording
+        # of every roster line -- this test is about the chart alone.
+        html = rewindow_pass_chart(html, PACKET_TS + 3600, PACKET_TS + 4200)
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        # A live feed, one packet repeated: renderPass returns at its
+        # latest === null guard until one lands, and a single stamp keeps
+        # the page's clock still, which is the state the latch is for.
+        (tmp_path / 'gauge-data').mkdir()
+        (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(jsonlib.dumps({
+            'current.dateTime.raw': PACKET_TS,
+            'almanac.iss.az': 120.0,
+            'almanac.iss.alt': 45.0,
+            'almanac.iss.sunlit': True,
+            'almanac.sun.az': 180.0,
+            'almanac.sun.alt': 30.0,
+            'almanac.sun.earth_distance': 1.016}))
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            "G = '#pass-chart g.dome-body[data-body=iss]'\n"
+            'OBSERVE = """() => {\n'
+            '  window.__muts = 0;\n'
+            '  var els = [document.querySelector(\'"""  + G + """\'),\n'
+            '             document.querySelector(\'"""  + G + """ circle\'),\n'
+            "             document.querySelector('#pass-chart text[data-body=iss]')];\n"
+            '  window.__obs = new MutationObserver(function(rs) {\n'
+            '    window.__muts += rs.length; });\n'
+            '  els.forEach(function(el) {\n'
+            "    if (el !== null) { window.__obs.observe(el, {attributes: true}); } });\n"
+            '}"""\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # The feed is running: renderPass is doing its work.\n'
+            "    page.wait_for_function('() => latest !== null', timeout=15000)\n"
+            '    page.wait_for_timeout(1500)\n'
+            '    page.evaluate(OBSERVE)\n'
+            '    page.wait_for_timeout(5000)      # five localTicks\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'muts': page.evaluate('() => window.__muts'),\n"
+            "        'display': page.get_attribute(G, 'display'),\n"
+            "        'transform': page.get_attribute(G, 'transform'),\n"
+            "        'asDrawn': page.evaluate('() => passBase.asDrawn'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        # The chart stands exactly as the station drew it: shown, no
+        # sweep transform, and the page knows it.
+        assert out['display'] is None, out
+        assert out['transform'] is None, out
+        assert out['asDrawn'] is True, out
+        # ...and standing there costs nothing.  Without the latch the
+        # dot's fill/stroke pair is rewritten on every tick, for the
+        # whole stretch before the pass -- hours, on a real station.
+        assert out['muts'] == 0, out['muts']
 
     def test_pass_chart_without_its_own_window_falls_back_to_the_feed_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -3183,6 +3406,137 @@ class TestSampleSkinRenders:
         # pass the feed says is happening now.
         assert 'overhead now' in out['anyline'], out['anyline']
         assert 'overhead now' in out['passline'], out['passline']
+
+    def test_a_station_stamped_ahead_is_not_accused_of_writing_nothing(
+            self, wxskyfield_almanac, tmp_path):
+        """A station whose archive records are stamped ahead of its own
+        loop packets -- a console clock out of true against weewxd's
+        system time -- answers every request perfectly with a sky the
+        page's one clock says has not happened yet.  The page must refuse
+        it (that is the ceiling, and it cannot tell such a fragment from
+        the next cycle's sky it exists to refuse), but the line under the
+        panel must not then blame the station for not generating
+        backdrops: through 8.3.5 the fetch was marked healthy before both
+        refusals, so the reader was sent looking for a report cycle that
+        was running the whole time.
+
+        The phase read cannot rescue this and never could: a remainder
+        modulo the interval cannot see an offset of a whole interval, and
+        an offset of any size leaves the reply ahead of the clock.  So
+        the freeze stands and the line names it.  Skips when the
+        playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        (tmp_path / 'index.html').write_text(
+            self.render(wxskyfield_almanac, sky_page=make_sky_page()))
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        # On a cycle boundary, so the walk asks for slot 0 and this
+        # harness needs only the one file (the same staging the frozen-
+        # backdrop test uses).
+        now = (time.time() // 300) * 300
+        # The console runs twenty minutes fast: a whole number of
+        # five-minute intervals, which is exactly the offset the phase
+        # arithmetic is blind to.  The fragment is otherwise perfect --
+        # a real sky, served with a 200.
+        AHEAD = 1200
+        frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'sky_page': make_sky_page(), 'almanac': wxskyfield_almanac})
+        assert '<svg' in frag
+        frag = relib.sub(r'data-dome-ts="\d+"',
+                         'data-dome-ts="%d"' % (now + AHEAD), frag, count=1)
+        (tmp_path / 'dome-svg.txt').write_text(frag)
+
+        def packet(i):
+            return jsonlib.dumps({
+                'current.dateTime.raw': now + 2 * i,
+                'almanac.sun.az': 180.0 + 0.5 * i,
+                'almanac.sun.alt': 30.0,
+                'almanac.sun.earth_distance': 1.016,
+            }).encode()
+        packets = [packet(i) for i in range(4)]
+        served = {'n': 0, 'frags': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path.split('?')[0].startswith('/dome-svg'):
+                    served['frags'] += 1
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=15000)\n"
+            '    page.wait_for_timeout(3000)\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'stale': page.inner_text('#dome-stale'),\n"
+            '        # The sky on the page is still the one it was'
+            ' generated with:\n'
+            '        # the ahead fragment was refused, not applied.\n'
+            "        'domets': page.eval_on_selector(\n"
+            "            '#dome-svg div[data-dome-ts]',\n"
+            "            'el => el.getAttribute(\"data-dome-ts\")'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        # The station was asked, and answered.
+        assert served['frags'] >= 1
+        # The sky the station has not reached was NOT applied.
+        assert out['domets'] == str(TIME_TS), out
+        # And the line names the fault by its own kind, rather than
+        # accusing a station that is generating backdrops perfectly.
+        assert 'Star field frozen' in out['stale'], out['stale']
+        assert "dome-svg.txt is stamped ahead of the station's clock" \
+            in out['stale'], out['stale']
+        assert 'no newer backdrop has arrived' not in out['stale'], out['stale']
 
     def test_resume_steps_the_backdrop_on_the_catch_up_packet_in_a_real_browser(
             self, wxskyfield_almanac, tmp_path):
