@@ -55,19 +55,39 @@ Three details make them behave well, and all three are worth copying:
   fields (sunset/sunrise, darkness begins/ends) is just a client-side
   `min()` of the two.
 - **Bake a fallback target into the page.**  Render each event's
-  timestamp into a `data-ts` attribute at generation time.  A page whose
-  feed never arrives still counts down correctly toward what the report
-  knew; the feed re-anchors it when it does arrive.
+  timestamp into a `data-ts` attribute at generation time.  A chip whose
+  event the feed does not carry still counts down toward what the report
+  knew, on the packets that do arrive; the feed re-anchors it when the
+  event does arrive.  (Count on the packet's own timestamp, not the
+  browser's clock — see
+  [Whose time it is](how-it-stays-live.md#whose-time-it-is).)
 - **Let precision follow the horizon.**  Days-hours-minutes with a date
-  beside it while the event is far off, a ticking `hh:mm:ss` inside the
+  beside it while the event is far off, an `hh:mm:ss` clock inside the
   final day.  A seconds-resolution countdown to something eight days away
   is noise, and a date-only line is useless in the last hour.
+
+### One clock, and it is the packet's
+
+The loop packet's own timestamp is the page's time — the instant every
+value in the packet was computed for — and before the first packet, the
+instant the page was generated for, baked into the script.  Nothing that
+reads that clock is on a timer: chips, rosters and verdicts render as
+packets arrive, because between two packets there is nothing new to
+paint.  The browser's clock is a stopwatch, never a calendar: it is
+asked how long since the last packet (for the motion below) and how long
+since the last fetch, and never what time it is.  A viewer whose clock
+is wrong sees exactly what a viewer whose clock is right sees, and a
+dead feed reads dead everywhere at once, with the badge naming it.  See
+[Whose time it is](how-it-stays-live.md#whose-time-it-is).
 
 ### Rates from consecutive packets
 
 Two loop packets give every numeric field a per-second rate (azimuth
-wrap-aware); the page then advances its readouts every second between
-refreshes and re-anchors to truth on each packet.  Extrapolation stops
+wrap-aware); the page then advances the moving readouts — positions,
+distances, the odometers — every second between refreshes and re-anchors
+to truth on each packet.  Nothing that reads the clock (the chips, the
+roster's "in {n} days") is on that timer; those render on the packet,
+because the page's time is the packet's.  Extrapolation stops
 after a stale-feed cutoff, so a dead feed freezes rather than drifting
 into fiction.  Motion trails are drawn *backwards* from now at the
 current rate — stateless, so nothing accumulates and a reload costs
@@ -84,8 +104,10 @@ because one tag is unavailable.
 ### A truthful badge
 
 The badge reports the feed's actual state: packet age, `OFFLINE` on
-network failure, and `NO DATA (HTTP 404) — check loop_data_file` when the
-web server is not serving the loop-data file where the page expects it.
+network failure, `NO DATA (HTTP 404) — check loop_data_file` when the
+web server is not serving the loop-data file where the page expects it,
+and `BAD DATA — check loop_data_file` when what came back is not a
+loop-data record at all, or carries no `current.dateTime.raw`.
 A live page that silently shows stale numbers is worse than one that
 admits it.
 
@@ -110,7 +132,7 @@ mark's group a `<title>` child and keep its text current.  On a live
 page, dismiss an open chip whenever a swap moves the sky under it — a
 chip should be a transient answer, never a stale overlay.
 
-## Four traps that cost real time
+## Five traps that cost real time
 
 {: .important }
 **Top-level `var` names in an include collide with `window`.**  A skin
@@ -156,6 +178,16 @@ on a timer, whenever that slot comes round.  (Resolve the palette from
 the page's own instant, too: on a sun-following theme, a fragment
 depicting a moment a few minutes later can otherwise disagree with the
 page it lands in.)
+
+**`Date.now()` as a calendar costs a release every time.**  It is the
+obvious way to count a chip down or judge a pass over, and it is wrong
+in three ways this skin paid for one release each: a viewer's skew reads
+straight into every countdown (8.3.3 grew a freshness test and a latch
+to police it); carrying the station's clock forward on the browser's
+stopwatch matches no data on the page and steps back whenever a packet
+arrives late (8.3.4); and either one leaves a dead feed looking half
+alive.  Read the packet's stamp, and subtract `Date.now()` only from
+another `Date.now()`.
 
 ## The dome and the pass panel are not an interface
 

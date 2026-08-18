@@ -32,7 +32,9 @@ Installing registers the report; its options live in `weewx.conf`:
   root (say `/dev/shm`) with no alias serving it, the page's badge will
   tell you: `NO DATA (HTTP 404) — check loop_data_file`.
 - `refresh_rate`: seconds between loop-data polls (match weewx-loopdata's
-  write cadence: 2 for the Vantage driver).
+  write cadence: 2 for the Vantage driver).  The countdown chips and the
+  satellite rosters advance with each packet a poll brings, since the
+  page's clock is the packet's own.
 - `expiration_time`: hours the page keeps polling before requiring a click.
   An unattended browser therefore stops polling overnight instead of for
   ever; the badge reads `CLICK-ME` and a click resumes it.
@@ -54,9 +56,9 @@ Installing registers the report; its options live in `weewx.conf`:
 ## Report timing is not supported
 
 **Do not set `report_timing` on this report.**  This page is live: its
-dome backdrops are written by the report cycle and refetched by the open
-page every minute, and the whole design assumes those two run at the same
-rate.  A report throttled to run less often than the archive interval
+dome backdrops are written by the report cycle and stepped through by the
+open page as its station's clock advances, and the whole design assumes
+those two run at the same rate.  A report throttled to run less often than the archive interval
 leaves the page holding a sky older than it is willing to draw marks
 over, so the dome freezes and says so — permanently, and correctly: from
 the browser, a deliberately slow report and a station that has stopped
@@ -130,7 +132,9 @@ configuration:
   staggered set of dome backdrops (`dome-svg.txt`,
   `dome-svg-1..9.txt`), spaced `max(60 s, interval/10)` across the
   archive interval, and the open page fetches the one covering the
-  current minute.  The fragments describe their own spacing, so any
+  current minute — and only when that is not the backdrop it already
+  has, so a page in step with its station fetches nothing.  The
+  fragments describe their own spacing, so any
   archive interval works unconfigured; if report cycles stall, the page
   keeps the freshest backdrop it has — and once it is three cycles
   behind, freezes the dome and says so rather than flying live marks
@@ -162,10 +166,10 @@ and the windowed guests (the next equinox or solstice — named by the
 season it begins — Earth's perihelion or aphelion, the next supermoon,
 the next eclipse visible from
 the station, each configured comet's perihelion) appear only within
-~30 days of their event — close enough for a ticking countdown to mean
+~30 days of their event — close enough for a countdown to mean
 something.  A day or more out a countdown reads days-hours-minutes
-with the event's date beside it; inside the final day it becomes a
-ticking `hh:mm:ss` clock.  Every chip is client-side arithmetic on an
+with the event's date beside it; inside the final day it becomes an
+`hh:mm:ss` clock, counting on every loop packet.  Every chip is client-side arithmetic on an
 event instant
 weewx-loopdata computes once and caches until it passes; a chip whose
 field the almanac cannot serve simply stays hidden.  (weewx-skyfield's
@@ -190,7 +194,7 @@ from loop data.  What renders depends on the almanac WeeWX has:
 |---|---|
 | **weewx-skyfield 2.3.2** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
 | **weewx-skyfield 2.1** | Everything but the pass chart's dot leaving the chart when the pass ends — the chart states its own rise and set only from 2.3.2, so the page falls back to the loop feed's window and the dot returns to its drawn place at set |
-| **weewx-skyfield 2.0** | Everything but the comets and the shower/supermoon chips (the sunset, darkness and pass chips still tick) |
+| **weewx-skyfield 2.0** | Everything but the comets and the shower/supermoon chips (the sunset, darkness and pass chips still count) |
 | **weewx-skyfield** (earlier) | Everything but the satellites and their chart; the dome's sun/moon/planet marks step only at the backdrop step (the live-nudge hooks are 2.0's) |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |

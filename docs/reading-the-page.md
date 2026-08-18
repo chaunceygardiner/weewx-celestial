@@ -23,10 +23,14 @@ missing; see [the almanac tiers](configuration.md#the-almanac-tiers).
 
 ## The header, and the badge that tells the truth
 
-The header carries the page title, the station's coordinates, a running
-clock, and the moment of the last loop packet followed by a status badge.
-The badge is the first thing to look at when something seems wrong,
-because it reports the feed's actual state rather than a hopeful one:
+The header carries the page title, the station's coordinates, and the
+moment of the last loop packet — or, before any packet has arrived, the
+instant the page was generated for.  That is the page's own clock, and it
+is the station's; see
+[Whose time it is](how-it-stays-live.md#whose-time-it-is).  A status badge
+follows it.  The badge is the first thing to look at
+when something seems wrong, because it reports the feed's actual state
+rather than a hopeful one:
 
 | Badge | What it means |
 |---|---|
@@ -39,13 +43,19 @@ because it reports the feed's actual state rather than a hopeful one:
 
 While the feed is stale the readouts freeze rather than drift: the page
 extrapolates motion for at most 120 seconds past the newest packet, then
-holds.  A frozen page is telling you the truth about a dead feed.
+holds.  The countdown chips, the rosters' pass countdowns and the
+"updated" stamp do not extrapolate at all: they stand at the last
+packet's values from the moment the feed stops, because the clock they
+read stops with it.  A frozen page is telling you the truth about a dead
+feed.
 
 ## Countdown central
 
 The chip row under the header answers "what's next, and how long have I
-got?".  Each chip carries a label, a ticking value, and — for events more
-than a day out — the date it lands on.
+got?".  Each chip carries a label, a counting value, and — for events more
+than a day out — the date it lands on.  The chips count on the loop
+packets — every two seconds on most stations — because the clock they
+count on is the packet's own.
 
 Four chips are always on when their fields are available:
 
@@ -62,7 +72,7 @@ Four chips are always on when their fields are available:
   `darkness ends` at the −18° sunrise, whichever is next.
 
 Four more are windowed guests: they appear only within about 30 days of
-their event, which is when a ticking countdown starts to mean something.
+their event, which is when a countdown starts to mean something.
 Those are the next **equinox or solstice** (named by the season it
 begins — "autumn begins"), Earth's **perihelion or aphelion**, the next
 **supermoon**, and the next **eclipse** visible from your station.  Each
@@ -71,7 +81,7 @@ configured comet also contributes a **perihelion** chip on the same
 
 A countdown's precision follows its horizon: a day or more out it reads
 `2d 04h 11m` with the event's date beside it; inside the final day it
-becomes a ticking `hh:mm:ss` clock.
+becomes an `hh:mm:ss` clock.
 
 {: .note }
 A chip you never see is not a fault.  A chip is hidden when its field is

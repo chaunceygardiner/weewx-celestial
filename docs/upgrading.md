@@ -28,6 +28,29 @@ appends any fields-line entries a newer version reads (append-only,
 printing each one), and the restart both reloads that line in
 weewx-loopdata and refreshes the deployed `celestial.css` and `sky.js`.
 
+8.3.5 finishes what 8.3.4 began: the page's clock is now the loop
+packet's own timestamp, and nothing else — not carried forward between
+packets, and never the viewer's clock.  Three things look different.
+The countdown chips and the satellite rosters advance on each loop
+packet (every 2 s on most stations) instead of once a second; the
+header's separate running clock is gone, leaving the "updated" stamp
+beside the badge, now baked into the page at generation and in 24-hour
+`HH:MM:SS` in every language (it read the browser's locale format
+before, `03:11:22 PM` on an English page); and a page whose loop feed is not working
+stands entirely still except for the badge naming the fault, where 8.3.4
+kept its chips counting.  See
+[Whose time it is](how-it-stays-live.md#whose-time-it-is).
+
+The sky dome follows the same clock.  It can no longer be talked into
+displaying a sky your station has not reached — which it could, briefly,
+at the start of each report cycle — and it now fetches a backdrop only
+when the sky is actually due to step, rather than once a minute
+regardless.  Nothing to configure, and on most stations the only
+difference you would notice is less traffic.  A dome that freezes and
+posts a line against a station you believe is healthy has one new cause
+worth checking: see
+[The star field is frozen](troubleshooting.md#the-star-field-is-frozen).
+
 8.3.4 is an internal simplification: the page now reads one clock, the
 station's, for every instant it reasons about — pass rise and set times,
 countdown targets, the header clock — instead of measuring some of them
@@ -79,7 +102,7 @@ weewx-loopdata reload the line, and that is the whole upgrade.
 Run weewx-skyfield 2.3.2 — 2.1 brought the comets and the
 shower/supermoon chips, 2.3.2 the pass chart's own rise and set that
 lets its dot leave the chart when the pass ends; 2.0 still serves the
-satellites, and the sunset, darkness and pass chips tick on any of them.
+satellites, and the sunset, darkness and pass chips count on any of them.
 Without the entries the page simply hides those layers and chips.  Everything else is drop-in, and the rest of the fields line
 is untouched.
 

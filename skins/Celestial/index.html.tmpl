@@ -157,21 +157,52 @@
           </h1>
           <div class="sub mono">
             $("%.2f&deg; %s &middot; %.2f&deg; %s" % (abs($lat_f), $lat_letter, abs($lon_f), $lon_letter))
-            &middot; <span id="live-clock"></span>
-            &middot; $gettext("updated") <span id="last-update"></span> <span id="live-label"></span>
+            ## The "updated" stamp first-paints the generation instant -- the
+            ## page's clock until the first loop packet (GEN_TS in the
+            ## include) -- in the shape fmtHMS repaints it in: %H:%M:%S.
+            ## And in the ZONE fmtHMS repaints it in, which is the report's
+            ## own time_zone Extras setting where it names one, NOT simply
+            ## weewxd's: a station displaying another zone would otherwise
+            ## paint station-local here and have the first packet rewrite
+            ## it, a visible jump in the most prominent spot on the page.
+            ## Two cases no generation-time value can match, because the
+            ## zone the javascript will use is the VIEWER's and there is no
+            ## viewer yet: time_zone = browser, and a zone name the
+            ## javascript's own probe rejects (a misspelled IANA name,
+            ## which it logs and then falls back to browser-local for).  In
+            ## both the stamp stays station-local and the first packet
+            ## moves it.  That is the right trade rather than a defect to
+            ## design around: a report generates a COMPLETE page, so the
+            ## first paint must be a real instant in a defined zone, not a
+            ## blank waiting for a packet that may never come.
+            ## The #try also covers a python too old for zoneinfo; the
+            ## fallback costs the zone and never the page.
+            #set $gen_hms = time.strftime('%H:%M:%S', time.localtime($almanac.time_ts))
+            #if $Extras.has_key('time_zone') and str($Extras.time_zone) != 'browser'
+            #try
+            #set $gen_hms = datetime.datetime.fromtimestamp($almanac.time_ts, __import__('zoneinfo').ZoneInfo(str($Extras.time_zone))).strftime('%H:%M:%S')
+            #except
+            #pass
+            #end try
+            #end if
+            &middot; $gettext("updated") <span id="last-update">$gen_hms</span> <span id="live-label"></span>
           </div>
         </div>
       </header>
 
-      ## Countdown central: a row of countdown chips ticking on the
-      ## javascript's one-second local tick, each pure client arithmetic
-      ## against an event-tier loopdata field -- computed once by the
-      ## engine, cached until the event, zero cost at tick cadence.  The
-      ## chip family (.countdown/.count) is weewx-skyfield's, kept in
-      ## step.  A countdown's precision follows its horizon (fmtDHMS in
-      ## the include owns the shape; these first paints mirror it): a
-      ## day or more out it reads days-hours-minutes, inside the final
-      ## day the ticking hh:mm:ss clock.  Dual-source like the roster:
+      ## Countdown central: a row of countdown chips the javascript
+      ## renders on every loop packet -- the page's clock is the packet's
+      ## own stamp, so the chips move at loop cadence (see serverNow in
+      ## the include) -- each pure client arithmetic against an
+      ## event-tier loopdata field, computed once by the engine, cached
+      ## until the event, zero cost at that cadence.  The chip family
+      ## (.countdown/.count) is weewx-skyfield's, kept in step.  A
+      ## countdown's precision follows its horizon (fmtDHMS in the
+      ## include owns the shape; these first paints mirror it, and are
+      ## exactly what it renders for the generation instant, which is
+      ## the page's clock until the first packet): a day or more out it
+      ## reads days-hours-minutes, inside the final day the hh:mm:ss
+      ## clock.  Dual-source like the roster:
       ## the always-on chips first-paint the COUNTDOWN ITSELF -- the
       ## remaining time at generation -- with the event's clock time or
       ## date as the small detail (a countdown chip whose only number
@@ -184,8 +215,8 @@
       ## configured satellites -- the same pick the live layer makes --
       ## so all the row's chips stand from the first byte (a chip that
       ## pops in on the first loop packet is a jump like any other).
-      ## The rise and set instants bake so the countdown ticks and
-      ## rolls into "overhead now" even before loop data arrives.
+      ## The rise and set instants bake so a feed without the pass keys
+      ## still has a target to count from and roll into "overhead now".
       #set $pass_k = ''
       #set $pass_v = ''
       #set $pass_d = ''
@@ -284,7 +315,7 @@
       #end try
       ## The season chip (a windowed guest): equinox or solstice,
       ## whichever next, named by the season it begins -- the one event
-      ## whose tick-to-zero is exact to the second.  The label and
+      ## whose count-to-zero is exact to the second.  The label and
       ## target bake even outside the window (the javascript unhides
       ## the chip when the window opens); the countdown and date paint
       ## only when the chip first-paints visible.
@@ -596,7 +627,7 @@
             #set $frag_step = max(60, $frag_interval // 10)
             #set $frag_count = min(10, max(1, $frag_interval // $frag_step))
             #set $frag_ts = int($almanac.time_ts)
-            <div id="dome-svg"><div class="domefrag" data-dome-ts="$frag_ts" data-dome-step="$frag_step" data-dome-count="$frag_count">$dome_html</div></div>
+            <div id="dome-svg"><div class="domefrag" data-dome-ts="$frag_ts" data-dome-step="$frag_step" data-dome-count="$frag_count" data-dome-interval="$frag_interval">$dome_html</div></div>
             <p class="caption dialcaption">$gettext("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon.") $gettext("Hover or tap any mark for its coordinates.")</p>
             ## The backdrop's health line, written by the javascript
             ## (updateDomeStale) and hidden until the fragment refetches

@@ -65,6 +65,6 @@
 ## on the other plate.  The javascript compares the two and reloads once
 ## on a mismatch.  This fragment is the sentinel for the pass chart too
 ## -- it refetches five times as often.
-<div class="domefrag" data-dome-ts="$frag_ts" data-dome-slot="$frag_k" data-dome-step="$frag_step" data-dome-count="$frag_count" data-dome-palette="$palette">$sky_page.dome_svg($almanac(almanac_time=$frag_ts), palette=$palette)</div>#slurp
+<div class="domefrag" data-dome-ts="$frag_ts" data-dome-slot="$frag_k" data-dome-step="$frag_step" data-dome-count="$frag_count" data-dome-interval="$frag_interval" data-dome-palette="$palette">$sky_page.dome_svg($almanac(almanac_time=$frag_ts), palette=$palette)</div>#slurp
 #end if
 #end if

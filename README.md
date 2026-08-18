@@ -30,7 +30,7 @@ stale.
 
 ![Celestial Sample Report](CelestialSampleReport.png)
 
-**Countdown central** — ticking chips for the soonest visible satellite
+**Countdown central** — countdown chips for the soonest visible satellite
 pass, sunset or sunrise, the next meteor shower's peak with the moon's
 illumination at the peak, and astronomical darkness; joined within ~30 days
 by the next equinox or solstice, Earth's perihelion or aphelion, the next
@@ -181,7 +181,8 @@ section WeeWX only began providing in 5.3.
 When a Playwright environment is available it also loads the
 served page in headless Chromium with an advancing loop-data feed and asserts
 the live machinery comes up — no page errors, dial dots drawn, rates derived,
-trails visible.
+trails visible — and that a viewer whose clock is half an hour wrong, either
+way, sees the same page.
 
 ## Why require Python 3.9 or later?
 

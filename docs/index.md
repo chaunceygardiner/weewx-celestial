@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.3.4**, the current release.
+This manual documents weewx-celestial **8.3.5**, the current release.
 
 ## Start here
 
@@ -49,7 +49,7 @@ page you leave open, on which everything moves.
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
 chart.  Here it is entire, in the bundled sample report (Palo Alto, an
-August night at 10:36 PM — Saturn and Neptune newly up in the east and
+August night at 10:58 PM — Saturn and Neptune newly up in the east and
 Pluto high in the south, everything else dashed below the horizon and
 trailing its wake, Proxima Centauri alone at the rim, and every odometer
 ticking):
@@ -58,8 +58,8 @@ ticking):
 
 Panel by panel:
 
-**Countdown central** (new in 8.1) — ticking countdown chips at the
-top of the page: the soonest visible satellite pass ("ISS · appears in
+**Countdown central** (new in 8.1) — countdown chips at the top of
+the page, counting on every loop packet: the soonest visible satellite pass ("ISS · appears in
 00:41:12", then "overhead now", rolling to the next pass as this one
 ends), sunset or sunrise — whichever comes next — the next meteor
 shower's peak with the moon's illumination at the peak, and
@@ -70,15 +70,16 @@ Earth's perihelion or aphelion,
 the next supermoon, the next eclipse visible from your station,
 and each configured comet's perihelion.  A day or more out a countdown
 reads days-hours-minutes with the event's date beside it; inside the
-final day it becomes a ticking `hh:mm:ss` clock.  Every chip is
+final day it becomes an `hh:mm:ss` clock.  Every chip is
 client-side
 arithmetic on an event instant weewx-loopdata computes once and caches
 until it passes.
 
-The row riding through a sunset, live (1-second frames at about 15×
-speed): the sunset chip counts `hh:mm:ss` down through zero, then rolls
-itself to the next sunrise — loopdata expires the event and the page
-follows, no reload:
+The row riding through a sunset, live (captured under 8.1, when the
+chips ticked once a second — since 8.3.5 they step with each loop packet
+— at about 15× speed): the sunset chip counts `hh:mm:ss` down through
+zero, then rolls itself to the next sunrise — loopdata expires the event
+and the page follows, no reload:
 
 ![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll.gif)
 

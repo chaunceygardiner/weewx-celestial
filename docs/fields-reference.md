@@ -46,8 +46,11 @@ satellites and two comets.  They fall into five groups.
 
 ### The clock (1 entry)
 
-`current.dateTime.raw` — the packet's timestamp.  Everything the page
-extrapolates is measured from it.
+`current.dateTime.raw` — the packet's timestamp, and the page's clock:
+the "updated" stamp, every countdown chip, the rosters' "overhead now"
+and the pass chart's verdict are all reckoned against it, rates are
+derived from consecutive stamps, and a record without it is dropped
+whole (see [Whose time it is](how-it-stays-live.md#whose-time-it-is)).
 
 ### Body positions (33 entries)
 

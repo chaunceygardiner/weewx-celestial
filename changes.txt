@@ -1,6 +1,47 @@
 weewx-celestial change history
 ------------------------------
 
+8.3.5 (2026/08/17)
+------------------
+- The page's clock is the loop packet's own timestamp -- and, before the
+  first packet, the instant the page was generated for.  8.3.4 carried
+  the station's clock forward between packets on the browser's
+  stopwatch; nothing does now, so the time shown always belongs to the
+  data beside it.  A browser test proves a viewer clock half an hour
+  wrong, either way, changes nothing on the page.
+- The countdown chips and the satellite rosters repaint as loop packets
+  arrive (every refresh_rate seconds) rather than once a second; the
+  tick remains for the motion between packets.  A page with no working
+  loop feed stands still, and the LIVE badge says why.
+- The header's separate running clock is gone; the "updated" stamp
+  beside it is baked at generation in 24-hour HH:MM:SS.
+- The sky dome can no longer show a sky the station has not reached.
+  The page worked out which backdrop to ask for from the backdrop it
+  was holding, and for the first moments of every report cycle that one
+  belongs to the cycle before -- so it named that cycle's late slot, and
+  since a backdrop's filename carries a slot number and no cycle, the
+  station answered out of the cycle it now held: a sky up to a cycle
+  into the future, kept until the real time caught up to it.  The slot
+  now follows from the station's clock and the archive interval alone
+  (report cycles are generated for an archive record, so every cycle
+  begins on an interval boundary), and a backdrop depicting a time the
+  station has not reached is refused.  A laptop waking from sleep or a
+  tab returning from the background steps to the right backdrop as soon
+  as the loop feed catches up.
+- The backdrop is fetched only when the sky is due to step -- when the
+  slot the station's clock calls for is not the one already showing --
+  instead of once a minute regardless.  A page in step with its station
+  fetches nothing; a page whose station has stopped writing fetches
+  nothing either, since its clock has stopped with it.  On an archive
+  interval longer than ten minutes, where the slots are spaced further
+  apart than the old once-a-minute refetch, most of those fetches
+  returned a sky the page already had and were discarded.
+- The Next Visible Pass chart no longer rewrites its dot's position and
+  look once a second through the hours before a pass rises.  The chart
+  stands as the station drew it, and is now restored once rather than
+  continuously.
+- Drop-in over 8.3.4; no configuration change.
+
 8.3.4 (2026/08/16)
 ------------------
 - The live page now reads one clock, and it is the station's.  Every

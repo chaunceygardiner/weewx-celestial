@@ -2,7 +2,7 @@
 title: How the page stays live
 layout: default
 nav_order: 5
-description: The three clocks behind the Celestial page — the report cycle, the loop packet and the one-second tick — how rates are derived and re-anchored, why a stale feed freezes, and what the browser does and does not compute.
+description: The three cadences behind the Celestial page — the report cycle, the loop packet and the one-second motion tick — whose time the page keeps, how rates are derived and re-anchored, why a stale feed freezes, and what the browser does and does not compute.
 ---
 
 # How the page stays live
@@ -15,16 +15,40 @@ You do not need this page to use the extension.  It is here for the
 curious, and for anyone deciding how much to trust a number that is
 moving.
 
-## Three clocks
+## Three cadences
 
-The page is driven by three different clocks, and almost every question
+The page is driven by three different cadences, and almost every question
 about its behavior is answered by knowing which one owns what.
 
-| Clock | Period | What it does |
+| Cadence | Period | What it does |
 |---|---|---|
 | **The report cycle** | typically 5 minutes | WeeWX regenerates the page's HTML.  The first paint, the dome backdrops, the Next Visible Pass chart and the page's plate (dark or light) are all settled here. |
-| **The loop packet** | seconds (2 with the Vantage driver) | weewx-loopdata writes `loop-data.txt`; the page fetches it every `refresh_rate` seconds and re-anchors every live value to truth. |
-| **The one-second tick** | 1 second | The browser advances the readouts between packets, and ticks the countdown chips. |
+| **The loop packet** | seconds (2 with the Vantage driver) | weewx-loopdata writes `loop-data.txt`; the page fetches it every `refresh_rate` seconds, re-anchors every live value to truth, and moves the page's clock. |
+| **The one-second tick** | 1 second | The browser advances what moves between packets — the dial's bodies, the dome's marks and satellites, the pass chart's dot — at loop-derived rates, plus housekeeping: the frozen-sky line and the wake-from-sleep check.  Nothing that reads the page's clock is repainted by it. |
+
+## Whose time it is
+
+The page keeps one clock, and it is the station's: the loop packet's own
+timestamp, which is the instant every value in that packet was computed
+for.  Before the first packet arrives it is the instant the page was
+generated for.  Nothing in between — the page does not run the clock
+forward on its own, so the time it shows always belongs to the data
+beside it.  The header's "updated" stamp, the countdown chips, the
+satellite rosters' "overhead now" and day counts, and the pass chart's
+over/ahead verdict all read this clock, and they all render as packets
+arrive, at loop cadence, because between two packets there is nothing
+new to paint.
+
+The browser's own clock is asked only how long something took — the
+seconds since the last packet, for the motion between packets; the
+seconds since the last fetch, for the throttles; whether a one-second
+timer failed to fire for two minutes, which means the machine slept — and
+never what time it is.  A viewer whose clock is half an hour wrong, in
+either direction, sees exactly the page a viewer whose clock is right
+sees.  The other side of the same coin: a station whose loop feed is not
+working has no working live layer at all — the page stands as the report
+drew it, or where the last packet left it, and the LIVE badge is where
+that fault is reported.
 
 ## First paint, then live
 
@@ -72,9 +96,13 @@ the chip follows on its next packet.  That is why a sunset chip counts to
 zero and then becomes the next sunrise with no reload, and why a pass
 chip rolls to the next pass the moment the current one ends.
 
-Chips also tick with no feed at all: the report bakes each event's target
-timestamp into the page, so a page open on a dead feed still counts down
-correctly toward the instants it knew about at generation time.
+The report also bakes each event's target timestamp into the page, so a
+chip whose event the feed does not carry — a lesser almanac, a trimmed
+fields line — still counts down toward the instant the page knew about
+at generation time, on the packets that do arrive.  With no feed at all
+the chips stand at their generation values, like everything else on the
+page: the clock they count on is the packet's (see
+[Whose time it is](#whose-time-it-is)).
 
 ## The two fetched fragments
 
@@ -84,11 +112,20 @@ fragments:
 
 - **Dome backdrops.**  Each report cycle renders a staggered set of them,
   spaced `max(60 s, interval/10)` across the archive interval, and the
-  page steps to the one covering the current minute — so the sky advances
-  about a quarter of a degree at a time instead of lurching a whole cycle
-  at once.  The fragments describe their own timestamp, spacing and
-  count, so any archive interval works with no configuration, and if
-  report cycles stall the page keeps the freshest backdrop it has.
+  page steps to the one covering the current minute by the station's
+  clock, which the packets carry — so the sky advances about a quarter
+  of a degree at a time instead of lurching a whole cycle at once.
+  Which one that is follows from the station's clock and the archive
+  interval alone: report cycles are generated for an archive record, so
+  every cycle begins on an interval boundary and the page can work out
+  the current one without needing to have kept up.  After a sleep, or a
+  spell in a background tab, the page therefore steps straight to the
+  right backdrop as soon as the loop feed catches up — the packet is
+  what tells it the time, so the packet is what moves the sky.  The
+  fragments describe their own timestamp, spacing, count and archive
+  interval, so any archive interval works with no configuration, and if
+  report cycles stall the page keeps the freshest backdrop it has rather
+  than accepting one the station has not reached.
   Between steps, the sun, moon and planet marks are nudged at
   loop-derived rates.
 
@@ -147,15 +184,21 @@ draws.  Every astronomical quantity on the page was computed by the
 almanac in weewxd, and the page does not follow your operating system's
 dark-mode setting: it wears the plate its report was generated with.
 That is a deliberate division: it keeps the page cheap on a phone, and it
-guarantees that what ticks in the browser cannot disagree with what the
+guarantees that what moves in the browser cannot disagree with what the
 report says.
 
 ## What it costs
 
 One `loop-data.txt` fetch per `refresh_rate` seconds (a small json file),
-one dome fragment per minute, one pass-chart fragment per five minutes.
-The one-second tick is arithmetic on values already in memory.  Nothing
-on the page polls weewxd, and nothing recomputes an ephemeris.
+one pass-chart fragment per five minutes, and one dome fragment each time
+the sky steps a slot — which is once a minute on a five-minute archive
+interval, and never more often than that.  The page works out which slot
+its station's clock calls for and fetches only when that is not the one
+it already has, so a page that is in step with its station asks for
+nothing at all; a page whose station has stopped writing asks for nothing
+either, because its clock has stopped with it.  The one-second tick is
+arithmetic on values already in memory.  Nothing on the page polls
+weewxd, and nothing recomputes an ephemeris.
 
 To keep an unattended page from polling forever, it stops after
 `expiration_time` hours and shows `CLICK-ME`; a click resumes it.  See

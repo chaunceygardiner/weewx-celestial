@@ -535,6 +535,16 @@ class TestSampleSkinRenders:
         # echoed as error prose instead of raising, so a broken bake
         # would ship a page whose clock never started.
         assert 'GEN_TS = %d;' % int(TIME_TS) in html
+        # The header's "updated" stamp first-paints that same instant, in
+        # the shape fmtHMS repaints it in (%H:%M:%S, station-local, the
+        # chip-detail precedent) -- the page displays on its own, and the
+        # first packet must not reformat what the report painted.  Noon
+        # PDT on the solstice; asserted on the rendered value for the
+        # same errorCatcher reason.  8.3.4 shipped this span empty (and a
+        # live clock beside it that is gone: read from the station it was
+        # this stamp shown twice).
+        assert '<span id="last-update">12:00:00</span>' in html
+        assert 'id="live-clock"' not in html
         # A capable almanac serves the page: no install hint, and the
         # footer carries the full Skyfield credit (Proxima proves the star
         # catalog) -- naming weewx-skyfield with its manual linked, since
@@ -1086,15 +1096,30 @@ class TestSampleSkinRenders:
         slot*step) before computing the next slot.  Walking from ts
         directly made the next slot RELATIVE to whichever slot was showing
         and the dome stepped 0,2,1,3,2 -- forward two minutes, back one --
-        every cycle.  Pins the include's reading of the contract, and
-        simulates both arithmetics to hold the fixed one monotonic and
-        prove the broken one was not."""
+        every cycle.  8.3.5 removed the cause: the base no longer comes
+        from the fragment at all.  Pins that it has not come back, and
+        keeps the simulation of both arithmetics as the record of what
+        fragment-relative walking actually did."""
         src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
-        assert "getAttribute('data-dome-slot')" in src
-        assert re.search(r'm\.ts\s*-\s*m\.slot\s*\*\s*m\.step', src)
-        # The backward guard: a late cycle answering the slot-0 ask with
-        # the previous cycle's file must not step the sky backward.
-        assert re.search(r'parseFloat\(m\[1\]\)\s*<\s*cur\.ts', src)
+        # 8.3.5 settles the zigzag by removing its cause rather than
+        # correcting for it: the cycle base is computed from the
+        # STATION's clock against the archive interval, so no arithmetic
+        # anywhere is relative to the fragment being displayed and the
+        # walk cannot be made relative again by accident.  The old
+        # de-relativizing expression must therefore be GONE, not present.
+        assert re.search(r'Math\.floor\(\(serverNow\(\) - phase\)\s*/\s*m\.interval\)'
+                         r'\s*\*\s*m\.interval\s*\+\s*phase', src)
+        # ts - slot*step is back, but for the PHASE only -- a property of
+        # the station's records, the same in a stale fragment as a fresh
+        # one.  The cycle still comes from the clock, which is the half
+        # that must never be read off the page.
+        assert re.search(r'var phase = \(\(m\.ts - m\.slot \* m\.step\) % m\.interval'
+                         r' \+ m\.interval\) % m\.interval;', src)
+        # The backward guard: a late cycle answering an ask with the
+        # previous cycle's file must not step the sky backward -- and
+        # (8.3.5) a fragment stamped the same as the dome on the page IS
+        # that dome, refused too, judged against the DOM at compare time.
+        assert re.search(r'parseFloat\(m\[1\]\)\s*<=\s*cur\.ts', src)
 
         step, count = 60, 5
 
@@ -1114,7 +1139,7 @@ class TestSampleSkinRenders:
                 fetched = (max(0, on_disk), k)
                 if fetched != shown and (not fixed or
                         fetched[0] + fetched[1] * step
-                        >= shown[0] + shown[1] * step):
+                        > shown[0] + shown[1] * step):
                     shown = fetched
                 depicted.append(shown[0] + shown[1] * step)
             return depicted
@@ -1132,6 +1157,186 @@ class TestSampleSkinRenders:
         # The pre-fix arithmetic really did zigzag -- the regression is real.
         bad = walk(fixed=False, lag=15)
         assert any(b < a for a, b in zip(bad, bad[1:]))
+
+    def test_dome_never_shows_a_sky_ahead_of_the_station(self):
+        """The page must never display a backdrop depicting a time the
+        station has not reached.  It could: the walk recovered the cycle
+        base from the fragment it was HOLDING, and moments after the
+        station rolls to a new cycle the page is still holding the
+        previous one -- its clock (the last loop packet's stamp, delta
+        behind the station) agrees it is still in the old cycle, so it
+        names that cycle's late slot.  The filename carries no cycle
+        identity, so the station answers with THAT slot of the cycle it
+        now holds: a sky most of a cycle into the future, applied because
+        it is newer, and then locked in by the same-or-older guard until
+        the true time catches up to it.
+
+        The fix takes the base from the station's own clock instead of
+        from the fragment on the page -- report cycles are generated for
+        the last archive record, so every base is a multiple of the
+        archive interval -- which makes the wanted slot's depicted time
+        at or behind serverNow() by construction, and the ask
+        unmakeable.  Simulates both arithmetics across every fetch phase;
+        the window is only (delta - lag) wide per cycle, so a single
+        phase would miss it."""
+        step, count, cycle, refresh = 60, 5, 300, 60
+
+        def worst_lead(aligned, delta, lag, phase):
+            # How far AHEAD of the station's true time the displayed
+            # backdrop ever gets.  delta: how far the page's clock (the
+            # last packet's stamp) trails the station.  lag: how long
+            # after a cycle instant its fragments land on disk.
+            shown, shown_slot, lead, behind = 0, 0, 0, 0
+            for t in range(600 + phase, 5400, refresh):
+                server_now = t - delta
+                on_disk = max(0, ((t - lag) // cycle) * cycle)
+                if aligned:
+                    base = (server_now // cycle) * cycle
+                    k = min(max((server_now - base) // step, 0), count - 1)
+                    if base + k * step <= shown:
+                        continue           # nothing owed; do not even ask
+                else:
+                    base = shown - shown_slot * step
+                    k = (server_now - base) // step
+                    k = k if 1 <= k < count else 0
+                got = on_disk + k * step
+                if got > shown and not (aligned and got > server_now):
+                    # Newer than the sky on the page, and -- once the base
+                    # comes from the station's clock -- not depicting a
+                    # time that clock has not reached.  The ceiling is
+                    # only safe alongside the want-gate above: a page
+                    # whose clock is stale computes want == shown and
+                    # never asks, so the legitimately-ahead answer to a
+                    # slot-0 ask after a sleep cannot arise to be refused.
+                    shown, shown_slot = got, k
+                lead = max(lead, shown - t)
+                if shown:                  # past the cold start
+                    behind = max(behind, t - shown)
+            return lead, behind
+
+        # A GW1000-class station: 20 s between loop writes, fragments on
+        # disk 10 s after the cycle instant.
+        phases = range(0, refresh)
+        fixed = [worst_lead(True, 20, 10, p) for p in phases]
+        assert all(lead <= 0 for lead, _ in fixed)
+        # ...and it stays LIVE: refusing everything would satisfy the line
+        # above.  Two slots is the bound, not one -- once a cycle the
+        # page declines the answer that ran ahead and waits for the new
+        # cycle's slot 0 -- plus the clock's own lag and the fragments'
+        # time to reach disk.  Behind by a slot beats ahead by four.
+        assert all(behind <= 2 * step + 20 + 10 for _, behind in fixed)
+        # The arithmetic it replaces really did run ahead, by most of a
+        # cycle, so the regression this pins is real.
+        assert max(lead for lead, _ in
+                   (worst_lead(False, 20, 10, p) for p in phases)) >= 3 * step
+
+    def test_hardware_logger_phase_does_not_freeze_the_dome(self):
+        """Archive records are one interval apart, but not necessarily ON
+        a multiple of it.  Software record generation computes them as
+        int(t/interval)*interval, so the phase is zero by construction; a
+        HARDWARE logger stamps them on its own local boundaries by its
+        own clock, so they can sit at a constant offset -- a console in a
+        half-hour UTC zone writing hourly records, or a console clock
+        more than a slot out of true (loop packets carry weewxd's system
+        time, so the disagreement is permanent).
+
+        Assuming a zero phase names a slot too high by phase/step, so
+        most replies come back stamped ahead of the page's clock and the
+        ceiling refuses them: the page pays for a whole sky a minute and
+        applies almost none of them, and the stagger this fragment set
+        exists for is half lost.  (Not a freeze -- the clamp at the last
+        slot means the clock does catch up to some asks -- so nothing on
+        the page ever says anything is wrong.)  The phase is therefore
+        read off the fragment (its own base, ts - slot*step) while the
+        cycle still comes from the clock."""
+        interval, step, count = 3600, 360, 10
+        phase, delta, lag = 1800, 20, 10        # India, hourly records
+
+        def run(phase_aware):
+            shown, last_want, last_fetch = None, None, -10 ** 9
+            fetched = applied = 0
+            for t in range(4 * interval, 12 * interval, 60):
+                server_now = t - delta
+                if shown is None:               # the page as generated
+                    shown = ((t // interval) * interval + phase) - interval
+                if phase_aware:
+                    base = ((server_now - phase) // interval) * interval + phase
+                else:
+                    base = (server_now // interval) * interval
+                k = min(max((server_now - base) // step, 0), count - 1)
+                want = base + k * step
+                if want <= shown:
+                    continue
+                if want == last_want and t - last_fetch < 60:
+                    continue
+                fetched += 1
+                last_want, last_fetch = want, t
+                # The station answers the slot number out of the cycle it
+                # holds, whose base carries the real phase.
+                on_disk = ((t - lag - phase) // interval) * interval + phase
+                got = on_disk + k * step
+                if got > shown and got <= server_now:
+                    shown, applied = got, applied + 1
+            return applied, fetched
+
+        # Phase-aware: every ask lands, one per slot the sky advances --
+        # eight hourly cycles of ten slots, and not one wasted request.
+        applied, fetched = run(True)
+        assert applied == fetched, (applied, fetched)
+        assert applied >= 8 * count, (applied, fetched)
+        # Phase-blind: six times the traffic, almost all of it refused by
+        # the ceiling, and the sky steps at about half the rate it should.
+        # Nothing SAYS anything is wrong -- the dome does keep advancing,
+        # so the frozen line never fires; it just costs a whole sky a
+        # minute and quietly loses half the stagger.
+        blind_applied, blind_fetched = run(False)
+        assert blind_fetched > 5 * fetched, (blind_fetched, fetched)
+        assert blind_applied < applied // 2, (blind_applied, applied)
+
+    def test_late_cycle_does_not_storm_the_backdrop_fetch(self):
+        """The wanted slot is checked on every loop packet, because the
+        packet is the only thing that moves the clock -- so a want that
+        goes UNMET repeats at the poll rate, not once a minute.  A
+        station late writing a cycle the page's clock has already entered
+        answers every ask with the previous cycle's file, refused as
+        older, leaving the want unmet: unpaced, the page pulls a whole
+        sky every refresh_rate seconds until the report lands.  So a
+        repeat of the same want is paced at DOME_REFRESH while a want
+        that has MOVED still goes at once."""
+        step, count, cycle, rate, dome_refresh = 60, 5, 300, 2, 60
+
+        def fetches(paced, lag):
+            # Whole-sky requests in an hour.  lag: how long after a cycle
+            # instant its fragments reach disk.
+            shown, last_fetch, last_want, n = 0, -10 ** 9, 0, 0
+            for t in range(600, 4200, rate):
+                base = (t // cycle) * cycle
+                k = min(max((t - base) // step, 0), count - 1)
+                want = base + k * step
+                if want <= shown:
+                    continue
+                if paced and want == last_want and t - last_fetch < dome_refresh:
+                    continue
+                n += 1
+                last_fetch, last_want = t, want
+                on_disk = max(0, ((t - lag) // cycle) * cycle)
+                got = on_disk + k * step
+                if got > shown and got <= t:
+                    shown = got
+            return n
+
+        # One fetch per slot the sky advances, and not one more -- an hour
+        # of 60 s slots is 60 requests -- whether the station is prompt or
+        # more than half a cycle late.
+        assert fetches(True, 10) == 3600 // step
+        assert fetches(True, 200) == 3600 // step
+        # Unpaced, the late station is answered with a fetch storm.
+        assert fetches(False, 200) > 15 * fetches(True, 200)
+        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
+        assert re.search(r'if \(\(want === null \|\| want\.ts === lastDomeWant\)'
+                         r'\s*&& Date\.now\(\) / 1000 - lastDomeFetch < DOME_REFRESH\) \{',
+                         src), 'the repeat-want pacing is gone'
+        assert re.search(r'lastDomeWant = want === null \? 0 : want\.ts;', src)
 
     def test_pass_chart_fragment_template(self, wxskyfield_sat_almanac):
         """pass-chart.txt.tmpl, the refetch fragment: the dated head line
@@ -1182,89 +1387,159 @@ class TestSampleSkinRenders:
         assert "attrNum(track, 'data-set')" in src
 
     def test_page_reads_one_clock_and_it_is_the_stations(self):
-        """8.3.4's rule, pinned where it can be enforced: every instant
-        this page reasons about was written by the STATION -- a pass's
-        rise and set, an event's countdown target, the header clock --
-        so the browser's clock is never read as a calendar, only as a
-        stopwatch (a difference between two of its own readings, which
-        no viewer's skew can color).
+        """8.3.5's rule, pinned where it can be enforced: the loop
+        packet's own timestamp IS the page's time -- the instant every
+        value in that packet was computed for -- and before the first
+        packet the page's generation instant.  Nothing in between: 8.3.4
+        carried the station clock forward on the browser's stopwatch,
+        which matched no data on the page and stepped back by up to a
+        poll whenever a packet arrived later than the one before; 8.3.3
+        and earlier read the browser's calendar outright and needed a
+        freshness test and a latch to police it.  The browser is asked
+        only how long something took (a difference between two of its
+        own readings, which no viewer's skew can color), never what time
+        it is.
 
-        Through 8.3.3 four extrapolation sites computed `nowTs -
-        latestTs`, subtracting the station's clock from the browser's;
-        the countdown chips and the header clock compared station-written
-        instants against Date.now(); and renderPass judged the chart's
-        own data-set on a clock that could fall back to the viewer's,
-        which then needed a freshness test (STALE_PACKET) and a one-way
-        latch (b.over) to police.  All of that is one function now, and
-        the machinery that policed it is gone.
+        Consequently nothing that reads the clock is repainted by a
+        timer: the countdown chips, the satellite rosters and the pass
+        verdict render on the packet that moved it, and the header
+        clock is gone (read from the station it was the "updated" stamp
+        shown twice).  The one-second tick survives for extrapolated
+        MOTION -- the dial's bodies, the dome's marks, the pass chart's
+        sweep, each on packetAge -- and for elapsed-time housekeeping.
+        Same rule, same survivors as weewx-liveseasons 8.4.4.
 
-        Structural rather than a fake-clock browser run on purpose: the
-        rule is about which names appear where, the browser test would
-        be a viewer-skew scenario, and John ruled those out of scope
-        2026-08-15."""
+        Structural rather than a browser run on purpose: the rule is
+        about which names appear where.  The rendered-value half (GEN_TS
+        and the baked "updated" stamp) is in test_renders_with_skyfield_almanac;
+        the browser half (a viewer's clock half an hour wrong changes
+        nothing) is test_viewer_clock_skew_changes_nothing_in_a_real_browser."""
         src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
                    encoding='utf-8').read()
-        # The two helpers, and the only place a station time and a
-        # browser reading are allowed to meet.
-        assert re.search(r'function packetAge\(\) \{', src)
+        # THE clock: the packet's stamp, or the generation instant.
         assert re.search(r'function serverNow\(\) \{', src)
-        assert re.search(r'Date\.now\(\) / 1000 - latestRecvTs', src), \
-            'packetAge must measure the packet age on the browser clock alone'
-        assert re.search(r'GEN_TS \+ \(Date\.now\(\) / 1000 - PAGE_LOAD\)', src), \
-            'the pre-packet anchor must be the page generation stamp'
-        # The clock is UNCAPPED where the marks are capped: EXTRAP_MAX
-        # bounds how long a POSITION may be extrapolated, and borrowing it
-        # for the clock stopped serverNow dead EXTRAP_MAX after a feed
-        # died -- header clock frozen, every chip's -60 grace unable to
-        # fire, a pass never judged over.
-        assert re.search(r'latestTs \+ \(Date\.now\(\) / 1000 - latestRecvTs\)', src), \
-            'serverNow must not borrow packetAge: a clock does not stop'
-        assert not re.search(r'latestTs \+ packetAge\(\)', src)
+        assert re.search(r'return latestTs === 0 \? GEN_TS : latestTs;', src), \
+            'serverNow is the packet stamp, or GEN_TS before the first packet'
         assert 'GEN_TS = $int($almanac.time_ts);' in src, \
             'GEN_TS must be baked from the report generation instant'
-        # The policing 8.3.3 needed, all unreachable now.
-        for gone in ('stationClock', 'feedFresh', 'STALE_PACKET', 'b.over'):
-            assert gone not in src, '%s should have gone with the fallback' % gone
-        # No cross-clock arithmetic anywhere, in either order.
+        # The stopwatch, the only way the browser clock is read: packetAge
+        # (both readings the browser's own), and no other subtraction of
+        # anything from Date.now() but another Date.now() reading.  Every
+        # Date.now() in the file is either that stopwatch or a cache
+        # buster; a browser reading may not be stored as the page's time.
+        assert re.search(r'function packetAge\(\) \{', src)
+        assert re.search(r'Date\.now\(\) / 1000 - latestRecvTs', src), \
+            'packetAge must measure the packet age on the browser clock alone'
+        for gone in ('PAGE_LOAD', 'stationNow', 'stationClock', 'feedFresh',
+                     'STALE_PACKET', 'b.over'):
+            assert gone not in src, '%s should be gone' % gone
         assert not re.search(r'nowTs\s*-\s*latestTs', src)
         assert not re.search(r'latestTs\s*-\s*nowTs', src)
         assert not re.search(r'Date\.now\(\)[^\n]*-[^\n]*latestTs', src)
         assert not re.search(r'latestTs[^\n]*-[^\n]*Date\.now\(\)', src)
-        # The four extrapolation sites all take the stopwatch reading.
-        assert len(re.findall(r'var dt = packetAge\(\);', src)) == 4, \
-            'the dial, dome, satellites and pass sweep all extrapolate on packetAge'
-        # The consumers of an absolute instant all take the station's.
-        assert re.search(r"setHtml\('live-clock', fmtHMS\(serverNow\(\)\)\)", src)
-        # The countdown chips and the satellite roster's pass rows (whose
-        # satWhen reads "overhead now" and "in {n} days" off a station
-        # instant) each open on serverNow, taking no browser instant in.
-        for fn in ('renderCountdown', 'renderSatRosters'):
-            assert re.search(r'function %s\(\) \{' % fn, src), fn
-        assert len(re.findall(r'var nowTs = serverNow\(\);', src)) == 2
-        assert re.search(r'function renderPass\(\) \{', src), \
-            'renderPass takes no browser instant: it reads serverNow itself'
-        assert re.search(r'var now = serverNow\(\);', src)
-        # The two renderers that no longer need an instant at all take
-        # none: a browser reading left in a signature is one a later
-        # edit can compare against a station time by accident.
-        assert re.search(r'function renderGeo\(\) \{', src)
-        assert re.search(r'function renderSats\(svg\) \{', src)
-        # The ONE documented exception, deliberate and John's call
-        # 2026-08-16: stationNow -- 8.3.1's backdrop-staleness clock --
-        # still answers with the browser's before the first packet.  It
-        # is a different feature (it must FREEZE when the feed dies,
-        # where serverNow must not), and it is pinned here so its
-        # exceptional status stays visible rather than becoming a second
-        # convention by accident.
-        assert re.search(r'return \(latest === null\) \? nowTs : latestTs;', src)
-        # A record with no station timestamp is dropped whole -- it can
-        # never become the clock's anchor, as it did through 8.3.3.
-        assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
-        assert re.search(r'console\.log\(.loop record has no '
-                         r'current\.dateTime\.raw; ignored.\)', src)
+        assert not re.search(r'GEN_TS \+ \(Date\.now', src), \
+            'the pre-packet clock does not run: it is GEN_TS, full stop'
         assert not re.search(r"latestTs = \(typeof lastTs === 'number'\)", src), \
             'the browser clock must never be stored as the station time'
         assert re.search(r'latestTs = lastTs;', src)
+        # The four extrapolation sites all take the stopwatch reading.
+        assert len(re.findall(r'var dt = packetAge\(\);', src)) == 4, \
+            'the dial, dome, satellites and pass sweep all extrapolate on packetAge'
+        # The consumers of an absolute instant all take the station's:
+        # the chips and the satellite rosters open on serverNow, the pass
+        # verdict reads it, the backdrop's staleness and the frozen
+        # line's "from" time read it, and the slot walk reads it three
+        # times -- the cycle base, the slot within it, and the ceiling
+        # that refuses a fragment depicting a time the station has not
+        # reached.  Eight call sites, no other clock anywhere.
+        for fn in ('renderCountdown', 'renderSatRosters'):
+            assert re.search(r'function %s\(\) \{' % fn, src), fn
+        assert len(re.findall(r'var nowTs = serverNow\(\);', src)) == 2
+        assert re.search(r'function renderPass\(\) \{', src)
+        assert re.search(r'var now = serverNow\(\);', src)
+        assert re.search(r'function domeStaleFor\(\) \{', src), \
+            'the backdrop is judged on the page clock, no browser instant passed in'
+        assert re.search(r'var over = \(serverNow\(\) - m\.ts\)', src)
+        assert re.search(r'fmtBackdropWhen\(domeFragMeta\(\)\.ts, serverNow\(\)\)', src)
+        assert re.search(r'var base = Math\.floor\(\(serverNow\(\) - phase\) / m\.interval\)'
+                         r' \* m\.interval \+ phase;', src)
+        assert re.search(r'var k = Math\.floor\(\(serverNow\(\) - base\) / m\.step\);', src)
+        assert re.search(r'parseFloat\(m\[1\]\) > serverNow\(\)', src), \
+            'the ceiling that refuses a sky the station has not reached is gone'
+        # Counted over code only: the comments legitimately name the
+        # function while explaining what reads it and why.
+        assert len([l for l in src.split('\n') if 'serverNow()' in l
+                    and not l.lstrip().startswith('//')]) == 8 + 1, \
+            'eight serverNow call sites plus the definition; a new one needs a reason here'
+        # No timer drives a clock reader.  localTick paints motion and
+        # housekeeping only; the chips, rosters and "updated" stamp
+        # render in the packet handler.
+        # Code only -- the comments legitimately name what left.
+        def code(block):
+            return '\n'.join(l for l in block.split('\n') if not l.lstrip().startswith('//'))
+        tick = code(src[src.index('function localTick() {'):src.index('function updateCurrent() {')])
+        for reader in ('renderCountdown', 'renderSatRosters', 'live-clock',
+                       'serverNow', 'last-update'):
+            assert reader not in tick, '%s must not run on the tick' % reader
+        for motion in ('renderGeo()', 'renderDome(nowTs)', 'renderPass()',
+                       'updateDomeStale(nowTs)', 'domeWake()'):
+            assert motion in tick, motion
+        onload = src[src.index('function updateCurrent() {'):src.index('xhttp.onerror = function() {', src.index('function updateCurrent() {'))]
+        for reader in ('renderPacket(nowTs);',
+                       'setHtml("last-update", fmtHMS(lastTs));'):
+            assert reader in onload, reader
+        # ...and the five renders only on a NEW packet: a dead feed whose
+        # last file is served again on every poll moves nothing, so
+        # nothing is painted; the badge and the stamp stay outside the
+        # gate, since the age they report goes on growing.
+        # The backdrop check rides in the gate with them: the packet is
+        # the only thing that moves the clock, so it is the only thing
+        # that can change which slot the sky should be showing.  Nearly
+        # every one of these returns at refreshDome's want-gate without
+        # a request.
+        gate = re.search(r'if \(latestTs !== prevTs\) \{\s*if \(document\.readyState === \'loading\'\) \{\s*renderWanted = true;[^\n]*\s*\}'
+                         r'\s*refreshDome\(\);'
+                         r'\s*renderPacket\(nowTs\);\s*\}', code(onload))
+        assert gate is not None, 'the poll-side renders are not gated on a new packet'
+        gate_at = onload.index("if (latestTs !== prevTs) {\n          if (document.readyState")
+        assert 'setHtml("live-label"' in onload[:gate_at]
+        assert 'setHtml("last-update"' in onload[:gate_at]
+        # A first packet that lands while the page is still parsing leaves
+        # a flag, and the load handler re-runs the five renders once on
+        # `latest`: the two packet-only paints (chips, rosters) would
+        # otherwise no-op on ids not yet in the DOM and, on a re-served
+        # dead feed, never repaint.
+        assert re.search(r"if \(document\.readyState === 'loading'\) \{\s*renderWanted = true;", code(onload))
+        # The five paints live in renderPacket, called from both sites --
+        # the list drifted apart in two copies once already -- and the
+        # load handler's call is GUARDED: addLoadEvent chains handlers
+        # with no try of its own, and this one runs before the backdrop's
+        # deferred refetch.
+        assert re.search(r'function renderPacket\(nowTs\) \{(?:\s*//[^\n]*\n)*'
+                         r'\s*renderCountdown\(\);\s*renderSatRosters\(\);'
+                         r'\s*renderGeo\(\);\s*renderDome\(nowTs\);\s*renderPass\(\);\s*\}',
+                         src), 'the five packet paints are not in one place'
+        assert re.search(r'addLoadEvent\(function\(\) \{\s*if \(renderWanted && latest !== null\) \{\s*renderWanted = false;'
+                         r'\s*try \{\s*renderPacket\(Date\.now\(\) / 1000\);\s*\} catch',
+                         code(src)), 'the load-time re-render of a mid-parse first packet is gone or unguarded'
+        # The pass chart before a packet: untouched, and no load-time
+        # render reaching for it (a page opened after the set shows the
+        # chart as drawn until the first packet -- John, 2026-08-16).
+        assert 'DOMContentLoaded' not in src
+        assert re.search(r'if \(latest === null\) \{\n(\s*//[^\n]*\n)+\s*return;\n\s*\}\n\s*// The window the chart is judged against', src), \
+            'pre-packet renderPass returns without touching the chart'
+        # The "updated" stamp repaints in the template's own shape (24-hour
+        # HH:MM:SS, en-GB hour12 off, the fmtHM precedent), so the first
+        # packet never reformats the first paint.
+        assert re.search(r"function fmtHMS\(ts\) \{[^}]*'en-GB'[^}]*hour12: false", src, re.S)
+        # A record with no station timestamp is dropped whole -- it can
+        # never become the clock's anchor, as it did through 8.3.3.  (A
+        # 2026-08-17 ruling: celestial keeps this where liveseasons
+        # adopts such a record silently -- celestial serves other
+        # people's stations, and its badge must name a misconfiguration.)
+        assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
+        assert re.search(r'console\.log\(.loop record has no '
+                         r'current\.dateTime\.raw; ignored.\)', src)
         # The LIVE badge's age is two same-clock terms, never a crossing:
         # how stale the record already was when the page found it (its
         # station time against the page's, GEN_TS) plus how long since a
@@ -1746,9 +2021,10 @@ class TestSampleSkinRenders:
         # below need the packet.
         # The staged timestamps must be NEWER than the rendered page's
         # (TIME_TS): the backward guard rejects an older sky.  TWO of
-        # them, because 8.3.2 refetches once at load as well: the first
-        # lands then, and the SECOND is the one the fast-forwarded minute
-        # brings -- which is the swap whose chip-dismissal is under test.
+        # them, because the page refetches once when its first loop packet
+        # lands (8.3.5; at load through 8.3.4): the first lands then, and
+        # the SECOND is the one the fast-forwarded minute brings -- which
+        # is the swap whose chip-dismissal is under test.
         def staged(ts):
             return ('<div class="domefrag" data-dome-ts="%d" '
                     'data-dome-step="60" data-dome-count="1">%s</div>'
@@ -1770,8 +2046,11 @@ class TestSampleSkinRenders:
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
-                if self.path.startswith('/dome-svg.txt'):
-                    requested.append('/dome-svg.txt')
+                # Any slot: the page asks for the one its station's clock
+                # names (8.3.5), and this feed runs on the real clock, so
+                # which slot that is depends on when the suite is run.
+                if self.path.startswith('/dome-svg'):
+                    requested.append(self.path.split('?')[0])
                     body = domefrags[min(fetched['n'],
                                          len(domefrags) - 1)].encode()
                     fetched['n'] += 1
@@ -1867,8 +2146,12 @@ class TestSampleSkinRenders:
         assert out['iss_title'].strip()
         assert out['iss_chip'] == {'shown': True, 'text': out['iss_title']}
         # The fragment swap really happened (the staged wrapper's identity
-        # replaced the rendered one) and dismissed the open chip.
-        assert '/dome-svg.txt' in requested, requested
+        # replaced the rendered one) and dismissed the open chip.  The
+        # slot is whichever one the station's clock names -- 8.3.5 stopped
+        # spending a request on slot 0, the sky the page already has,
+        # before the first packet had said what time it was.
+        assert any(r.startswith('/dome-svg') and r.endswith('.txt')
+                   for r in requested), requested
         assert out['swapped_dome_ts'] == str(TIME_TS + 120)
         assert out['after_swap']['shown'] is False
         # Delegation binds to nothing, so the swapped-in dome's marks work
@@ -2358,34 +2641,86 @@ class TestSampleSkinRenders:
         assert out['errors'] == []
         assert state['n'] >= 4, 'the past-set packets were never served'
 
-    def test_dome_seed_waits_for_the_document(self):
+    def test_dome_refetch_seeds_nothing_at_load(self):
         """The include is inline at the TOP of <body> and the dome sits
-        hundreds of lines below it, so anything that reads the rendered
-        dome must run from the load handler, never at script-eval time.
-        A seed that runs too early finds no #dome-svg, does nothing, and
-        says nothing -- it cost the applied-fragment identity, the cycle
-        baseline and the remembered cadence all at once, and no browser
-        test noticed because every symptom was an absence.  This pins the
-        shape: seedAppliedFrag is a plain function, called from
-        addLoadEvent, and never invoked at top level."""
+        hundreds of lines below it, and the poll interval is armed at
+        script eval -- so nothing that decides whether a fetched
+        fragment is the sky already on the page may depend on load
+        order.  8.3.2 through 8.3.4 seeded an applied-
+        fragment identity from a load handler and compared against it in
+        the response handler; the first-packet refetch (8.3.5) could run
+        from an interval poll before that handler, and re-injected the
+        page's own sky.  Now there is no seed: the response handler
+        refuses a fragment whose depicted instant is the same as or
+        older than the dome on the page, read at that moment.  Pins the
+        shape: no seedAppliedFrag, no load-time refetch, the first-packet
+        refetch in updateCurrent, the same-or-older guard, and the
+        loadend re-check that closes the in-flight window."""
         src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
                    encoding='utf-8').read()
-        assert 'function seedAppliedFrag()' in src
-        # Not an IIFE, and not called from column 2 (top-level statement).
-        assert '(function seedAppliedFrag()' not in src
-        assert not re.search(r'^  seedAppliedFrag\(\);', src, re.M)
-        # Called from inside the load handler, with the first refetch.
-        m = re.search(r'addLoadEvent\(function\(\) \{(.*?)\}\);', src, re.S)
-        assert m is not None, 'the load handler is gone'
-        assert 'seedAppliedFrag();' in m.group(1)
-        assert 'refreshDome();' in m.group(1)
+        assert 'seedAppliedFrag' not in src
+        # No UNCONDITIONAL load-time refetch.  The one load handler that
+        # can call refreshDome does so only to make a refetch that was
+        # asked for while the document was still parsing (see below).
+        for m_ in re.finditer(r'addLoadEvent\(function\(\) \{(.*?)\n  \}\);', src, re.S):
+            body = m_.group(1)
+            if 'refreshDome' in body:
+                assert re.search(r'if \(domeRefetchWanted\) \{\s*domeRefetchWanted = false;\s*refreshDome\(\);',
+                                 body), 'an unguarded load-time refetch is back'
+        # A refetch asked for while the document is still streaming --
+        # the first packet from the eval-armed interval poll on a slow
+        # link -- is deferred to that handler, never made against an
+        # absent or half-parsed dome.
+        assert re.search(r"if \(document\.readyState === 'loading'\) \{(?:\s*//[^\n]*\n)*\s*domeRefetchWanted = true;\s*return;",
+                         src), 'refreshDome no longer defers while the document parses'
+        # Which slot to ask for is a question about the STATION's clock
+        # and the archive interval, and nothing else -- never about the
+        # fragment the page happens to be holding, whose cycle may
+        # already be the previous one.  There is no clock-age threshold
+        # any more: 8.3.5's STALE_CLOCK only ever bit when set below the
+        # station's loop-write interval (so a healthy page on any slower
+        # driver refetched the whole sky most minutes to be refused), and
+        # the fault it guarded grew worse as the clock got fresher.
+        # Code only: the comments legitimately name what left, and why.
+        src_code = '\n'.join(l for l in src.split('\n')
+                             if not l.lstrip().startswith('//'))
+        for gone in ('STALE_CLOCK', 'domeClockStale', 'domeRefetchOnPacket'):
+            assert gone not in src_code, '%s is back' % gone
+        # A fetch goes out only when the wanted slot is not the one on the
+        # page.  This is the whole bandwidth story AND what makes the
+        # ceiling safe: a page whose clock has stopped asks for the slot
+        # it already shows, so it never asks blind.
+        assert re.search(r'var want = meta === null \? null : domeWant\(meta\);'
+                         r'\s*if \(want !== null && want\.ts <= meta\.ts\) \{'
+                         r'(?:\s*//[^\n]*\n)*\s*return;', src), \
+            'refreshDome no longer gates on the wanted slot'
+        assert re.search(r'parseFloat\(m\[1\]\)\s*<=\s*cur\.ts', src), \
+            'the same-or-older guard is gone'
+        assert re.search(r'parseFloat\(m\[1\]\)\s*>\s*serverNow\(\)', src), \
+            'the guard against a sky the station has not reached is gone'
+        # No re-ask on completion.  It compared the slot the fetch was for
+        # against the slot the clock named on completion, and because the
+        # name turned on a freshness flag that flipped twice per loop
+        # interval rather than on the slot number, a station whose fetches
+        # outlasted the threshold re-asked for ever: two whole skies per
+        # packet, under a comment asserting it could not loop.
+        assert re.search(r'xhttp\.onloadend = function\(\) \{\s*domeFetchInFlight = false;'
+                         r'(?:\s*//[^\n]*\n)*\s*\};', src), \
+            'onloadend does more than clear the in-flight flag'
+        # The first packet needs no case of its own: every new packet
+        # checks, and the first is simply the one that moves the clock
+        # furthest -- off GEN_TS, which names the slot the page was
+        # generated with, onto the station's real time.
+        assert 'if (prevTs === 0) {' not in src, \
+            'the first packet has a special case again'
         # And the template really does put the script above the dome, which
-        # is the whole reason this rule exists.
+        # is why the response handler must read the page rather than a
+        # load-time memory of it.
         tmpl = open(os.path.join(SKIN_DIR, 'index.html.tmpl'),
                     encoding='utf-8').read()
         assert (tmpl.index('realtime_updater.inc')
                 < tmpl.index('id="dome-svg"')), \
-            'the include no longer precedes the dome; revisit the seed'
+            'the include no longer precedes the dome; the ordering argument above changes'
 
     def test_freeze_restores_the_drawn_sky_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -2674,7 +3009,7 @@ class TestSampleSkinRenders:
         satellites freeze together -- a satellite flying over a
         motionless star field is the lie this prevents), the health line
         under the panel is SHOWN and names the RIGHT reason of the two
-        the load-time refetch can reach, and the rest of the page goes on
+        the first-packet refetch can reach, and the rest of the page goes on
         living: the dial still nudges and both satellite rosters still
         roll, because neither stands on the backdrop.  Skips when the
         playwright env is absent."""
@@ -2697,7 +3032,7 @@ class TestSampleSkinRenders:
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
-        # The load-time refetch (8.3.2) fires within the test's life, so
+        # The first-packet refetch (8.3.5) fires within the test's life, so
         # which reason the line carries is decided here: a fragment that
         # answers with the same old sky, or nothing to answer at all.
         if serve_fragment:
@@ -2709,7 +3044,13 @@ class TestSampleSkinRenders:
             assert relib.search(r'data-dome-ts="\d+"', frag)   # fixture-old
             (tmp_path / 'dome-svg.txt').write_text(frag)
 
-        now = time.time()
+        # On a cycle boundary, so the slot the page asks for is slot 0 and
+        # this harness needs only the one file.  The station's clock names
+        # the slot (8.3.5), and an unaligned clock would land the ask on
+        # whichever of the five slots real time happened to fall in --
+        # making both the served-fragment case and the filename in the
+        # 404 message depend on when the suite was run.
+        now = (time.time() // 300) * 300
 
         def packet(i):
             # A live sky: the sun and the ISS both up and moving, so a
@@ -2843,18 +3184,25 @@ class TestSampleSkinRenders:
         assert 'overhead now' in out['anyline'], out['anyline']
         assert 'overhead now' in out['passline'], out['passline']
 
-    def test_wake_refetches_the_backdrop_in_a_real_browser(
+    def test_resume_steps_the_backdrop_on_the_catch_up_packet_in_a_real_browser(
             self, wxskyfield_almanac, tmp_path):
         """A page coming back from a sleeping laptop or a background tab
-        refetches the backdrop AT ONCE instead of waiting for the next
-        minute boundary.  The loop feed catches up in its own two
-        seconds, so without this the sky would sit an hour behind live
-        marks for up to a minute -- and would post the frozen line at a
-        station doing nothing wrong.  Pins both halves: the fresh
-        backdrop is applied on visibilitychange (well inside
-        DOME_REFRESH, which nothing else in the suite can exercise), and
-        the frozen line does not flash while that fetch is in flight.
-        Skips when the playwright env is absent."""
+        gets a fresh backdrop within its own poll, not at the next minute
+        boundary -- otherwise the sky sits an hour behind live marks for
+        up to a minute, and posts the frozen line at a station doing
+        nothing wrong.
+
+        8.3.5 made that fetch the visibilitychange handler's job, which
+        meant asking on a clock that had not moved yet; the ask named a
+        slot from the cycle the page fell asleep in, and the station
+        answered it out of the cycle it now held -- a sky most of a cycle
+        in the future.  The resume is the loop feed's now: the catch-up
+        packet moves the clock, the moved clock wants a different slot,
+        and the fetch follows immediately.  Pins all three of it -- a
+        page in step spends NO request (the sky it holds is the one
+        wanted), the catch-up packet steps it at once and well inside
+        DOME_REFRESH, and the frozen line never flashes.  Skips when the
+        playwright env is absent."""
         import http.server
         import json as jsonlib
         import re as relib
@@ -2877,30 +3225,42 @@ class TestSampleSkinRenders:
             'almanac': wxskyfield_almanac,
         })
         assert '<svg' in frag
-        now = int(time.time())
+        # The station's cycle, exactly as it writes it: the page's baked
+        # backdrop is slot 0 at the fixture instant (which is a multiple
+        # of the 300 s archive interval, as every archive record is), and
+        # the slots beside it are a minute apart.  The handler serves
+        # whichever the page asks for, so what it asks for is the test.
+        SLEPT = 180                    # three slots' worth of sleep
 
-        # Two skies, a minute apart.  The load-time refetch (8.3.2) takes
-        # the first, so the WAKE has to be tested against something newer
-        # still: the handler hands out the next one each time, exactly as
-        # a station writing a new cycle would.
-        def stamped(ts):
-            return relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % ts,
-                             frag, count=1)
-        frags = [stamped(now), stamped(now + 60)]
-        fetched = {'n': 0}
+        def stamped(slot):
+            f = relib.sub(r'data-dome-ts="\d+"',
+                          'data-dome-ts="%d"' % (TIME_TS + slot * 60),
+                          frag, count=1)
+            return relib.sub(r'data-dome-slot="\d+"',
+                             'data-dome-slot="%d"' % slot, f, count=1)
+        polls = {'n': 0}
+        asked = []                     # every backdrop fragment requested
         for asset in ('celestial.css', 'sky.js'):
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
 
-        packet = jsonlib.dumps({
-            'current.dateTime.raw': now,
-            'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
-            'almanac.sun.earth_distance': 1.016,
-        }).encode()
+        def packet_for(ts):
+            return jsonlib.dumps({
+                'current.dateTime.raw': ts,
+                'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+                'almanac.sun.earth_distance': 1.016,
+            }).encode()
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
+                    # The station's clock: the fixture instant while the
+                    # page is in step, and then -- the machine having been
+                    # asleep for three slots -- the catch-up packet.  The
+                    # feed is what resumes; nothing else in the page can.
+                    polls['n'] += 1
+                    packet = packet_for(TIME_TS + (0 if polls['n'] <= 2
+                                                   else SLEPT))
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.send_header('Content-Length', str(len(packet)))
@@ -2908,9 +3268,10 @@ class TestSampleSkinRenders:
                     self.end_headers()
                     self.wfile.write(packet)
                     return
-                if self.path.startswith('/dome-svg.txt'):
-                    body = frags[min(fetched['n'], len(frags) - 1)].encode()
-                    fetched['n'] += 1
+                if self.path.startswith('/dome-svg'):
+                    asked.append(self.path.split('?')[0])
+                    slot = relib.match(r'/dome-svg-(\d+)\.txt', self.path)
+                    body = stamped(int(slot.group(1)) if slot else 0).encode()
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/plain')
                     self.send_header('Content-Length', str(len(body)))
@@ -2940,26 +3301,18 @@ class TestSampleSkinRenders:
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
             "    page.wait_for_load_state('networkidle')\n"
-            '    # The load-time refetch has landed the first sky; the\n'
-            '    # wake must go and get the one after it.\n'
-            "    page.wait_for_function('''(was) => {\n"
-            "      var d = document.querySelector('#dome-svg div[data-dome-ts]');\n"
-            "      return d !== null && d.getAttribute('data-dome-ts') !== was;\n"
-            "    }''', arg='%(fixture)d', timeout=5000)\n"
+            '    # In step: the page holds the slot its own clock names.\n'
+            '    # That it asks for nothing meanwhile is proved server\n'
+            '    # side, by what was requested at all.\n'
             "    before = page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts')\n"
-            '    # Wake it: the machine was asleep, so no fetch has gone out\n'
-            '    # for a long time (which is what the interval guard reads),\n'
-            '    # and the tab comes back to the front.\n'
-            "    page.evaluate('''() => {\n"
-            "      lastDomeFetch = 0;\n"
-            "      document.dispatchEvent(new Event('visibilitychange'));\n"
-            "    }''')\n"
-            '    # Inside a couple of seconds -- nowhere near the 60 s\n'
-            '    # interval -- the fresh backdrop is in place.\n'
+            '    # ...and then the catch-up packet lands (the feed now\n'
+            '    # reports three slots later, as it would for a machine\n'
+            '    # coming back from sleep).  Well inside the 60 s interval,\n'
+            '    # the backdrop follows it.\n'
             '    page.wait_for_function("""(was) => {\n'
             "      var d = document.querySelector('#dome-svg div[data-dome-ts]');\n"
             "      return d !== null && d.getAttribute('data-dome-ts') !== was;\n"
-            '    }""", arg=before, timeout=5000)\n'
+            '    }""", arg=before, timeout=20000)\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'before': before,\n"
@@ -2968,7 +3321,7 @@ class TestSampleSkinRenders:
             "            '#dome-stale', 'el => el.hidden'),\n"
             '    }\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % {'port': port, 'fixture': TIME_TS})
+            'print(json.dumps(out))\n' % {'port': port})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -2977,20 +3330,616 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
-        assert int(out['before']) == now                # the load-time fetch
-        assert int(out['after']) == now + 60            # the wake's own
+        # In step, and it stayed that way without spending a request: the
+        # backdrop is still the one the page was generated with.
+        assert int(out['before']) == TIME_TS
+        # The catch-up packet moved the clock three slots, and the page
+        # asked for that slot -- once, and nothing else ever.  Slot 0, the
+        # sky it already had, is never among them: a page in step spends
+        # no requests, which is the whole bandwidth story.
+        assert int(out['after']) == TIME_TS + SLEPT
+        assert asked == ['/dome-svg-3.txt'], asked
         assert out['staleflash'] is True                # and never accused anyone
+
+    def test_first_packet_refetch_before_load_does_not_churn_the_dome_in_a_real_browser(
+            self, wxskyfield_almanac, tmp_path):
+        """The dome's first refetch fires on the FIRST loop packet
+        (8.3.5), and that packet can arrive before window.onload: the
+        poll interval is armed at script eval, so a page whose load
+        drags past refresh_rate -- sky.js is a deferred script, and here
+        it is served four seconds slow -- has its first packet answered
+        by the interval, not the load handler.  An earlier cut of this release seeded
+        the applied-fragment identity from a load handler and compared
+        the refetch against that memory, so this ordering re-injected
+        the very sky on the page: baselines thrown away, generated
+        satellite marks unhidden, an open tap chip dismissed.  Now the
+        response handler judges against the dome on the page at the
+        moment of comparison -- same-or-older depicted instant, no swap
+        -- and nothing is seeded, so there is no ordering to get right.
+        Pins: the dome fetch goes out before the document is complete,
+        the fragment (stamped exactly as the page's dome) is refused,
+        the dome on the page is untouched, no page errors.  Skips when
+        the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        html = self.render(wxskyfield_almanac, sky_page=make_sky_page())
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        page_dome_ts = relib.search(r'data-dome-ts="(\d+)"', html).group(1)
+        # The fragment the station would serve for slot 0 of THIS cycle:
+        # the same sky the page holds, stamped the same.
+        frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'sky_page': make_sky_page(),
+            'almanac': wxskyfield_almanac,
+        })
+        assert 'data-dome-ts="%s"' % page_dome_ts in frag
+        packet = jsonlib.dumps({
+            'current.dateTime.raw': int(time.time()),
+            'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+            'almanac.sun.earth_distance': 1.016,
+        }).encode()
+        served = []
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body, ctype = packet, 'application/json'
+                elif self.path.startswith('/dome-svg'):
+                    served.append(self.path.split('?')[0])
+                    body, ctype = frag.encode(), 'text/plain'
+                elif self.path.startswith('/sky.js'):
+                    time.sleep(4)          # the slow load: onload waits on this
+                    return super().do_GET()
+                else:
+                    return super().do_GET()
+                self.send_response(200)
+                self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    # Do not wait for load: the point is what happens before it.\n'
+            "    with page.expect_request(lambda r: 'dome-svg' in r.url, timeout=15000) as req:\n"
+            "        page.goto('http://127.0.0.1:%(port)d/index.html', wait_until='commit')\n"
+            "    ready_at_fetch = page.evaluate('document.readyState')\n"
+            "    page.wait_for_load_state('load')\n"
+            '    page.wait_for_timeout(1500)\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'ready_at_fetch': ready_at_fetch,\n"
+            "        'applied': page.evaluate('appliedDomeFrag'),\n"
+            "        'latestTs': page.evaluate('latestTs'),\n"
+            "        'dome_ts': page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % {'port': port})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        assert served, 'the first-packet refetch never went out'
+        assert out['ready_at_fetch'] != 'complete', \
+            'the refetch was meant to beat window.onload; it did not (%s)' % out['ready_at_fetch']
+        assert out['latestTs'] > 0                       # a packet did land
+        assert out['applied'] is None, \
+            'the same-stamped fragment was swapped in: %s' % out['applied']
+        assert out['dome_ts'] == page_dome_ts            # the page's own dome stands
+
+    def test_first_packet_refetch_waits_for_the_dome_to_parse_in_a_real_browser(
+            self, wxskyfield_almanac, tmp_path):
+        """The other half of the slow-load story: the first packet can
+        arrive while the DOME ITSELF is still streaming in -- the
+        include sits at the top of <body>, the poll interval is armed at
+        script eval, and the dome is a couple of hundred kilobytes
+        further down.  A refetch made then is judged against a dome that
+        is absent or half-parsed: the response handler either throws the
+        fragment away (having set domeChecked, so a cached page could
+        freeze and post the frozen line against a healthy station until
+        the next interval) or replaces the children of a wrapper the
+        parser is still filling.  So refreshDome defers while
+        document.readyState is 'loading' and the load handler makes the
+        refetch it owes.  Here index.html is served in two chunks with a
+        four-second stall INSIDE the dome, and the fragment is stamped a
+        minute newer than the page's dome so a refetch that lands shows.
+        Pins: the packet arrives during the stall, renderDome on that
+        packet reads no baselines from the half-parsed dome, no dome
+        fetch goes out until the document has parsed, exactly one goes
+        out then, the newer sky is applied, one svg in the wrapper, no
+        errors.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        html = self.render(wxskyfield_almanac, sky_page=make_sky_page())
+        page_dome_ts = int(relib.search(r'data-dome-ts="(\d+)"', html).group(1))
+        cut = html.index('id="dome-svg"') + 2000      # well inside the dome
+        head, tail = html[:cut].encode(), html[cut:].encode()
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'sky_page': make_sky_page(),
+            'almanac': wxskyfield_almanac,
+        })
+        frag = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (page_dome_ts + 60),
+                         frag, count=1).encode()
+        packet = jsonlib.dumps({
+            'current.dateTime.raw': int(time.time()),
+            'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+            'almanac.sun.earth_distance': 1.016,
+        }).encode()
+        log = []          # (monotonic seconds, what)
+        t0 = time.monotonic()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                path = self.path.split('?')[0]
+                if path in ('/', '/index.html'):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(head) + len(tail)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(head)
+                    self.wfile.flush()
+                    log.append((time.monotonic() - t0, 'stall-begin'))
+                    time.sleep(4)
+                    self.wfile.write(tail)
+                    log.append((time.monotonic() - t0, 'stall-end'))
+                    return
+                if path.startswith('/gauge-data/loop-data.txt'):
+                    log.append((time.monotonic() - t0, 'packet'))
+                    body, ctype = packet, 'application/json'
+                elif path.startswith('/dome-svg'):
+                    log.append((time.monotonic() - t0, 'dome ' + path))
+                    body, ctype = frag, 'text/plain'
+                else:
+                    return super().do_GET()
+                self.send_response(200)
+                self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html', wait_until='commit')\n"
+            '    # The packet lands mid-stall: catch the page in that state.\n'
+            "    page.wait_for_function('typeof latestTs !== \"undefined\" && latestTs > 0', timeout=15000)\n"
+            "    mid = page.evaluate('({ready: document.readyState, baseNull: domeBase === null, svgParsed: domeSvg() !== null})')\n"
+            "    page.wait_for_load_state('load')\n"
+            '    page.wait_for_timeout(2500)\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'mid': mid,\n"
+            "        'dome_ts': page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts'),\n"
+            "        'svgs': page.evaluate(\"document.querySelectorAll('#dome-svg svg').length\"),\n"
+            "        'wanted': page.evaluate('domeRefetchWanted'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % {'port': port})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        stall_begin = [t for t, w in log if w == 'stall-begin'][0]
+        stall_end = [t for t, w in log if w == 'stall-end'][0]
+        packets = [t for t, w in log if w == 'packet']
+        domes = [t for t, w in log if w.startswith('dome ')]
+        assert any(stall_begin < t < stall_end for t in packets), \
+            'no packet arrived during the stall; the ordering under test never happened: %r' % log
+        assert domes, 'the deferred refetch never went out: %r' % log
+        assert all(t > stall_end for t in domes), \
+            'a dome fetch went out while the document was still parsing: %r' % log
+        assert len(domes) == 1, log
+        assert out['mid']['ready'] == 'loading', \
+            'the packet was meant to land mid-parse; it did not (%r)' % out['mid']
+        # The precondition the next pin depends on: the dome's <svg> start
+        # tag HAD parsed by then (renderDome returns at svg === null before
+        # its readyState guard), so the cut really is inside the dome.
+        assert out['mid']['svgParsed'] is True, \
+            'the cut fell before the <svg>; the baseline pin below would be vacuous (%r)' % out['mid']
+        # renderDome, called on that packet, must not have read baselines
+        # from the half-parsed dome (skyfield's sibling finding, 8.3.5).
+        assert out['mid']['baseNull'] is True, 'domeBase was read from a half-parsed dome'
+        assert int(out['dome_ts']) == page_dome_ts + 60     # the newer sky applied
+        assert out['svgs'] == 1                              # into a whole wrapper, once
+        assert out['wanted'] is False
+
+    def test_first_packet_before_the_chips_parse_is_repainted_at_load_in_a_real_browser(
+            self, wxskyfield_almanac, tmp_path):
+        """The countdown chips and the satellite rosters paint only on a
+        NEW loop packet, never on the tick (8.3.5).  A first packet that
+        lands while the page is still streaming -- the poll interval is
+        armed at script eval, near the top of <body> -- finds their ids
+        not yet in the DOM and setHtml says nothing; on a live feed the
+        next distinct packet heals it, but on a dead feed re-serving its
+        last file the new-packet gate never opens again and the chips
+        and rosters would wear the generated first paint for the life of
+        the page while the badge told the packet's time.  So a packet
+        that lands during parsing leaves renderWanted, and the load
+        handler re-runs the five renders once on `latest`.  Here
+        index.html is served with a four-second stall just BEFORE the
+        countdown row, the feed carries the darkness pair a known hour
+        out, and the packet is served identically on every poll (the
+        dead-feed shape).  Pins: the packet arrives during the stall
+        with the chip not yet in the DOM, and after load the chip shows
+        the packet's arithmetic, not the baked value.  Skips when the
+        playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        html = self.render(wxskyfield_almanac, sky_page=make_sky_page())
+        baked_dark = relib.search(r'id="chip-dark-v"[^>]*>([^<]*)<', html).group(1)
+        cut = html.index('<div class="countdown')
+        head, tail = html[:cut].encode(), html[cut:].encode()
+        assert b'id="chip-dark-v"' not in head
+        assert b'setInterval(updateCurrent' in head     # the include has parsed and run
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        now = int(time.time())
+        packet = jsonlib.dumps({
+            'current.dateTime.raw': now,
+            'almanac(horizon=-18).sun.next_setting.unix_epoch.raw': now + 3600,
+            'almanac(horizon=-18).sun.next_rising.unix_epoch.raw': now + 7200,
+            'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+            'almanac.sun.earth_distance': 1.016,
+        }).encode()
+        log = []
+        t0 = time.monotonic()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                path = self.path.split('?')[0]
+                if path in ('/', '/index.html'):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(head) + len(tail)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(head)
+                    self.wfile.flush()
+                    log.append((time.monotonic() - t0, 'stall-begin'))
+                    time.sleep(4)
+                    self.wfile.write(tail)
+                    log.append((time.monotonic() - t0, 'stall-end'))
+                    return
+                if path.startswith('/gauge-data/loop-data.txt'):
+                    log.append((time.monotonic() - t0, 'packet'))
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(packet)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(packet)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html', wait_until='commit')\n"
+            "    page.wait_for_function('typeof latestTs !== \"undefined\" && latestTs > 0', timeout=15000)\n"
+            "    mid = page.evaluate('({ready: document.readyState, chipThere: document.getElementById(\"chip-dark-v\") !== null, wanted: renderWanted})')\n"
+            "    page.wait_for_load_state('load')\n"
+            '    page.wait_for_timeout(2500)\n'
+            '    out = {\n'
+            "        'errors': errors,\n"
+            "        'mid': mid,\n"
+            "        'dark': page.text_content('#chip-dark-v'),\n"
+            "        'wanted': page.evaluate('renderWanted'),\n"
+            "        'latestTs': page.evaluate('latestTs'),\n"
+            '    }\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % {'port': port})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        stall_begin = [t for t, w in log if w == 'stall-begin'][0]
+        stall_end = [t for t, w in log if w == 'stall-end'][0]
+        assert any(stall_begin < t < stall_end for t, w in log if w == 'packet'), \
+            'no packet arrived during the stall: %r' % log
+        # The preconditions the pin depends on: caught mid-parse, chip not
+        # yet in the DOM, the flag left.
+        assert out['mid']['ready'] == 'loading', out['mid']
+        assert out['mid']['chipThere'] is False, out['mid']
+        assert out['mid']['wanted'] is True, out['mid']
+        # After load: the chip shows the packet's arithmetic -- exactly an
+        # hour, because the clock is the packet's stamp and the re-served
+        # feed never moves it (one clock: nothing here counts the seconds
+        # since) -- not the baked value; and the feed never produced a
+        # second distinct packet to do it.
+        assert out['latestTs'] == now
+        assert out['dark'] != baked_dark, 'the chip still wears the generated first paint'
+        assert out['dark'] == '01:00:00', out['dark']
+        assert out['wanted'] is False
+
+    @pytest.mark.parametrize('behind', [False, True])
+    def test_cycle_roll_never_lands_a_sky_ahead_of_the_station_in_a_real_browser(
+            self, behind, wxskyfield_almanac, tmp_path):
+        """The fault the whole slot rule exists for, in a browser.
+
+        The page holds the previous cycle's LAST slot -- the ordinary
+        state for the first minute of every cycle, since the backdrop
+        steps one slot at a time -- and the station rolls to a new cycle.
+        The page's clock is the last loop packet's stamp, so for a moment
+        it still reads as inside the old cycle and names that cycle's
+        late slot.  The filename carries a slot number and no cycle
+        identity, so the station answers out of the cycle it NOW holds:
+        through 8.3.4 the page applied a sky four minutes into the
+        future -- it was newer than the dome on the page -- and the
+        same-or-older guard then held it there until the true time caught
+        up to it.  8.3.5's clock-age threshold only narrowed the window,
+        and cost a whole-sky refetch most minutes on any station whose
+        loop writes were slower than the threshold to do it.
+
+        The base now comes from the station's clock against the archive
+        interval, so through the roll the wanted slot is the one already
+        showing and nothing is asked at all; when the clock crosses the
+        roll, slot 0 of the new cycle is wanted, asked and applied.  Pins
+        it on the wire: slot 4 asked once, legitimately, inside its own
+        cycle; nothing asked at all while the page's clock and the
+        station's cycle disagree; the four-minutes-ahead sky never
+        displayed; and the page lands on the new cycle's base.  Skips
+        when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import re as relib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        (tmp_path / 'index.html').write_text(
+            self.render(wxskyfield_almanac, sky_page=make_sky_page()))
+        frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'sky_page': make_sky_page(),
+            'almanac': wxskyfield_almanac,
+        })
+        assert '<svg' in frag
+        # The fixture instant is a multiple of the 300 s archive interval,
+        # as every archive record is, so it serves as a cycle base.
+        STEP, ROLL = 60, 300
+        OLD, NEW = TIME_TS, TIME_TS + ROLL
+        AHEAD = NEW + 4 * STEP         # what the old walk used to apply
+
+        def stamped(base, slot):
+            f = relib.sub(r'data-dome-ts="\d+"',
+                          'data-dome-ts="%d"' % (base + slot * STEP),
+                          frag, count=1)
+            return relib.sub(r'data-dome-slot="\d+"',
+                             'data-dome-slot="%d"' % slot, f, count=1)
+
+        # Walked by poll count, in the two states a page can be in when
+        # the station rolls -- and it takes a different guard to survive
+        # each, so both are run.
+        #
+        # IN STEP (behind=False): the page steps to the old cycle's last
+        # slot first, and when the roll comes the slot its clock names is
+        # the one it is already showing.  Nothing is asked at all.  This
+        # is what the base computed from the STATION's clock buys; a base
+        # taken from the fragment on the page names the same slot but out
+        # of a cycle that has moved on.
+        #
+        # BEHIND (behind=True): the page never got that slot -- its fetch
+        # cadence skipped it -- so at the roll it genuinely wants slot 4
+        # and asks for it.  The base cannot help: the ask is correct for
+        # the cycle the page is in.  The station answers out of the cycle
+        # it now holds, and only the ceiling on the reply refuses a sky
+        # the station has not reached.
+        def phase(n):
+            if n <= 2:
+                return (OLD + 290, NEW) if behind else (OLD + 4 * STEP, OLD)
+            if n <= 5 and not behind:
+                return OLD + 290, NEW
+            return OLD + ROLL + 10, NEW
+
+        polls = {'n': 0}
+        asked = []
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    polls['n'] += 1
+                    body = jsonlib.dumps({
+                        'current.dateTime.raw': phase(polls['n'])[0],
+                        'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+                        'almanac.sun.earth_distance': 1.016,
+                    }).encode()
+                elif self.path.startswith('/dome-svg'):
+                    asked.append(self.path.split('?')[0])
+                    slot = relib.match(r'/dome-svg-(\d+)\.txt', self.path)
+                    # Whatever slot is asked for, out of the cycle the
+                    # station holds RIGHT NOW -- which is the whole point:
+                    # the request cannot name a cycle.
+                    body = stamped(phase(polls['n'])[1],
+                                   int(slot.group(1)) if slot else 0).encode()
+                else:
+                    return super().do_GET()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    # Every distinct sky the page DISPLAYS, in order: the\n'
+            '    # ahead-of-the-station one must never be among them.\n'
+            '    seen = []\n'
+            '    for _ in range(250):\n'
+            "        v = page.get_attribute('#dome-svg div[data-dome-ts]',\n"
+            "                               'data-dome-ts')\n"
+            '        if not seen or seen[-1] != v:\n'
+            '            seen.append(v)\n'
+            "        if v == '%(landed)d':\n"
+            '            break\n'
+            '        page.wait_for_timeout(100)\n'
+            "    out = {'errors': errors, 'seen': seen}\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % {'port': port, 'landed': NEW})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        seen = [int(v) for v in out['seen']]
+        # The sky four minutes into the future was never displayed...
+        assert AHEAD not in seen, seen
+        assert all(v <= NEW for v in seen), seen
+        # ...the in-step page stepped through the old cycle's last slot
+        # legitimately, while the behind one never displayed it at all
+        # (the only copy it was ever offered came out of the new cycle,
+        # and was refused)...
+        assert (OLD + 4 * STEP in seen) is not behind, seen
+        # ...and both ended on the new cycle's base.
+        assert seen[-1] == NEW, seen
+        # On the wire, the same two requests either way: slot 4 once --
+        # applied inside its own cycle, refused when answered out of the
+        # next one -- and then slot 0 of the new cycle.  Never a repeat
+        # while the want stands unmet.
+        assert asked == ['/dome-svg-4.txt', '/dome-svg.txt'], asked
 
     def test_countdown_chips_tick_and_roll_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):
         """Countdown central, where it actually runs: synthetic
         event instants around the browser's real clock (the chips are
         pure client arithmetic, so the feed can stage any sky).  Pins:
-        the sun chip ticks hh:mm:ss from the FEED and ROLLS from sunset
+        the sun chip counts hh:mm:ss from the FEED and ROLLS from sunset
         to sunrise when the feed's event expiry replaces the passed
-        instant (the min() flip); the darkness chip ticks from its
-        generation-baked data-ts target with NO feed key at all -- a
-        countdown needs no feed to count; the shower chip shows a
+        instant (the min() flip); the darkness chip counts from its
+        generation-baked data-ts target with NO feed KEY at all -- a
+        countdown needs no key to count, only the page's clock, which
+        the packets move (8.3.5: at loop cadence, no timer); the shower
+        chip shows a
         days-hours-minutes value under its live label; the pass chip
         shows the staged pass's label and 'appears in'; the windowed
         guests obey their 30-day window (supermoon and one perihelion
@@ -3086,18 +4035,23 @@ class TestSampleSkinRenders:
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
             "    page.wait_for_load_state('networkidle')\n"
-            '    # The first packet lands and the sun chip ticks sunset.\n'
+            '    # The first packet lands and the sun chip counts to sunset.\n'
             '    page.wait_for_function("""() => {\n'
             "      var k = document.getElementById('chip-sun-k');\n"
             "      var v = document.getElementById('chip-sun-v');\n"
             "      return k !== null && k.textContent === 'sunset' &&\n"
             "             /^\\\\d{2}:\\\\d{2}:\\\\d{2}$/.test(v.textContent);\n"
             '    }""", timeout=15000)\n'
-            '    # The darkness chip is inside its final day, so it ticks\n'
-            '    # hh:mm:ss: two samples a second apart must differ (the\n'
-            '    # 1 s local tick at work).\n'
+            '    # The darkness chip is inside its final day, so it counts\n'
+            '    # hh:mm:ss -- on the packets, which are 2 s apart here: the\n'
+            '    # value must CHANGE within a few polls.  (A fixed 1.5 s\n'
+            '    # sample was the 8.3.4 one-second tick at work; it would\n'
+            '    # now miss a packet a quarter of the time.)\n'
             "    v1 = page.inner_text('#chip-dark-v')\n"
-            '    page.wait_for_timeout(1500)\n'
+            '    page.wait_for_function("""(v1) => {\n'
+            "      var v = document.getElementById('chip-dark-v');\n"
+            "      return v !== null && v.textContent !== v1;\n"
+            '    }""", arg=v1, timeout=8000)\n'
             "    v2 = page.inner_text('#chip-dark-v')\n"
             '    # The roll: the feed replaced the passed sunset with\n'
             "    # tomorrow's, and the min() flips the chip to sunrise.\n"
@@ -3137,7 +4091,7 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
-        assert out['v1'] != out['v2']              # the value really ticks
+        assert out['v1'] != out['v2']              # the value really moves
         assert re.match(r'^\d{2}:\d{2}:\d{2}$', out['v1'])
         # Days out, the countdown is days-hours-minutes (seconds are
         # noise at that range); the staged peak is 3 days ahead.
@@ -3174,6 +4128,200 @@ class TestSampleSkinRenders:
         assert out['peri_mcnaught_hidden'] is False
         assert out['peri_mcnaught_k'] == 'McNaught perihelion'
         assert out['peri_halley_hidden'] is True   # ~3 years: honestly out
+
+    def test_viewer_clock_skew_changes_nothing_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """8.3.5's rule, where it can be broken: the browser's clock is
+        set half an hour wrong -- both ways -- and nothing on the page
+        may show it.  The page's time is the loop packet's own stamp
+        (serverNow), or GEN_TS before the first packet; the browser is
+        never asked what time it is.
+
+        Live legs (+30 min, -30 min): once a packet has landed,
+        serverNow() IS that packet's stamp, exactly; the "updated" stamp
+        paints it, in the template's own 24-hour shape; the darkness
+        chip -- counting from a generation-baked target near the real
+        clock, no feed key -- reads the remaining time by the station's
+        clock, not the viewer's (a page on the browser clock would be
+        thirty minutes off, and would show it in the first second); the
+        LIVE badge reads LIVE (its age has no cross-clock term, so the
+        skew never becomes "1800s ago").  The comparison of serverNow
+        against real time is valid ONLY because browser and "station"
+        are the same machine in this harness.
+
+        No-feed leg (+30 min, the loop file 404s): serverNow() === GEN_TS
+        exactly, for as long as the page stands (not "about half an hour
+        from real time" -- GEN_TS is the render's own instant); the
+        "updated" stamp is the template's first paint of that instant;
+        the darkness chip stands at its baked first paint; and the badge
+        names the fault.  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        now = time.time()
+        SKEW = 1800
+        DARK_TARGET = int(now + 5000)
+        html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        html, n_subs = re.subn(r'(id="chip-dark" data-ts=")\d+(")',
+                               r'\g<1>%d\g<2>' % DARK_TARGET, html)
+        assert n_subs == 1
+        gen_hms = time.strftime('%H:%M:%S', time.localtime(TIME_TS))
+        assert '<span id="last-update">%s</span>' % gen_hms in html
+        baked_dark = re.search(r'id="chip-dark-v"[^>]*>([^<]*)<', html).group(1)
+        (tmp_path / 'index.html').write_text(html)
+        for asset in ('celestial.css', 'sky.js'):
+            (tmp_path / asset).write_bytes(
+                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+
+        def packet(i):
+            return jsonlib.dumps({
+                'current.dateTime.raw': int(now + 2 * i),
+                'almanac.sun.next_setting.unix_epoch.raw': int(now + 3000),
+                'almanac.sun.next_rising.unix_epoch.raw': int(now + 40000),
+            }).encode()
+        served = {'n': 0}
+
+        class Live(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packet(served['n'])
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        class NoFeed(Live):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    self.send_error(404)
+                    return
+                return super().do_GET()
+
+        live = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Live)
+        nofeed = socketserver.ThreadingTCPServer(('127.0.0.1', 0), NoFeed)
+        threading.Thread(target=live.serve_forever, daemon=True).start()
+        threading.Thread(target=nofeed.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json, time\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'LIVE = %d\n'
+            'NOFEED = %d\n'
+            'SKEW = %d\n'
+            'GEN_TS = %d\n'
+            'DARK_TARGET = %d\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    for name, port, skew in (("plus", LIVE, SKEW), ("minus", LIVE, -SKEW),\n'
+            '                             ("nofeed", NOFEED, SKEW)):\n'
+            '        page = browser.new_page()\n'
+            '        errors = []\n'
+            "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '        # The viewer\'s clock, wrong by skew; timers keep flowing.\n'
+            '        page.clock.install(time=time.time() + skew)   # epoch seconds\n'
+            "        page.goto('http://127.0.0.1:%%d/index.html' %% port)\n"
+            "        page.wait_for_load_state('networkidle')\n"
+            '        leg = {"errors": errors}\n'
+            '        if name != "nofeed":\n'
+            '            page.wait_for_function("() => latest !== null", timeout=15000)\n'
+            '            leg["real_now"] = time.time()\n'
+            '            leg["state"] = page.evaluate("""() => ({\n'
+            '                serverNow: serverNow(), latestTs: latestTs,\n'
+            '                browserNow: Date.now() / 1000,\n'
+            "                updated: document.getElementById('last-update').textContent,\n"
+            "                updatedExpected: fmtHMS(latestTs),\n"
+            "                badge: document.getElementById('live-label').textContent,\n"
+            "                dark: document.getElementById('chip-dark-v').textContent,\n"
+            "                darkHidden: document.getElementById('chip-dark').hasAttribute('hidden')})\"\"\")\n"
+            '        else:\n'
+            "            page.wait_for_selector('#live-label:not(:empty)', timeout=15000)\n"
+            '            page.wait_for_timeout(5000)\n'
+            '            leg["state"] = page.evaluate("""() => ({\n'
+            '                serverNow: serverNow(), latestTs: latestTs, latest: latest,\n'
+            '                browserNow: Date.now() / 1000,\n'
+            "                updated: document.getElementById('last-update').textContent,\n"
+            "                badge: document.getElementById('live-label').textContent,\n"
+            "                dark: document.getElementById('chip-dark-v').textContent})\"\"\")\n"
+            '        out[name] = leg\n'
+            '        page.close()\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % (live.server_address[1], nofeed.server_address[1], SKEW,
+               int(TIME_TS), DARK_TARGET))
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=180)
+        finally:
+            live.shutdown()
+            nofeed.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+
+        def hms_seconds(text):
+            h, m, s = (int(x) for x in text.split(':'))
+            return h * 3600 + m * 60 + s
+
+        for name, sign in (('plus', 1), ('minus', -1)):
+            leg = out[name]
+            st = leg['state']
+            assert leg['errors'] == [], (name, leg['errors'])
+            # The skew really was installed: the browser is ~30 min out.
+            assert abs((st['browserNow'] - leg['real_now']) - sign * SKEW) < 30, name
+            # The page's clock is the packet's stamp, exactly -- not the
+            # browser's, not the stamp carried forward.
+            assert st['serverNow'] == st['latestTs'], name
+            assert abs(st['serverNow'] - leg['real_now']) < 15, \
+                (name, 'same-machine harness: the stamp is real time')
+            # The "updated" stamp paints that instant, in the template's
+            # own 24-hour shape (fmtHMS's en-GB pin) -- never the viewer's.
+            assert st['updated'] == st['updatedExpected'], name
+            assert st['updated'] == time.strftime('%H:%M:%S',
+                                                  time.localtime(st['latestTs'])), name
+            # The darkness chip counts from its baked target on the
+            # STATION's clock: about 5000 s, not 5000 -/+ 1800.
+            assert st['darkHidden'] is False, name
+            remaining = hms_seconds(st['dark'])
+            assert abs(remaining - (DARK_TARGET - st['serverNow'])) <= 3, \
+                (name, st['dark'], DARK_TARGET - st['serverNow'])
+            assert abs(remaining - (DARK_TARGET - st['browserNow'])) > SKEW - 60, \
+                (name, 'the chip is reading the viewer clock')
+            # No cross-clock term in the badge: LIVE, not "1800s ago".
+            assert st['badge'] == 'LIVE', (name, st['badge'])
+
+        leg = out['nofeed']
+        st = leg['state']
+        assert leg['errors'] == []
+        assert st['latest'] is None and st['latestTs'] == 0
+        assert st['serverNow'] == int(TIME_TS), \
+            'with no packet the page clock is GEN_TS, exactly, and does not run'
+        assert st['updated'] == gen_hms, 'the baked first paint stands'
+        assert st['dark'] == baked_dark, 'no packet, no repaint'
+        # (The pre-packet chart standing untouched is pinned structurally
+        # -- the `latest === null` return in renderPass -- not here: the
+        # baked chart carries no transform and passStandsAsDrawn's first
+        # act is to remove one, so no attribute read could tell the two
+        # apart.)
+        assert st['badge'].startswith('NO DATA (HTTP 404)'), st['badge']
 
     def test_comet_dial_mark_renders_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):

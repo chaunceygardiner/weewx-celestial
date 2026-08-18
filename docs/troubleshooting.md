@@ -14,7 +14,10 @@ description: Symptom-first fixes for the Celestial page — the badge's error st
 Find the symptom.  Almost every problem here is wiring rather than
 astronomy, and the page's badge names most of them itself — see
 [Reading the page](reading-the-page.md#the-header-and-the-badge-that-tells-the-truth)
-for what each badge state means.
+for what each badge state means.  In any state but `LIVE` the page
+stands as the report drew it, or where the last packet left it — the
+countdown chips and rosters advance only with loop packets — so a page
+that is entirely still is telling you to read the badge.
 
 ## There is no page at `celestial/`
 
@@ -129,6 +132,34 @@ The reason is the last refetch's outcome, and it says where to look:
 | `dome-svg.txt is empty` | The file is there and has nothing in it | If it names a numbered slot, the page is asking for a slot beyond the current archive interval — harmless, and it corrects itself on the next cycle.  If it names `dome-svg.txt` itself, the station is writing no backdrop at all: check that weewx-skyfield is serving the report (the dome would show an install hint), and that a report cycle has run since the last restart.  **Before 8.3.2 a station with a non-default `group_interval` emptied every fragment** — upgrade if you are on anything earlier |
 | `no response for dome-svg-3.txt` | The request failed, or hung until it timed out | The network between browser and server; a page left open through a server restart |
 
+### If it says `no newer backdrop has arrived` and the files *are* being written
+
+Check your station's clock — specifically, whether the clock that stamps
+your **archive records** agrees with the one weewxd is running on.
+
+The page works out which backdrop it wants from the time your loop
+packets carry, and it refuses any backdrop depicting a time your station
+has not reached yet — that refusal is what stops it drawing a sky from
+the future.  If a hardware console's clock runs *fast*, its archive
+records are stamped ahead of the loop packets, so every backdrop looks
+like the future to the page and is refused.  Ahead by more than one
+archive interval, none is ever accepted, and after three cycles the panel
+reports a frozen star field against a station that is writing backdrops
+perfectly well.
+
+This is a misconfigured station rather than a fault in the page, and it
+is worth fixing on its own account: every archive record you are storing
+carries the same wrong time.  WeeWX checks a Vantage console's clock
+periodically and logs the result:
+
+```sh
+grep "Clock error" /var/log/syslog | tail
+```
+
+A healthy station reads a second or two.  Anything approaching a minute
+deserves attention; more than one archive interval will freeze the dome
+as described.
+
 On the station:
 
 ```sh
@@ -161,7 +192,8 @@ frozen star field says nothing about your loop data).  And a **dead loop
 feed does not raise this line at all** — the backdrop's age is measured
 against the station's clock, which the loop packets carry, so that the
 viewer's own clock can never freeze a healthy sky; when the feed stops,
-the badge is the fault to read, and the dome's marks stop by themselves.
+or never started, the badge is the fault to read, and the dome's marks
+stop by themselves.
 
 ## A panel shows an install hint instead of a chart
 
@@ -281,6 +313,10 @@ after a page load nothing moves, by design.  If it never starts moving,
 the feed is delivering the same packet repeatedly — check that
 `refresh_rate` matches loopdata's write cadence (2 seconds for the
 Vantage driver) rather than being much shorter than it.
+
+The countdown chips and the satellite rosters are not this symptom: they
+advance on each loop packet — every `refresh_rate` seconds, not every
+second — by design.
 
 ## Times are in the wrong zone
 

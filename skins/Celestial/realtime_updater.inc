@@ -83,8 +83,10 @@
   #end if
   PER_AU = $per_au;
   DIST_LABEL = '$dist_label';
-  // The report's language drives toLocaleString (clock and last-update
-  // formats); an unknown tag must not break every render.
+  // The report's language drives toLocaleString (the satellite rosters'
+  // pass times and the frozen-sky line's time; the header's "updated"
+  // stamp and the chip details are 24-hour in every language, matching
+  // the template's bake); an unknown tag must not break every render.
   LOCALE = '$lang';
   try {
     new Date().toLocaleString(LOCALE);
@@ -267,6 +269,49 @@
   setInterval(updateCurrent, refresh_rate * 1000);
   setInterval(localTick, 1000);
   addLoadEvent(updateCurrent);
+  // The interval above is armed NOW, at script eval, near the top of
+  // <body>, so a first packet can land while the rest of the page is
+  // still streaming in.  The renders that packet triggers (updateCurrent)
+  // are harmless on ids the parser has not reached -- setHtml is silent
+  // -- but two of them, the countdown chips and the satellite rosters,
+  // paint only on a NEW packet, never on the tick; on a dead feed that
+  // re-serves its last file the gate never opens again, and the rosters
+  // would wear the generated first paint for the life of the page while
+  // the badge says the packet's time.  So a packet that lands during
+  // parsing leaves this flag, and the load handler below re-runs the
+  // five renders once, on `latest`, against the whole page.  Same idiom
+  // as domeRefetchWanted for the backdrop.  A dead feed then keeps that
+  // packet's paint, which is the doctrine.
+  var renderWanted = false;
+  function renderPacket(nowTs) {
+    // The five paints a new packet calls for, in one place.  The packet
+    // handler makes them; the load handler below re-makes them for a
+    // packet that landed while the document was still parsing.  nowTs is
+    // the BROWSER's clock -- renderDome measures the feed's age with it
+    // against latestRecvTs, a stopwatch reading -- while the chips, the
+    // rosters and the pass verdict take the station's from serverNow
+    // themselves.
+    renderCountdown();
+    renderSatRosters();
+    renderGeo();
+    renderDome(nowTs);
+    renderPass();
+  }
+  addLoadEvent(function() {
+    if (renderWanted && latest !== null) {
+      renderWanted = false;
+      try {
+        renderPacket(Date.now() / 1000);
+      } catch (e) {
+        // addLoadEvent chains handlers by calling one after another with
+        // no guard of its own, so a throw here would take every handler
+        // registered AFTER this one with it -- including the backdrop's
+        // deferred refetch, further down.  Every other render site is
+        // wrapped; this one was not.
+        console.log(e);
+      }
+    }
+  });
 
   // ---- formatting helpers -------------------------------------------------
   function tzOptions(opts) {
@@ -276,17 +321,28 @@
     return opts;
   }
   function fmtHMS(ts) {
-    return new Date(ts * 1000).toLocaleString(LOCALE,
-      tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit'}));
+    // The header's "updated" stamp: BYTE-IDENTICAL to the template's
+    // first paint, which renders %H:%M:%S of the generation instant in
+    // the station's zone, for the same reason as fmtHM below -- the
+    // first packet must not reformat what the report painted.  (Under a
+    // time_zone override the zone differs and so may the digits; the
+    // shape is still the same.)  Through 8.3.4 this was
+    // LOCALE-formatted (an English page read "03:11:22 PM"), which no
+    // template can bake byte for byte across locales; 24-hour matches
+    // the chip details beside it.
+    return new Date(ts * 1000).toLocaleString('en-GB',
+      tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit',
+                 hour12: false}));
   }
   function fmtHM(ts) {
     // The countdown chips' event-time detail: BYTE-IDENTICAL to the
-    // template's first paint, which renders %H:%M -- the first live
-    // rewrite must not reformat what the report painted (no seconds,
-    // no locale AM/PM: en-GB with hour12 off is 24-hour HH:MM in
-    // every browser).  The ticking remaining-time value above it is
-    // the hh:mm:ss-shaped number; the two must not wear the same
-    // dress.
+    // template's first paint, which renders %H:%M in the station's zone
+    // -- the first live rewrite must not reformat what the report
+    // painted (no seconds, no locale AM/PM: en-GB with hour12 off is
+    // 24-hour HH:MM in every browser; under a time_zone override only
+    // the zone, and so the digits, can differ).  The remaining-time
+    // value above it is the hh:mm:ss-shaped number; the two must not
+    // wear the same dress.
     return new Date(ts * 1000).toLocaleString('en-GB',
       tzOptions({hour: '2-digit', minute: '2-digit', hour12: false}));
   }
@@ -332,10 +388,18 @@
   // write cadence, so twenty missed writes is the measure.  No
   // inference, no learning: a number from the configuration.
   var DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
-  // The stopwatch's zero: when this script first ran, by the browser's
-  // clock.  Never compared with a station time -- only subtracted from
-  // another reading of the same clock (serverNow).
-  var PAGE_LOAD = Date.now() / 1000;
+  // There is deliberately NO threshold here for how old the page's clock
+  // may be before the backdrop refetch stops trusting it to name a slot.
+  // It is the obvious instrument and it is the wrong one, twice over: any
+  // such threshold only bites when set BELOW the station's loop-write
+  // interval, so on every driver slower than a couple of polls a healthy
+  // page reads stale most of the time and refetches the whole sky to be
+  // refused; and the fault it would guard grows WORSE as the clock gets
+  // fresher, the overshoot being most of a cycle minus the clock's own
+  // age.  There is no setting that is both cheap and safe.  See domeWant:
+  // the slot is named from the station's clock against the archive
+  // interval, which cannot name a sky the station has not reached, so
+  // there is nothing left to distrust.
   function rOfAu(au) {
     var lg = Math.log(au) / Math.LN10;
     return R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
@@ -539,7 +603,7 @@
   // browser's read-only History object -- a `var history` here silently
   // fails to bind and every use of it throws or reads navigation state.
   var latest = null;      // last parsed loop-data object
-  var latestTs = 0;       // its current.dateTime.raw (or receipt time)
+  var latestTs = 0;       // its current.dateTime.raw; never the browser's time
   var latestRecvTs = 0;   // when THIS BROWSER received it (its own clock)
   var packets = [];       // [{t, r}] oldest first, pruned to 10 minutes
   var HISTORY_SEC = 600;
@@ -852,16 +916,20 @@
   // marker hidden whenever the loop feed carries the satellite.
   // The backdrop refetch walks the staggered fragment set (dome-svg.txt
   // plus dome-svg-1..9.txt, written together each report cycle at
-  // max(60 s, interval/10) spacing): each minute the fetch asks for the
-  // slot covering the current time, so the sky steps a quarter degree
+  // max(60 s, interval/10) spacing): the fetch asks for the slot
+  // covering the station's time, so the sky steps a quarter degree
   // instead of lurching a full cycle's rotation at once.  The set
   // self-describes through the fragment wrapper's data-dome-ts/-slot/
-  // -step/-count -- ts is the fragment's OWN depicted time, so the walk
-  // must de-relativize it through the slot number (base = ts -
-  // slot*step) before computing the next slot -- so any archive
-  // interval works unconfigured; when the slots
-  // run out before a late report cycle lands, the fetch falls back to
-  // slot 0 and the page degrades to the pre-stagger behavior.  The
+  // -step/-count/-interval, so any archive interval works unconfigured.
+  //
+  // Which slot is wanted is a question about the STATION's clock and the
+  // archive interval only (domeWant) -- never about the fragment the
+  // page happens to be holding, whose cycle may already be the previous
+  // one.  A fetch goes out only when the wanted slot is not the one on
+  // the page, so a page in step spends no requests; the check runs on
+  // every loop packet, since the packet is the only thing that moves the
+  // clock, and DOME_REFRESH remains as the backstop for what no packet
+  // reaches (a pre-stagger backdrop, a failed fetch to retry).  The
   // chart keeps the old cadence: it is a fixed future scene, not a
   // rotating sky.
   var DOME_REFRESH = 60;       // seconds between backdrop refetches
@@ -961,7 +1029,20 @@
     if (svg === null || latest === null) {
       return;
     }
-    if (domeChecked && !domeAsking(nowTs) && domeStaleFor(nowTs) !== null) {
+    if (document.readyState === 'loading') {
+      // The dome may be half-parsed: a first packet from the interval
+      // poll can land while the document is still streaming (see
+      // refreshDome).  Baselines read now would miss every body the
+      // parser has not reached, and stand incomplete until a fragment
+      // is next APPLIED -- up to a minute on a page inside slot 0's
+      // minute, whose deferred refetch is refused as the same sky --
+      // and a live satellite mark appended now lands under layers
+      // parsed after it.  Nothing here touches a dome the parser is
+      // still filling; the next tick, after parsing, does it all.
+      // The pass chart's readPassBase has the same guard.
+      return;
+    }
+    if (domeChecked && !domeAsking(nowTs) && domeStaleFor() !== null) {
       restoreDomeMarks(svg);
       // domeChecked, so the freeze and the line that explains it begin
       // together: acting on a suspicion the page has not yet tested
@@ -979,7 +1060,7 @@
       // the panel, naming the fault.  Nothing else on the page is
       // affected: the dial, the roster, the countdown chips and the pass
       // panel stand on the loop feed, not on the backdrop, and they go
-      // on ticking.  The first fragment that lands clears this by
+      // on moving.  The first fragment that lands clears this by
       // itself.
       return;
     }
@@ -1169,12 +1250,13 @@
     // otherwise): the dome's next pass of ANY kind, visibility-tagged,
     // and the Next Pass panel's next visible pass.
     //
-    // These live OUT here, called from the tick and the poll, because
-    // they are pure loop-feed arithmetic and have nothing to do with the
-    // backdrop.  They used to sit inside renderSats, which the dome's
+    // These live OUT here, called from the poll (they read the page's
+    // clock, which moves only with a packet), because they are pure
+    // loop-feed arithmetic and have nothing to do with the backdrop.
+    // They used to sit inside renderSats, which the dome's
     // stale freeze skips -- so a station whose fragments stopped serving
-    // got a frozen roster beside a countdown chip that kept ticking, the
-    // two contradicting each other about the same pass (8.3.2).  The
+    // got a frozen roster beside a countdown chip that kept counting,
+    // the two contradicting each other about the same pass (8.3.2).  The
     // rule the page states everywhere else holds here too: only what
     // stands on the backdrop freezes with it.
     if (latest === null) {
@@ -1346,28 +1428,83 @@
     if (!isFinite(slot) || slot < 0 || slot >= count) {
       slot = 0;
     }
-    return {ts: ts, step: step, count: count, slot: slot};
-  }
-  function domeFragName() {
-    var m = domeFragMeta();
-    if (m !== null) {
-      var base = m.ts - m.slot * m.step;
-      // The STATION's clock, exactly as the staleness judgement uses it.
-      // These fragments are stamped by the station, so a viewer twenty
-      // minutes fast computes k past the end of the slot set every time,
-      // asks only ever for slot 0, and silently loses the stagger this
-      // whole set exists for -- back to one lurch a cycle, with nothing
-      // wrong on the station and no symptom to see.  Found by the
-      // liveseasons port's review.
-      var k = Math.floor((stationNow(Date.now() / 1000) - base) / m.step);
-      if (k >= 1 && k < m.count) {
-        return 'dome-svg-' + k + '.txt';
-      }
-      // k < 1: still inside slot 0's minute.  k >= count: the next
-      // report cycle is due (or late) -- ask for slot 0 and let its
-      // timestamp tell us which cycle actually answered.
+    // The archive interval, which is the report cycle's own length and
+    // the quantum every cycle base is a multiple of.  NOT step*count:
+    // the slot spacing is floor-divided (a 350 s interval gives five
+    // 60 s slots, covering 300), so the product understates the cycle by
+    // the uncovered tail and a page computing with it would think the
+    // cycle over while the station was still inside it.  The product is
+    // the fallback for a wrapper generated before 8.3.5 wrote this
+    // attribute, where it is exact for every interval that divides.
+    var interval = parseFloat(d.getAttribute('data-dome-interval'));
+    if (!isFinite(interval) || interval <= 0) {
+      interval = step * count;
     }
-    return 'dome-svg.txt';
+    return {ts: ts, step: step, count: count, slot: slot, interval: interval};
+  }
+  function domeWant(m) {
+    // The fragment the page SHOULD be showing: the slot covering the
+    // station's own clock, in the cycle the station is in NOW.
+    //
+    // The base comes from that clock, not from the fragment on the page.
+    // Deriving it from the fragment (ts - slot*step, through 8.3.4) was
+    // the root of the whole family of faults this replaces: moments
+    // after the station rolls to a new cycle the page is still holding
+    // the previous one, so the base was a cycle stale, and the late slot
+    // it named was answered out of the CURRENT cycle -- the filename
+    // carries a slot number and no cycle identity, so the station cannot
+    // tell which cycle was meant.  The page then displayed a sky most of
+    // a cycle into the future, applied because it was newer, and held it
+    // until the true time caught up.  8.3.4 fenced that off with a
+    // clock-age threshold, which cost a whole-sky refetch most minutes
+    // on any station whose loop writes were slower than the threshold,
+    // and could flip-flop two fetches per packet on a slow link.
+    //
+    // The station's clock names the base, with nothing to remember: a
+    // report cycle is generated for the last ARCHIVE RECORD (weewx's
+    // report engine passes no gen_ts, so the generator falls back to
+    // lastGoodStamp), and archive records land one interval apart.
+    //
+    // One interval apart, but not necessarily ON a multiple of it.
+    // SOFTWARE record generation computes record times as
+    // int(t/interval)*interval, which is an epoch multiple by
+    // construction; a HARDWARE logger stamps them on its OWN boundaries,
+    // by its own clock, so they can sit at a constant offset from that
+    // grid -- a console in a half-hour UTC zone writing hourly records,
+    // or a console clock more than a slot out of true (loop packets
+    // carry weewxd's system time, so the disagreement is permanent).
+    // Assuming a zero phase was worse than wrong: every reply would be
+    // stamped ahead of the page's clock, the ceiling below would refuse
+    // ALL of them, and the dome would freeze for the life of the page
+    // and then blame the station for it.
+    //
+    // So the phase is read off the fragment on the page -- its own cycle
+    // base is ts - slot*step -- while the CYCLE still comes from the
+    // clock.  That distinction is the whole fix: the phase is a property
+    // of the STATION's records, identical whether the fragment is
+    // current or a cycle old, so taking it from a stale fragment is
+    // safe, whereas taking the cycle from one is the fault this all
+    // exists to prevent.  (An interval change or a console clock resync
+    // moves the phase; the page carries the old one for one cycle, and
+    // the ceiling still refuses anything ahead meanwhile.)
+    var phase = ((m.ts - m.slot * m.step) % m.interval + m.interval) % m.interval;
+    var base = Math.floor((serverNow() - phase) / m.interval) * m.interval + phase;
+    var k = Math.floor((serverNow() - base) / m.step);
+    // The slots may not cover the whole interval (floor division: 350 s
+    // gives five 60 s slots), so the tail past the last one is served by
+    // the last one.
+    if (k < 0) {
+      k = 0;
+    } else if (k > m.count - 1) {
+      k = m.count - 1;
+    }
+    // ts is at or behind serverNow() by construction -- which is what
+    // makes a sky ahead of the station unaskable, and is relied on by
+    // the ceiling in the response handler.
+    return {k: k, ts: base + k * m.step};
+  }
+  function domeFragName(k) {
+    return k >= 1 ? 'dome-svg-' + k + '.txt' : 'dome-svg.txt';
   }
   function hideSkytip() {
     // sky.js's tap chip does not follow its mark, so a fragment swap
@@ -1383,6 +1520,7 @@
   }
   var appliedDomeFrag = null;
   var lastDomeFetch = 0;         // when the last refetch went out
+  var lastDomeWant = 0;          // the depicted time the last one asked for
   var domeStaleGrace = 0;        // hold the frozen line until this instant
   var domeRestored = false;      // has the freeze already undone the nudges
   var domeChecked = false;       // has any refetch attempt completed yet
@@ -1427,8 +1565,58 @@
       // nothing to clear
     }
   }
+  var domeRefetchWanted = false; // asked for while the document was still parsing
   function refreshDome() {
     if (pageTimedOut) {
+      return;
+    }
+    if (document.readyState === 'loading') {
+      // The document is still streaming in.  A first packet can arrive
+      // now -- the poll interval is armed at script eval, and the dome
+      // is a couple of hundred kilobytes further down the page -- and
+      // a fetch made now would be judged and applied against a dome
+      // that is absent or, worse, half-parsed: the response handler
+      // would find no wrapper and throw the fragment away (with
+      // domeChecked set, so a cached page could then freeze and post
+      // the frozen line against a healthy station until the next
+      // interval), or find a wrapper the parser is still filling and
+      // replace its children under it.  So remember that a refetch is
+      // owed, and let the load handler below make it, once the whole
+      // page has parsed.  The first packet is what gets here; on a very
+      // slow link the interval can too, and so can the wake handler (a
+      // background tab switched to while still streaming).
+      domeRefetchWanted = true;
+      return;
+    }
+    var meta = domeFragMeta();
+    var want = meta === null ? null : domeWant(meta);
+    if (want !== null && want.ts <= meta.ts) {
+      // The sky on the page IS the one the station's clock asks for:
+      // nothing is owed, so nothing is fetched.  This is the whole
+      // bandwidth story -- a page in step with its station spends no
+      // requests at all, on any driver, and the fetches that do go out
+      // are one per slot the sky advances.  It is also what makes the
+      // ceiling in the response handler safe: a page whose clock has
+      // stopped (a dead feed, a sleep before the first packet back)
+      // computes the slot it is already showing and never asks, so the
+      // legitimately-ahead answer to a blind ask cannot arise.
+      return;
+    }
+    if ((want === null || want.ts === lastDomeWant)
+        && Date.now() / 1000 - lastDomeFetch < DOME_REFRESH) {
+      // The same unmet want as last time: pace it.  A want that has
+      // MOVED is always asked at once -- that is the packet-driven step
+      // this design exists for -- but a want that has not can repeat for
+      // a long time, and this check now runs on every packet rather than
+      // once a minute.  A station LATE writing a cycle the page's clock
+      // has already entered answers each ask with the previous cycle's
+      // file, refused as older, leaving the want unmet: without this the
+      // page would pull a whole sky every refresh_rate seconds until the
+      // report landed.  A pre-stagger backdrop has no want to compare
+      // and is paced the same way, which is the interval it always had.
+      // Measured on the browser's stopwatch: it is an elapsed time, and
+      // the station's clock is exactly what has stopped in some of these
+      // cases.
       return;
     }
     if (domeFetchInFlight
@@ -1447,7 +1635,9 @@
       // refresh intervals we ask again regardless.
       return;
     }
-    var fragName = domeFragName();
+    // A pre-stagger backdrop (no self-description) has no slot set to
+    // walk: ask for slot 0 each interval, exactly as before the stagger.
+    var fragName = domeFragName(want === null ? 0 : want.k);
     var xhttp = new XMLHttpRequest();
     xhttp.onload = function() {
       // Anything but a fresh SVG keeps the dome we already have: a failed
@@ -1519,14 +1709,49 @@
       var m = /data-dome-ts="([0-9.]+)"/.exec(this.responseText);
       var ident = fragName + '|' + (m === null ? '' : m[1]);
       if (ident === appliedDomeFrag) {
+        // A repeat of the last APPLIED fragment.  For a stamped fragment
+        // the same-or-older guard below would refuse it anyway (its
+        // stamp is the dome's own); this remains for a fragment with no
+        // data-dome-ts, or a page whose wrapper lost its meta, where the
+        // guard has nothing to compare and the name alone must serve.
         return;
       }
-      // Never step the sky backward: a late report cycle answers the
-      // slot-0 ask with the PREVIOUS cycle's file, whose sky the page
-      // already stepped past.  Keep the newer backdrop; the walk asks
-      // again next minute.
+      // Never step the sky backward, and never re-inject the sky already
+      // showing: data-dome-ts is the instant a fragment depicts (cycle
+      // base + slot * step, unique per slot of a cycle), so a fragment
+      // stamped the same as the dome on the page IS that dome -- a
+      // refetch inside slot 0's minute of a fresh page, or a late report
+      // re-serving the slot we show -- and swapping it in would only
+      // throw away the mark baselines, unhide the generated satellite
+      // marks until the next tick and re-parse a whole sky for nothing.
+      // Older is the late cycle answering the slot-0 ask with the
+      // PREVIOUS cycle's file, whose sky the page already stepped past.
+      // Either way keep what is showing; the walk asks again next
+      // minute.  Judged against the DOM at this instant, on purpose:
+      // 8.3.2 through 8.3.4 seeded the applied identity from
+      // the dome in a load handler and compared against that memory
+      // here, which held only while nothing could ask for a fragment
+      // before the seed had run -- and the first-packet refetch below,
+      // fired from an interval poll on a page still streaming its dome,
+      // could.  A comparison that reads the page has no such ordering to
+      // get right.
+      // ...and never step it FORWARD past the station either.  The ask
+      // names a slot number and the station answers it out of whatever
+      // cycle it currently holds, so a cycle that rolls between the
+      // page's clock and the reply comes back as that slot of the NEW
+      // cycle -- a sky the station has not reached.  The wanted slot's
+      // depicted time is at or behind serverNow() by construction
+      // (domeWant), so anything past it was answered from a cycle the
+      // page did not mean.  Keep what is showing; the next check asks
+      // again with a base that has caught up, and the sky is a slot
+      // behind for a minute instead of four minutes ahead for four.
+      // Safe only because refreshDome does not ask on a stopped clock:
+      // otherwise the correct answer to a page waking after hours --
+      // the current cycle, far ahead of a clock that has not moved --
+      // would be refused here and the dome would freeze awake.
       var cur = domeFragMeta();
-      if (cur !== null && m !== null && parseFloat(m[1]) < cur.ts) {
+      if (cur !== null && m !== null
+          && (parseFloat(m[1]) <= cur.ts || parseFloat(m[1]) > serverNow())) {
         return;
       }
       appliedDomeFrag = ident;
@@ -1551,6 +1776,17 @@
     xhttp.ontimeout = xhttp.onerror;
     xhttp.onloadend = function() {
       domeFetchInFlight = false;
+      // No re-ask here.  Through 8.3.4 this compared the slot the fetch
+      // was for against the slot the clock named on completion, because
+      // a fetch begun on a stale clock had asked for the wrong one --
+      // and since the name depended on a freshness flag that flipped
+      // twice per loop interval, not on the slot number alone, a station
+      // whose fetches outlasted the threshold re-asked on every
+      // completion: two whole skies per packet, for ever, from a
+      // comment that said it could not loop.  There is no freshness flag
+      // now, and every caller re-derives the wanted slot from the
+      // station's clock before asking, so a slot boundary crossed during
+      // a fetch is picked up by the next packet.
     };
     // ...and on each individual completion too.  onloadend is the one
     // XHR2-era handler in this block, and the timeout note below is
@@ -1571,6 +1807,7 @@
       // Cache-busted: the fragment is a static file and heuristic browser
       // caching would happily serve a stale sky.
       lastDomeFetch = Date.now() / 1000;
+      lastDomeWant = want === null ? 0 : want.ts;
       xhttp.open('GET', fragName + '?ts=' + Date.now(), true);
       // AFTER open(): older engines throw InvalidStateError on a timeout
       // set against an unopened request, and this whole block is inside
@@ -1605,50 +1842,42 @@
     }
   }
   setInterval(refreshDome, DOME_REFRESH * 1000);
-  // And once at load.  The HTML can be minutes or hours older than the
-  // fragments beside it -- a page served from a browser or CDN cache is
-  // the ordinary case, which is why the fragments are cache-busted at
-  // all -- so waiting for the first interval would freeze the dome and
-  // post the line for a whole minute before the first refetch silently
-  // corrected it.  Same grace as a page waking up, for the same reason.
-  domeStaleGrace = Date.now() / 1000 + 5;
-  // The page already HOLDS its generation-time backdrop, and the
-  // load-time fetch usually returns that same fragment.  Seeding the
-  // applied identity from it makes that a no-op instead of re-injecting
-  // byte-identical markup -- which would throw away the mark baselines,
-  // unhide the generated satellite marks until the next tick, and
-  // re-parse a whole sky for nothing.  A page whose slot has moved on
-  // still swaps, because the identity will not match.
-  function seedAppliedFrag() {
-    var m = domeFragMeta();
-    if (m === null) {
-      return;
-    }
-    if (m.slot === 0) {
-      appliedDomeFrag = 'dome-svg.txt|' + m.ts;
-    }
-  }
-  // At LOAD, not at eval: this script is inline at the top of <body> and
-  // the dome it reads sits hundreds of lines below, so a seed run here
-  // finds no #dome-svg at all and silently does nothing -- which is how
-  // it shipped into review, taking the applied-fragment identity, the
-  // cycle baseline and the remembered cadence down with it.  The rest of
-  // the file already knew this: addLoadEvent(updateCurrent) above.
+  // And once when the first loop packet lands (updateCurrent), which is
+  // the moment the page learns what time it is.  The HTML can be minutes
+  // or hours older than the fragments beside it -- a page served from a
+  // browser or CDN cache is the ordinary case, which is why the
+  // fragments are cache-busted at all -- so waiting for the first
+  // interval would freeze the dome and post the line for a whole minute
+  // before the first refetch silently corrected it.  Not at load,
+  // though, as 8.3.2 through 8.3.4 did: before a packet the clock is
+  // GEN_TS, which always names slot 0 -- the very sky the page was
+  // generated with -- so a load-time fetch bought a fresh page nothing,
+  // and on a page opened mid-cycle it left the slot-0 backdrop up to
+  // (count - 1) steps behind until the interval came round; and a fetch
+  // still on the wire when the packet arrived would have blocked the
+  // packet's own refetch through the in-flight guard.  A page with no
+  // feed fetches NOTHING -- its clock never leaves GEN_TS, which names
+  // the slot already showing, so the interval finds nothing owed every
+  // time it comes round.  Deliberate: no feed, no live layer, and the
+  // LIVE badge is where that is reported.  8.3.4's interval kept asking
+  // for slot 0 and following the report cycles; this does not.
+  // The grace below covers the moment between load
+  // and that first refetch going out, as it does for a page waking up.
+  // A refetch that returns the sky the page already shows -- slot 0
+  // inside its own minute -- is a no-op by the same-or-older guard in
+  // the response handler, which reads the dome on the page at the
+  // moment of comparison; nothing is seeded at load, so nothing depends
+  // on load order (the include is inline at the TOP of <body>, the dome
+  // hundreds of lines below, and a poll from the interval armed at eval
+  // can answer before either has parsed -- in which case refreshDome
+  // defers, and this handler makes the refetch it owes).
   addLoadEvent(function() {
-    seedAppliedFrag();
-    refreshDome();
-  });
-  // The pass chart's verdict as soon as the chart is in the document
-  // (DOMContentLoaded, ahead of the load event), so a page opened after
-  // its chart's pass has ended shows the drawn dot for as little as the
-  // parse allows rather than until the first tick.
-  document.addEventListener('DOMContentLoaded', function() {
-    try {
-      renderPass();
-    } catch (e) {
-      console.log(e);
+    if (domeRefetchWanted) {
+      domeRefetchWanted = false;
+      refreshDome();
     }
   });
+  domeStaleGrace = Date.now() / 1000 + 5;
 
   // A laptop closed and reopened, or a tab left in the background and
   // brought forward: the timers stopped with the machine, and on the way
@@ -1710,7 +1939,7 @@
   // case is the one no status code would ever reveal.
   var domeFetchProblem = null;   // last refetch outcome; null = healthy
   var domeStaleShown = '';       // what the line currently says ('' = none)
-  function domeStaleFor(nowTs) {
+  function domeStaleFor() {
     // How many seconds the backdrop is stale BY, or null when it is
     // current.  Its depicted time (data-dome-ts) is the honest measure:
     // that is the instant the marks are being drawn against.  The limit
@@ -1734,22 +1963,25 @@
     // comparing the two takes the viewer's clock out of the question
     // entirely -- a kiosk with no NTP can be an hour out, and judging by
     // it would freeze a perfectly healthy sky and post a frozen line
-    // over it.  Before the first packet (or with no feed at all) the
-    // browser's clock is the only one there is and it decides.  When a
+    // over it.  Before the first packet serverNow is GEN_TS, the very
+    // stamp the baked backdrop carries, so the judgement is undecidable
+    // and answers "current" (8.3.4 let the browser's clock decide here,
+    // the one place it still could); the first packet's refetch corrects
+    // a stale-cached page, and the first packet judges.  A page that
+    // never gets one is never corrected and never judged: with no packet
+    // the clock stays at GEN_TS, which names the slot the page already
+    // shows, so no fetch is owed and none goes out.  That is the
+    // doctrine, not an oversight -- a station whose loop feed is not
+    // working has no live layer at all, and the LIVE badge is where that
+    // fault is reported (John, 2026-08-17).  When a
     // feed DIES its clock stops with it, so this stops firing -- which
     // is right for THIS test: a stopped clock cannot judge, and the
     // dead-feed case is handled where it belongs, in renderDome, which
     // puts the marks back rather than pinning them to a sky that goes
     // on turning underneath them.
-    var over = (stationNow(nowTs) - m.ts)
-               - Math.max(600, 3 * m.step * m.count);
+    var over = (serverNow() - m.ts)
+               - Math.max(600, 3 * m.interval);
     return over > 0 ? over : null;
-  }
-  function stationNow(nowTs) {
-    // The clock domeStaleFor judges by: the station's own while the feed
-    // is delivering, the browser's before the first packet or with no
-    // feed at all.
-    return (latest === null) ? nowTs : latestTs;
   }
   function packetAge() {
     // How long the current packet has been in hand, by the stopwatch:
@@ -1760,39 +1992,39 @@
     return Math.min(Math.max(Date.now() / 1000 - latestRecvTs, 0), EXTRAP_MAX);
   }
   function serverNow() {
-    // THE clock of this page, and the station's: every instant the page
-    // reasons about -- a pass's rise and set, an event's countdown, the
-    // header clock -- was written by the station, so the browser must
-    // never be asked what time it is.  It is asked only how long
-    // something took, which is a difference between two of its own
-    // readings and immune to any skew.
+    // THE clock of this page, and the station's: the last loop packet's
+    // own timestamp -- the instant every value in that packet was
+    // computed for -- and before the first packet the instant this page's
+    // baked data is for (GEN_TS).  Nothing in between: a clock carried
+    // forward by the browser's stopwatch (8.3.4) matched no data on the
+    // page and stepped BACK by up to a poll whenever a packet arrived
+    // later than the one before it, and the browser's own calendar
+    // (8.3.3 and earlier) needed a freshness test and a latch to police
+    // a fallback that could be wrong by hours.  So the page's time
+    // advances at loop cadence and stops when the feed does -- a station
+    // whose loop feed is not working has no working live layer, and the
+    // LIVE badge is where that fault is reported (John, 2026-08-16).
+    // The browser is asked only how long something took (packetAge and
+    // the fetch throttles: a difference between two of its own readings,
+    // immune to any skew), never what time it is.
     //
-    // The anchor is the last packet's own timestamp, carried forward by
-    // the stopwatch since it arrived; before the first packet it is the
-    // page's own generation instant, carried forward by the stopwatch
-    // since load.  That pre-packet anchor is behind by the page's age at
-    // load -- one report cycle at worst, plus any HTTP caching -- and
-    // the first packet erases it, typically within refresh_rate seconds.
-    // It is bounded and self-healing, which the viewer's clock is not:
-    // 8.3.3 fell back to Date.now() here and needed a freshness test and
-    // a latch to police a fallback that could be wrong by hours.
-    // Neither is needed now, and both are gone.
+    // Consequently nothing that reads this clock is repainted by a timer
+    // -- the countdown chips, the satellite rosters and the pass verdict
+    // render as packets arrive (updateCurrent) -- because between two
+    // packets it would paint the same value again, and it would reach a
+    // new packet's value up to a second late.  Timers remain only for
+    // extrapolated MOTION (renderGeo, renderDome, renderPass's sweep, on
+    // packetAge) and for elapsed-time housekeeping (the tick-gap wake,
+    // the dome-stale line, the fetch throttles).
     //
-    // UNCAPPED, deliberately, and this is the one place packetAge must
-    // not be borrowed: EXTRAP_MAX is how long a POSITION may be
-    // extrapolated, and a clock that stops is a different thing from a
-    // mark that stops moving.  Capped here, a feed dying at 12:00 left
-    // serverNow answering 12:02 for ever -- the header clock visibly
-    // stopped, every countdown chip frozen at a fixed remaining time
-    // with its -60 grace unable to fire, and a pass whose set fell more
-    // than EXTRAP_MAX after the last packet never judged over: the 8.3.3
-    // bug, back, under a dead feed.  It also read absurdly beside the
-    // no-packet branch, which ticks on for ever.  A clock advances; what
-    // freezes on a dead feed is the marks, and they freeze in
-    // renderGeo/renderDome/renderSats where packetAge still caps them.
-    return latest === null
-         ? GEN_TS + (Date.now() / 1000 - PAGE_LOAD)
-         : latestTs + (Date.now() / 1000 - latestRecvTs);
+    // A page loaded onto a feed that died BEFORE the page was generated
+    // gets a first packet OLDER than GEN_TS, and this clock steps back
+    // to it: the chips, the stamp, the dial and the dome all repaint
+    // from that stale packet.  Deliberate -- the packet is the station's
+    // last word and the badge reads its age ("Ns ago") beside it; the
+    // alternative, max(GEN_TS, latestTs), is a clock that matches no
+    // packet, which is what this release removed.
+    return latestTs === 0 ? GEN_TS : latestTs;
   }
   function domeStaleWhy() {
     var p = domeFetchProblem;
@@ -1860,9 +2092,14 @@
       // says CLICK-ME, which is the honest account of this state.
       return;
     }
-    // Runs on the one-second tick, with or without a loop feed: a dead
-    // feed does not stop the backdrop going stale, and the reader is
-    // owed the line either way.
+    // Runs on the one-second tick, but its verdict reads the page's
+    // clock, which moves only with a loop packet -- so a page that has
+    // never received one cannot call its backdrop stale (GEN_TS never
+    // gets ahead of a backdrop's stamp), and a feed that dies freezes
+    // this judgement with it.  In both the LIVE badge names the fault,
+    // and it is the instrument that owns it.  The tick is for the fetch
+    // outcomes and the wake grace, which do not depend on the clock, and
+    // the line repaints only on a change.
     var el = document.getElementById('dome-stale');
     if (el === null) {
       return;                    // no dome on this page
@@ -1890,11 +2127,11 @@
     // is already standing: on a dead station, a tab flip would otherwise
     // blank the explanation for five seconds under a dome that never
     // moves.  Both only hold back a line that has yet to appear.
-    if (domeChecked && !domeAsking(nowTs) && domeStaleFor(nowTs) !== null) {
+    if (domeChecked && !domeAsking(nowTs) && domeStaleFor() !== null) {
       // The key's em dash is spelled with its \u escape, matching
       // json.dumps' escaping of the generated T object.
       msg = fmt('Star field frozen \u2014 this sky is from {time} ({why})',
-                {time: fmtBackdropWhen(domeFragMeta().ts, stationNow(nowTs)),
+                {time: fmtBackdropWhen(domeFragMeta().ts, serverNow()),
                  why: domeStaleWhy()});
     }
     if (msg === domeStaleShown) {
@@ -1956,6 +2193,10 @@
                 fill: c.getAttribute('fill'),
                 stroke: c.getAttribute('stroke'),
                 genLit: ds === null ? null : ds !== '0',
+                // Freshly read from the chart, so it IS as the station
+                // drew it: see passStandsAsDrawn, which restores that
+                // state and must not rewrite it every tick to do so.
+                asDrawn: true,
                 rise: attrNum(track, 'data-rise'),
                 set: attrNum(track, 'data-set')};
   }
@@ -1982,12 +2223,30 @@
     // every other panel's hidden marks leave theirs -- sky.js has one
     // chip for the whole page, and dismissing it here would take a chip
     // the viewer opened on Jupiter because Terra set.
+    if (!shown) {
+      // Hidden is not the drawn state, so the next restore must do its
+      // work rather than trust the flag.
+      b.asDrawn = false;
+    }
     setShown(b.g, shown);
     setShown(b.lab, shown);
   }
   function passStandsAsDrawn(b) {
     // The chart is a prediction: the dot at its generated position, in
     // its generated look, shown.
+    //
+    // Restored ONCE, not on every tick.  renderPass runs every second,
+    // and two of its branches end here -- the hours before a pass rises,
+    // and an older chart's whole out-of-window stretch -- so without this
+    // guard the same six attribute writes went out a second apart, for
+    // hours, to a chart nothing had touched.  (8.3.4 removed exactly that
+    // churn from the no-packet branch; these two kept it.)  The flag is
+    // cleared by everything that departs from the drawn state, so a mark
+    // that really has moved or hidden is always restored.
+    if (b.asDrawn) {
+      return;
+    }
+    b.asDrawn = true;
     b.g.removeAttribute('transform');
     passDotLit(b, b.genLit);
     if (b.lab !== null) {
@@ -2029,17 +2288,20 @@
     }
     if (latest === null) {
       // No packet, so no position to sweep to -- the dot's az and alt
-      // come from the feed, and no clock however good supplies them.
-      // The chart therefore stands exactly as the station drew it: the
-      // dot at the culmination, under the pass it names.  A page opened
-      // mid-pass, or just after one, shows that until the first packet
-      // lands -- normally refresh_rate seconds later, but for as long as
-      // the feed stays down, since nothing else here can set `latest`.
-      // A station whose loop feed is not working has no working pass
-      // panel either; John's ruling of 2026-08-16, and what lets the
-      // verdict below be a plain comparison of two station-written times
-      // with nothing remembered and nothing to police.
-      passStandsAsDrawn(b);
+      // come from the feed, and no clock however good supplies them --
+      // and no verdict either: serverNow is GEN_TS, the instant the
+      // chart was drawn for.  The chart therefore stands exactly as the
+      // station drew it, untouched: the dot at the culmination, under the
+      // pass it names.  A page opened mid-pass, or just after one, shows
+      // that until the first packet lands -- normally refresh_rate
+      // seconds later, but for as long as the feed stays down, since
+      // nothing else here can set `latest`.  A station whose loop feed is
+      // not working has no working pass panel either; John's ruling of
+      // 2026-08-16, and what lets the verdict below be a plain
+      // comparison of two station-written times with nothing remembered
+      // and nothing to police.  (8.3.4 restored the drawn state here on
+      // every tick -- six attribute writes a second on a chart nothing
+      // had touched.)
       return;
     }
     // The window the chart is judged against is the chart's OWN --
@@ -2117,6 +2379,10 @@
     }
     var p = domeXY(azNow, altNow);
     var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
+    // Swept off the drawn position -- and the lit toggle just above may
+    // have left the drawn look too.  Both are undone by the next
+    // passStandsAsDrawn, which needs to know it has work to do.
+    b.asDrawn = false;
     b.g.setAttribute('transform', tr);
     if (b.lab !== null) {
       b.lab.setAttribute('transform', tr);
@@ -2181,24 +2447,24 @@
   setInterval(refreshPass, CHART_REFRESH * 1000);
 
   // ---- countdown central ---------------------------------------------------
-  // The chip row under the header: d hh:mm:ss countdowns ticking on the
-  // one-second local tick, each pure client arithmetic against an
-  // event-tier loopdata field -- computed once by the engine, cached
+  // The chip row under the header: d hh:mm:ss countdowns rendered on
+  // every loop packet, at loop cadence -- the page's clock moves only
+  // with a packet (serverNow) -- each pure client arithmetic against an
+  // event-tier loopdata field, computed once by the engine, cached
   // until the event, zero cost at this cadence.  Feature detection is
   // the roster's: an ABSENT key (not on the fields line, or an almanac
   // that cannot serve it) leaves the chip's report-time first paint
   // alone; a key present but null is loopdata's honest "nothing ahead"
   // and hides the chip.  The windowed guests (supermoon, eclipse, a
   // comet's perihelion) show only within CHIP_WINDOW_SEC of the event
-  // -- close enough to tick meaningfully.
+  // -- close enough to count meaningfully.
   var CHIP_WINDOW_SEC = 30 * 86400;
   function fmtDHMS(sec) {
     // The countdown's precision follows its horizon: a day or more out
-    // it reads days-hours-minutes, ticking by the minute (seconds --
+    // it reads days-hours-minutes, moving by the minute (seconds --
     // and a seconds-bearing clock shape -- are noise at that range, and
     // the chip's detail carries the actual date); inside the final day
-    // it becomes the ticking hh:mm:ss clock, where seconds are the
-    // point.
+    // it becomes the hh:mm:ss clock, where seconds are the point.
     sec = Math.max(0, Math.floor(sec));
     var days = Math.floor(sec / 86400);
     var rem = sec - days * 86400;
@@ -2224,11 +2490,11 @@
   }
   function chipStaticTs(id) {
     // The generation-baked target instant (the chip's data-ts): a
-    // countdown needs only a target and a clock that advances, and
-    // serverNow advances from the page's own generation stamp before
-    // any packet arrives, so the chips tick from the moment the page
-    // loads -- the loop feed's job is re-anchoring and ROLLING the
-    // target when the event passes, not enabling the tick.
+    // countdown needs only a target and a clock, and the page's clock is
+    // GEN_TS until the first packet moves it, so a chip whose key the
+    // feed does not carry counts down from this target on every packet
+    // -- the loop feed's job is re-anchoring and ROLLING the target when
+    // the event passes; the counting needs no key of its own.
     var el = document.getElementById(id);
     if (el === null) {
       return null;
@@ -2257,19 +2523,21 @@
   function chipEvent(id, key, nowTs, windowed) {
     // The shared chip skeleton: read the pinned instant -- the live
     // feed's when it carries the key, else the generation-baked
-    // data-ts -- decide visibility, tick the value.  Returns the
+    // data-ts -- decide visibility, paint the value.  Returns the
     // instant (null: hidden, or the first paint stands) so callers can
     // dress the k/d cells.  The -60 grace shows 00:00:00 between the
-    // event and the roll that replaces the target; without a feed
-    // there is no roll, so a passed static target hides its chip until
-    // the next report cycle regenerates the page.
+    // event and the roll that replaces the target; without the feed
+    // KEY there is no roll, so a passed static target hides its chip
+    // until the next report cycle regenerates the page.  (With no feed
+    // at all this never runs -- renderCountdown paints on packets -- and
+    // the baked first paint stands under the badge that says why.)
     var ts;
     if (hasKey(key)) {
       ts = num(latest, key);       // present but null: honest nothing
     } else {
       ts = chipStaticTs(id);
       if (ts === null) {
-        return null;               // nothing to tick: first paint stands
+        return null;               // nothing to count: first paint stands
       }
     }
     var show = ts !== null && ts - nowTs > -60 &&
@@ -2282,10 +2550,13 @@
     return ts;
   }
   function renderCountdown() {
-    // Runs on every local tick, loop feed or none: the sun, shower and
-    // darkness chips tick from their generation-baked targets until
-    // the feed's event fields arrive to re-anchor and roll them.  The
-    // pass chip is feed-only (rolling is its whole story).
+    // Runs on every loop packet (updateCurrent), which is when the page's
+    // clock moves: the sun, shower and darkness chips count from their
+    // generation-baked targets until the feed's event fields arrive to
+    // re-anchor and roll them.  Before the first packet the template's
+    // first paint stands, and it is exactly what this would render for
+    // GEN_TS -- the same arithmetic on the same instant.  The pass chip
+    // is feed-only (rolling is its whole story).
     //
     // Every target below -- the feed's instants and the generation-baked
     // data-ts alike -- is written by the STATION, so the instant they
@@ -2331,8 +2602,8 @@
         }
       }
     } else {
-      // No feed keys: tick from the generation-baked rise/set pair
-      // (the painted label stands).  Without a feed there is no roll,
+      // No feed keys: count from the generation-baked rise/set pair
+      // (the painted label stands).  Without the keys there is no roll,
       // so a completed pass hides its chip until the next report
       // cycle regenerates the page.
       var passStatic = chipStaticTs('chip-pass');
@@ -2376,7 +2647,7 @@
         setHtml('chip-sun-d', fmtHM(sunTs));
       }
     } else {
-      // No feed keys: tick from the generation-baked target (the k and
+      // No feed keys: count from the generation-baked target (the k and
       // d cells stand as painted -- same event).
       var sunStatic = chipStaticTs('chip-sun');
       if (sunStatic !== null) {
@@ -2440,7 +2711,7 @@
       }
     }
     // The season chip: equinox or solstice, whichever next, inside the
-    // 30-day window -- the one event whose tick-to-zero is exact to
+    // 30-day window -- the one event whose count-to-zero is exact to
     // the second, named by the season it begins.  The date detail is
     // generation-painted and never rewritten (the chip's k rides the
     // same translated keys both sides).
@@ -2510,7 +2781,7 @@
     // The remaining windowed guests.  Their date/type details are
     // generation-painted and never rewritten (first paint and live
     // must not differ in dress); the live layer decides visibility,
-    // ticks the value, and re-derives the label from the feed's own
+    // paints the value, and re-derives the label from the feed's own
     // strings -- the same translated text the generator painted.
     chipEvent('chip-super', 'almanac.next_supermoon.unix_epoch.raw',
               nowTs, true);
@@ -2551,29 +2822,32 @@
       domeWake();                // the machine was not running; see above
     }
     lastTickTs = nowTs;
-    // The header clock reads the STATION's time -- it is labeled the
-    // station's, beside the station's coordinates -- so it comes from
-    // serverNow like every other instant on the page, not from the
-    // viewer's clock as it did through 8.3.3.
-    setHtml('live-clock', fmtHMS(serverNow()));
-    // The countdowns tick with or without loop data -- their static
-    // targets are baked into the page; the feed re-anchors and rolls.
-    renderCountdown();
-    // Likewise the backdrop's health: it goes stale on its own schedule,
-    // whatever the loop feed is doing.
+    // This tick is for MOTION and housekeeping only.  Nothing that reads
+    // the page's clock is REPAINTED by it: the countdown chips, the
+    // satellite rosters and the header's "updated" stamp render as
+    // packets arrive (see serverNow), and 8.3.4's header clock is gone
+    // -- read from the station it was that stamp shown twice.  (Two
+    // things below do READ the clock every second -- the pass chart's
+    // over/ahead verdict and the dome-stale judgement -- but between two
+    // packets it does not move, so they paint nothing new.)
+    //
+    // The backdrop's health goes stale on its own schedule, whatever the
+    // loop feed is doing; its inputs move with packets, fetch outcomes
+    // and the wake grace, and it repaints only on a change.
     updateDomeStale(nowTs);
-    // And the pass chart's over/ahead verdict: the chart's own window,
-    // no packet needed (the sweep inside the window does need one, and
-    // renderPass waits for it itself).  Contained: a throw here must not
-    // take the roster, the dial and the dome down with it every second
-    // (the silent-dead-dial class; see restoreDomeMarks' note).
+    // The pass chart's sweep, extrapolated between packets like the
+    // dial's bodies and the dome's marks below (its verdict, on
+    // serverNow, can only change with a packet; renderPass returns at
+    // its latest === null guard until one lands, leaving the chart as
+    // the station drew it).  Contained: a throw here must not take the
+    // dial and the dome down with it every second (the silent-dead-dial
+    // class; see restoreDomeMarks' note).
     try {
       renderPass();
     } catch (e) {
       console.log(e);
     }
     if (latest !== null) {
-      renderSatRosters();
       renderGeo();
       renderDome(nowTs);
     }
@@ -2652,6 +2926,12 @@
         if (latestTs !== prevTs) {
           latestRecvTs = nowTs;
         }
+        // The first packet needs no case of its own any more: every new
+        // packet checks the backdrop below, and the first is simply the
+        // one that moves the clock furthest -- from GEN_TS, which names
+        // the slot the page was generated with, to the station's real
+        // time.  A page served from a browser or CDN cache can be hours
+        // stale, and that is the packet that repairs it.
         // How old the data on show is -- two terms, each measured on ONE
         // clock, never across the two.  How stale this record already was
         // when the page first found it: its own station time against the
@@ -2676,10 +2956,34 @@
         // Display the time of the last update, in the page's timezone.
         setHtml("last-update", fmtHMS(lastTs));
         pushHistory(latestTs, result);
-        renderSatRosters();
-        renderGeo();
-        renderDome(nowTs);
-        renderPass();
+        // Everything that reads the page's clock renders here, on the
+        // packet that moved it (see serverNow), and everything that
+        // extrapolates re-anchors here.  Only when the packet is NEW:
+        // the commonest dead feed is the last file served again on every
+        // poll (see latestRecvTs above), and a repeat moves nothing, so
+        // there is nothing to paint -- five renders of identical text
+        // every refresh_rate for as long as it lasts.  The badge above
+        // stays outside this gate because the age it reports goes on
+        // growing; the stamp beside it is repainted with the same digits
+        // on a repeat, one setHtml, not worth a second gate.  The tick
+        // still drives the motion between packets and the dead-feed
+        // restore.
+        if (latestTs !== prevTs) {
+          if (document.readyState === 'loading') {
+            renderWanted = true;   // the page is still streaming; see the load handler
+          }
+          // The packet is the page's clock, so it is also the only thing
+          // that can change which slot the backdrop should be showing:
+          // check on every one of them.  Nearly all of these return at
+          // refreshDome's want-gate without a request -- the cost is a
+          // floor division -- and the one that does not is the instant
+          // the sky is genuinely a slot behind, which is when it should
+          // step.  The minute interval stays as the backstop for the
+          // cases no packet reaches: a pre-stagger backdrop, and a fetch
+          // that failed and must be retried.
+          refreshDome();
+          renderPacket(nowTs);
+        }
       } catch (e) {
         console.log(e);
       }
