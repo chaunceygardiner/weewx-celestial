@@ -39,7 +39,7 @@ comet's perihelion.  Each chip is client-side arithmetic on an event instant
 weewx-loopdata computes once and caches until it passes — so a sunset chip
 counts to zero and rolls itself to the next sunrise, with no reload:
 
-![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll.gif)
+![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll-2026-08-18.gif)
 
 **The Geocentric** — Earth at the center, every body (sun, moon, the eight
 planets, Proxima Centauri) placed by compass bearing and log distance, the
@@ -121,11 +121,16 @@ are drawn on.**
    The installer appends the loop-data fields the page reads to your
    `[LoopData] [[Include]] fields` line — append-only, printing each one.
 
-1. Point weewx-loopdata's output where the page looks, then restart WeeWX.
-   The report appears under `celestial/` of your web root.
+1. Restart WeeWX.  The report appears under `celestial/` of your web root.
 
-The full procedure — including the loopdata wiring that is the one step most
-often gotten wrong, and how to verify the feed afterwards — is in
+   The installer points the page at wherever weewx-loopdata writes,
+   working it out from your own configuration.  It never overwrites a
+   `loop_data_file` already in your `weewx.conf`, so an upgrade keeps
+   whatever your station has; where the two disagree, it says so and
+   leaves the choice to you.
+
+The full procedure — including where the loop-data file goes, and how to
+verify the feed afterwards — is in
 **[the manual's Installation page](https://chaunceygardiner.github.io/weewx-celestial/installation.html)**.
 Upgrading from 8.x, 7.x, 6.x or 5.x is covered in
 **[Upgrading](https://chaunceygardiner.github.io/weewx-celestial/upgrading.html)**.

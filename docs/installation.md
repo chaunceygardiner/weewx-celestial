@@ -64,16 +64,43 @@ separately.
    so `[[Defaults]]` is the reliable home — a name set only in one
    report's section does not reach the loop feed.)
 
-1. Point weewx-loopdata's output where the page looks.  The skin fetches
-   `loop_data_file` — default `../loop-data.txt`, the directory above
-   this report, i.e. your web root — while weewx-loopdata's own defaults
-   (`[LoopData]` `[[Formatting]] target_report = LoopDataReport`,
-   `[[FileSpec]] loop_data_dir = .`) write `loop-data.txt` into the
-   LoopData report's directory instead.  Make the two meet: with the
-   default target report, set `loop_data_dir = ..` (`loop_data_dir` is
-   relative to the target report's HTML_ROOT), or point this report's
-   `loop_data_file` (see [Configuration](configuration.md)) at wherever
-   your loopdata already writes.
+1. Check where the page will look for loop data — in most cases the
+   installer has already settled it.  The page fetches `loop_data_file`,
+   a URL relative to *this* report's directory, while weewx-loopdata
+   writes `[[FileSpec]] loop_data_dir`, a path relative to its *target*
+   report's directory.  Two different reports, so the installer works the
+   answer out from your own `weewx.conf` and writes it:
+
+   ```
+   Set [StdReport] [[CelestialReport]] [[[Extras]]] loop_data_file =
+   ../loopdata/loop-data.txt -- where weewx-loopdata writes
+   ```
+
+   It never rewrites a setting you already have; if yours disagrees with
+   where loopdata writes, it says so and leaves the choice to you.  Two
+   cases it cannot settle:
+
+   - **weewx-loopdata isn't installed yet.**  There is nothing to read,
+     so the shipped default stands — `../loopdata/loop-data.txt`, which
+     is where a stock weewx-loopdata writes.  Install loopdata, then
+     either accept that or set the option by hand.  (Nothing is printed
+     about `loop_data_file` itself; the install does say it found no
+     `[LoopData]` `[[Include]]` fields line.)
+   - **The file lands outside your reports tree** — `/dev/shm`, say, or
+     a directory of its own.  A filesystem path does not give a URL; only
+     your web server's aliases do.  Set `loop_data_file` to the URL that
+     serves it — see [Where the loop-data file should
+     live](configuration.md#where-the-loop-data-file-should-live), which
+     is also the arrangement to want if you run a report sync or a
+     Raspberry Pi.
+
+   {: .note }
+   The default arrangement is fine and most stations keep it.  If you are
+   comfortable editing your web server's configuration, [Where the
+   loop-data file should
+   live](configuration.md#where-the-loop-data-file-should-live) describes
+   a tidier one — the file on a memory filesystem outside the web root,
+   which keeps it out of your report sync and off an SD card.
 
    {: .important }
    This is the step that most often goes wrong, and the page tells you so
@@ -108,8 +135,11 @@ those layers; see [the almanac tiers](configuration.md#the-almanac-tiers).
 **Is the web server serving that file?**  Fetch it the way the page does:
 
 ```
-curl -sI http://localhost/loop-data.txt | head -1
+curl -sI http://localhost/loopdata/loop-data.txt | head -1
 ```
+
+(That is the default arrangement's URL.  Use whatever your own
+`loop_data_file` resolves to — the installer printed it.)
 
 Anything but `200` is the 404 case above — a path or alias problem, not
 an astronomy one.

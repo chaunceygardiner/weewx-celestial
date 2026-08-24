@@ -1,8 +1,39 @@
 weewx-celestial change history
 ------------------------------
 
-8.3.6 (in progress)
-------------------
+8.4 2026/08/24
+--------------
+- The installer works out where weewx-loopdata actually writes and
+  points the page at it.  The page fetches loop_data_file, a URL
+  relative to its OWN report's directory; weewx-loopdata writes
+  loop_data_dir, a path relative to its TARGET report's directory.  Two
+  different reports, so a shipped default can only be right for the
+  layout it was chosen for -- and a page that asks the wrong URL says
+  NO DATA (HTTP 404), which is the commonest trouble this extension
+  has.  weewx.conf holds both halves, so the installer derives the
+  value and writes it rather than shipping a guess.  The shipped
+  default moves to ../loopdata/loop-data.txt -- where a stock
+  weewx-loopdata writes -- for the station installed before
+  weewx-loopdata, which leaves nothing to derive from.  A
+  loop_data_file already in weewx.conf is never rewritten: it may be
+  answering a web-server alias no installer can see, so a disagreement
+  is reported and the change left to you.  Upgrading installs keep
+  whatever they have.  A loop-data file written outside your reports
+  tree (/dev/shm, or a directory of its own) is named as such and left
+  to you as well -- a path on disk does not give the URL that serves
+  it.
+- The manual says where the loop-data file should live, and points at
+  weewx-loopdata's manual for the how: the location is loopdata's
+  setting, not this skin's.  The default -- inside your reports tree,
+  where weewx-loopdata puts it -- works and is what most stations keep.
+  This page's own half is documented here: with the file outside the
+  reports tree, loop_data_file becomes the absolute URL your web server
+  alias serves, and it is the one setting the installer cannot derive.
+- The manual's countdown GIF is recaptured.  The old one was shot under
+  8.1, when the chips ticked once a second; since 8.3.5 they step with
+  each loop packet, so the caption had grown a paragraph of apology.
+  The new capture is 8.3.5's behaviour, rolling through a real sunset:
+  the chip counts to zero and turns into the next sunrise.
 - A station whose console clock runs fast is no longer accused of
   writing no backdrops.  Its archive records are stamped ahead of its
   own loop packets, so every backdrop it serves depicts a time the page

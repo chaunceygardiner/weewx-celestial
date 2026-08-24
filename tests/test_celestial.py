@@ -2430,7 +2430,7 @@ class TestSampleSkinRenders:
         refetch that re-serves the SAME finished chart (the report has not
         rerun) hides it again with nothing carried over; and a page LOADED
         after the set -- the case no memory could reach -- comes up hidden
-        on its first packet.  Also (8.3.6) that STAYING hidden is free:
+        on its first packet.  Also (8.4) that STAYING hidden is free:
         the ticks past the set write no attributes at all.  Skips when
         the playwright env is absent."""
         import http.server
@@ -2645,7 +2645,7 @@ class TestSampleSkinRenders:
         restores the chart to the state the station drew it in -- and did
         so on every one-second tick, rewriting the same attributes to the
         same values for hours on a chart nothing had touched.  8.3.5 put
-        the asDrawn latch in front of that; 8.3.6 pins it, because the
+        the asDrawn latch in front of that; 8.4 pins it, because the
         fix had no test of its own on this side (liveseasons measured it,
         celestial took it on trust).
 
@@ -6880,6 +6880,438 @@ class TestInstallerFieldsHint:
         assert any('Could not check' in line for line in engine.printer.lines)
 
 
+class TestInstallerLoopDataFile:
+    """The install-time loop_data_file derivation: the page fetches a URL
+    relative to ITS report's HTML_ROOT, weewx-loopdata writes a path
+    relative to its TARGET report's HTML_ROOT, and the two stock defaults
+    do not meet -- the commonest failure this page has (badge: NO DATA
+    (HTTP 404)).  weewx.conf holds both halves, so configure() derives
+    the answer.  It writes only when there is no setting to respect; an
+    existing one is flagged when it disagrees, never rewritten, and a
+    file written outside the reports tree is hinted, never guessed at."""
+
+    class _Printer:
+        def __init__(self):
+            self.lines = []
+
+        def out(self, msg, level=1):
+            self.lines.append(msg)
+
+    def _engine(self, config, dry_run=False, weewx_root='/wx'):
+        import types
+        return types.SimpleNamespace(config_dict=config,
+                                     printer=self._Printer(),
+                                     dry_run=dry_run,
+                                     root_dict={'WEEWX_ROOT': weewx_root},
+                                     config_path='/wx/weewx.conf')
+
+    def _installer(self):
+        return load_installer().CelestialInstaller()
+
+    @staticmethod
+    def _config(file_spec, target_report='LoopDataReport',
+                target_root='public_html/loopdata', ours=None):
+        """A station whose fields line is already complete, so anything
+        printed comes from the step under test."""
+        complete, _ = celestial.migrate_loopdata_fields([])
+        reports = {'HTML_ROOT': 'public_html',
+                   target_report: {'HTML_ROOT': target_root}}
+        if ours is not None:
+            reports['CelestialReport'] = ours
+        return {'StdReport': reports,
+                'LoopData': {'FileSpec': file_spec,
+                             'Formatting': {'target_report': target_report},
+                             'Include': {'fields': list(complete)}}}
+
+    def _derived(self, config, engine=None):
+        return config['StdReport']['CelestialReport']['Extras'][
+            'loop_data_file']
+
+    def test_derives_the_stock_layout(self):
+        """Stock loopdata (loop_data_dir = .) writes into loopdata/;
+        stock celestial renders into celestial/.  The page must poll
+        ../loopdata/loop-data.txt -- which the derivation writes, so the
+        shipped default is never even consulted."""
+        config = self._config({'loop_data_dir': '.',
+                               'filename': 'loop-data.txt'})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._derived(config) == '../loopdata/loop-data.txt'
+        text = '\n'.join(engine.printer.lines)
+        assert 'loop_data_file = ../loopdata/loop-data.txt' in text
+        assert 'LoopDataReport' in text
+
+    def test_derives_the_web_root_layout(self):
+        """loop_data_dir = .. is the other documented arrangement: one
+        feed at the web root, shared by every live page."""
+        config = self._config({'loop_data_dir': '..'})
+        assert self._installer().configure(self._engine(config)) is True
+        assert self._derived(config) == '../loop-data.txt'
+
+    def test_follows_the_target_report(self):
+        """loop_data_dir is relative to the TARGET report, so a station
+        feeding another skin's page lands somewhere else entirely."""
+        config = self._config({'loop_data_dir': '.'},
+                              target_report='BelchertownReport',
+                              target_root='public_html/belchertown')
+        assert self._installer().configure(self._engine(config)) is True
+        assert self._derived(config) == '../belchertown/loop-data.txt'
+
+    def test_follows_a_custom_filename(self):
+        config = self._config({'loop_data_dir': '.',
+                               'filename': 'gauge-data.txt'})
+        assert self._installer().configure(self._engine(config)) is True
+        assert self._derived(config) == '../loopdata/gauge-data.txt'
+
+    def test_follows_our_own_html_root(self):
+        """The page's own HTML_ROOT is half the sum: a report nested a
+        level deeper climbs a level further."""
+        config = self._config(
+            {'loop_data_dir': '.'},
+            ours={'HTML_ROOT': 'public_html/sky/celestial'})
+        assert self._installer().configure(self._engine(config)) is True
+        assert self._derived(config) == '../../loopdata/loop-data.txt'
+
+    def test_a_section_without_its_own_html_root_still_measures_right(self):
+        """A [[CelestialReport]] that exists but carries no HTML_ROOT --
+        someone added `enable = false` by hand, say.  weectl fills the
+        HTML_ROOT in moments later (conditional_merge, after configure),
+        so measuring from [StdReport]'s root would write a value one
+        directory short: `loopdata/loop-data.txt`, which the page then
+        fetches as celestial/loopdata/loop-data.txt.  That is the exact
+        404 this step exists to prevent."""
+        config = self._config({'loop_data_dir': '.'},
+                              ours={'enable': 'false'})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._derived(config) == '../loopdata/loop-data.txt'
+
+    def test_a_file_in_our_own_directory_needs_no_tree_at_all(self):
+        """Containment is a question about a URL that LEAVES the page's
+        directory.  A loop-data file in our own directory -- which is
+        where loopdata writes when it targets THIS report -- has a
+        certain URL whatever the web server calls its root, so the tree
+        question is never asked.  Here our report renders outside
+        [StdReport]'s HTML_ROOT, which used to make the installer decline
+        and blame loopdata for a refusal our own root had caused."""
+        config = self._config({'loop_data_dir': '.'},
+                              ours={'HTML_ROOT': '/var/www/html/celestial'})
+        config['LoopData']['Formatting'][
+            'target_report'] = 'CelestialReport'
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._derived(config) == 'loop-data.txt'
+        assert 'outside the reports tree' not in '\n'.join(
+            engine.printer.lines)
+
+    def test_a_file_below_our_own_directory_is_derived_too(self):
+        """Same certainty one level down: the URL still never climbs out
+        of the page's own subtree."""
+        config = self._config({'loop_data_dir': 'feed'})
+        config['LoopData']['Formatting'][
+            'target_report'] = 'CelestialReport'
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._derived(config) == 'feed/loop-data.txt'
+
+    def test_the_two_senders_note_rides_installs_that_decide(self):
+        """A station whose loop_data_file already agrees hears the
+        two-senders note once, not at every upgrade for the rest of its
+        life: nothing was derived, written or changed, so there is
+        nothing to say."""
+        def sync_config(loop_data_file):
+            config = self._config(
+                {'loop_data_dir': '.'},
+                ours={'HTML_ROOT': 'public_html/celestial',
+                      'Extras': {'loop_data_file': loop_data_file}})
+            config['StdReport']['FtpToMyHost'] = {'skin': 'Ftp'}
+            config['LoopData']['RsyncSpec'] = {'enable': 'true'}
+            return config
+
+        quiet = self._engine(sync_config('../loopdata/loop-data.txt'))
+        assert self._installer().configure(quiet) is False
+        assert quiet.printer.lines == []
+
+        deciding = self._engine(sync_config('../loop-data.txt'))
+        assert self._installer().configure(deciding) is False
+        assert 'Worth checking' in '\n'.join(deciding.printer.lines)
+
+    def test_our_own_root_outside_the_tree_is_hinted_too(self):
+        """Containment is needed at BOTH ends, and it is measured against
+        [StdReport]'s HTML_ROOT.  A report rendering into a web root of
+        its own gets the hint rather than a derived value: a shared
+        FILESYSTEM ancestor does not say which directory the web server
+        serves, so relpath there would be a filesystem answer to a URL
+        question -- and one stated as though the installer knew."""
+        # Only OUR root is outside: with loopdata's outside too, the
+        # first guard fires and this branch is never reached.
+        config = self._config({'loop_data_dir': '.'},
+                              ours={'HTML_ROOT': '/var/www/html/celestial'})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert 'Extras' not in config['StdReport']['CelestialReport']
+        text = '\n'.join(engine.printer.lines)
+        assert 'renders into /var/www/html/celestial' in text
+        assert 'outside the reports tree' in text
+        assert 'where-the-loop-data-file-should-live' in text
+
+    def test_no_two_senders_note_where_no_sync_reaches_the_file(self):
+        """The Ftp and Rsync skins copy [StdReport]'s HTML_ROOT.  When
+        weewx-loopdata targets THIS report and this report renders into a
+        web root of its own, the loop-data file sits beside the page,
+        outside the tree those skins copy -- so nobody copies it and
+        there are not two senders to warn about."""
+        config = self._config({'loop_data_dir': '.'},
+                              ours={'HTML_ROOT': '/var/www/html/celestial'})
+        config['LoopData']['Formatting']['target_report'] = 'CelestialReport'
+        config['LoopData']['RsyncSpec'] = {'enable': 'true'}
+        config['StdReport']['FtpToMyHost'] = {'skin': 'Ftp'}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._derived(config) == 'loop-data.txt'
+        assert 'Worth checking' not in '\n'.join(engine.printer.lines)
+
+    def test_no_note_fires_when_nothing_was_decided(self):
+        """One rule for every note this step prints.  A station that
+        already carries a loop_data_file has settled the question -- the
+        manual's own recommended arrangement puts the file on a memory
+        filesystem behind a web-server alias, a URL this code could never
+        derive -- so both out-of-tree notes stay quiet for it.  Telling
+        such a station to set the option it has correctly set, at every
+        upgrade for the rest of its life, is nagging."""
+        for name, ours, spec in (
+                ('loopdata outside the tree',
+                 {'HTML_ROOT': 'public_html/celestial',
+                  'Extras': {'loop_data_file': '/loop-data/loop-data.txt'}},
+                 {'loop_data_dir': '/dev/shm/weewx'}),
+                ('this report outside the tree',
+                 {'HTML_ROOT': '/var/www/html/celestial',
+                  'Extras': {'loop_data_file': '/x/loop-data.txt'}},
+                 {'loop_data_dir': '.'})):
+            config = self._config(spec, ours=ours)
+            engine = self._engine(config)
+            assert self._installer().configure(engine) is False, name
+            assert engine.printer.lines == [], name
+
+        # ... and the same station with nothing set still hears it once.
+        config = self._config({'loop_data_dir': '/dev/shm/weewx'})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert 'outside the reports tree' in '\n'.join(engine.printer.lines)
+
+    def test_outside_the_reports_tree_is_hinted_never_guessed(self):
+        """/dev/shm, /home/weewx/gauge-data: real layouts whose URL lives
+        in the web server's aliases, not in weewx.conf.  Say so; never
+        invent a ../../../.. path that is a filesystem answer to a URL
+        question."""
+        config = self._config({'loop_data_dir': '/home/weewx/gauge-data'})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert 'CelestialReport' not in config['StdReport']
+        text = '\n'.join(engine.printer.lines)
+        assert 'outside the reports tree' in text
+        assert '/home/weewx/gauge-data/loop-data.txt' in text
+        assert 'NO DATA (HTTP 404)' in text
+
+    def test_an_empty_setting_is_no_setting(self):
+        """`loop_data_file =` with nothing after it is not a URL anyone
+        is relying on.  Treating it as a value to respect printed
+        'loop_data_file is , but weewx-loopdata writes where ... points'
+        and declined to write -- and disagreed with the rule that quiets
+        the notes, which judges the same value with bool()."""
+        config = self._config(
+            {'loop_data_dir': '.'},
+            ours={'HTML_ROOT': 'public_html/celestial',
+                  'Extras': {'loop_data_file': ''}})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._derived(config) == '../loopdata/loop-data.txt'
+        text = '\n'.join(engine.printer.lines)
+        assert 'loop_data_file is ,' not in text
+        assert 'Set [StdReport]' in text
+
+    def test_an_agreeing_setting_is_silent(self):
+        config = self._config(
+            {'loop_data_dir': '.'},
+            ours={'HTML_ROOT': 'public_html/celestial',
+                  'Extras': {'loop_data_file': '../loopdata/loop-data.txt'}})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert engine.printer.lines == []
+
+    def test_a_disagreeing_setting_is_flagged_never_rewritten(self):
+        """An existing value may be answering a web-server alias this
+        code cannot see.  Flag the disagreement, leave the line alone."""
+        config = self._config(
+            {'loop_data_dir': '.'},
+            ours={'HTML_ROOT': 'public_html/celestial',
+                  'Extras': {'loop_data_file': '../loop-data.txt'}})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert self._derived(config) == '../loop-data.txt'      # untouched
+        text = '\n'.join(engine.printer.lines)
+        assert '../loop-data.txt' in text and '../loopdata/loop-data.txt' in text
+        assert 'never changed' in text
+
+    def test_a_disagreeing_setting_says_when_the_file_is_there(self, tmp_path):
+        """The one thing the disk is asked: does the derived path hold a
+        file?  Evidence for the reader, never the basis of the choice --
+        on a first install the file legitimately does not exist yet."""
+        (tmp_path / 'public_html' / 'loopdata').mkdir(parents=True)
+        (tmp_path / 'public_html' / 'loopdata' / 'loop-data.txt').write_text(
+            '{}')
+        config = self._config(
+            {'loop_data_dir': '.'},
+            ours={'HTML_ROOT': 'public_html/celestial',
+                  'Extras': {'loop_data_file': '../loop-data.txt'}})
+        engine = self._engine(config, weewx_root=str(tmp_path))
+        assert self._installer().configure(engine) is False
+        assert 'and that file is there' in '\n'.join(engine.printer.lines)
+
+    def test_dry_run_touches_nothing(self):
+        config = self._config({'loop_data_dir': '.'})
+        engine = self._engine(config, dry_run=True)
+        assert self._installer().configure(engine) is False
+        assert 'CelestialReport' not in config['StdReport']
+        assert 'Would set' in '\n'.join(engine.printer.lines)
+
+    def test_flags_the_two_senders_without_asserting_a_clash(self):
+        """weewx-loopdata sending the file itself while a report sync
+        copies the tree it sits in.  Whether those land in the same place
+        is not knowable from here -- the transports name destinations
+        differently, and an alias defeats a string compare -- so the note
+        ASKS.  Advice either way: the value is still derived and
+        written."""
+        config = self._config({'loop_data_dir': '.'})
+        config['StdReport']['FtpToMyHost'] = {'skin': 'Ftp'}
+        config['LoopData']['RsyncSpec'] = {'enable': 'true'}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        text = '\n'.join(engine.printer.lines)
+        assert 'FtpToMyHost' in text and 'the same place' in text
+        assert 'Worth checking' in text          # asks, never asserts
+        assert 'where-the-loop-data-file-should-live' in text
+        assert self._derived(config) == '../loopdata/loop-data.txt'
+
+    def test_silent_when_the_report_sync_is_the_only_route(self):
+        """An FTP-only station is not misconfigured: the report sync is
+        how its pages reach their server at all, so the file belongs in
+        the tree and the page updates at report cadence.  Telling that
+        user their feed is stale would be noise about a setup that is
+        as good as it can be."""
+        config = self._config({'loop_data_dir': '.'})
+        config['StdReport']['FtpToMyHost'] = {'skin': 'Ftp'}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert 'Worth checking' not in '\n'.join(engine.printer.lines)
+
+    def test_no_sync_warning_when_that_report_is_disabled(self):
+        config = self._config({'loop_data_dir': '.'})
+        config['StdReport']['FtpToMyHost'] = {'skin': 'Ftp',
+                                              'enable': 'false'}
+        config['LoopData']['RsyncSpec'] = {'enable': 'true'}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert 'Worth checking' not in '\n'.join(engine.printer.lines)
+
+    def test_no_sync_warning_when_the_file_is_outside_the_tree(self):
+        """Out of the tree is the arrangement the warning argues for --
+        so it has nothing to say, and the note that does fire names the
+        manual section rather than leaving the reader to invent it."""
+        config = self._config({'loop_data_dir': '/dev/shm/weewx'})
+        config['StdReport']['FtpToMyHost'] = {'skin': 'Ftp'}
+        config['LoopData']['RsyncSpec'] = {'enable': 'true'}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        text = '\n'.join(engine.printer.lines)
+        assert 'Worth checking' not in text
+        assert 'where-the-loop-data-file-should-live' in text
+
+    def test_silent_without_loopdata(self):
+        """No [LoopData] at all: the fields step prints the install-it
+        note and this step says nothing -- there is nothing to derive
+        from."""
+        engine = self._engine({'StdReport': {'HTML_ROOT': 'public_html'}})
+        assert self._installer().configure(engine) is False
+        text = '\n'.join(engine.printer.lines)
+        assert 'no [LoopData] [[Include]] fields entry' in text
+        assert 'loop_data_file' not in text
+
+    def test_an_unknown_target_report_is_named(self):
+        """target_report naming a report this configuration does not have
+        is not a quiet corner: weewx-loopdata logs 'Could not find
+        target_report ... LoopData is exiting' and writes nothing, so the
+        station has no feed at all.  No HTML_ROOT to measure from, so
+        nothing is derived -- but the user hears about it while they are
+        reading installer output."""
+        config = self._config({'loop_data_dir': '.'})
+        config['LoopData']['Formatting']['target_report'] = 'NoSuchReport'
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert 'CelestialReport' not in config['StdReport']
+        text = '\n'.join(engine.printer.lines)
+        assert "target_report names 'NoSuchReport'" in text
+        assert 'will not start' in text
+
+    def test_loopdata_targeting_this_report_derives_a_bare_filename(self):
+        """weewx-loopdata pointed at THIS report -- the natural move for a
+        station whose loop values must carry this report's [Almanac]
+        names.  loop_data_dir is then relative to our OWN HTML_ROOT, so
+        the file lands beside the page and the URL is its bare name.
+        Three shapes, one answer: no section yet (weectl injects it
+        seconds from now), a section without an HTML_ROOT of its own, and
+        a section carrying one."""
+        for ours in (None, {'enable': 'false'},
+                     {'HTML_ROOT': 'public_html/celestial'}):
+            config = self._config({'loop_data_dir': '.'}, ours=ours)
+            config['LoopData']['Formatting'][
+                'target_report'] = 'CelestialReport'
+            engine = self._engine(config)
+            assert self._installer().configure(engine) is True, ours
+            assert self._derived(config) == 'loop-data.txt', ours
+            assert 'will not start' not in '\n'.join(engine.printer.lines)
+
+    def test_never_fails_the_install(self):
+        config = self._config({'loop_data_dir': 3.14})
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is False
+        assert any('Could not work out where weewx-loopdata writes' in line
+                   for line in engine.printer.lines)
+
+    def test_written_value_survives_weectls_own_merge(self):
+        """The load-bearing weectl facts, pinned because the derivation
+        rests on them: install_from_dir calls configure() BEFORE
+        _inject_config, and _inject_config merges conditionally.  So a
+        value written here stands and this installer's shipped default is
+        only the fallback.  Were the order to
+        reverse, or the merge become unconditional, every derived value
+        would be silently overwritten with the default that 404s."""
+        import inspect
+        import weecfg.extension
+        import weeutil.config
+        from copy import deepcopy
+        source = inspect.getsource(weecfg.extension.ExtensionEngine
+                                   .install_from_dir)
+        assert (source.index('installer.configure(')
+                < source.index('_inject_config(')), source
+        assert 'conditional_merge' in inspect.getsource(
+            weecfg.extension.ExtensionEngine._inject_config)
+        # And conditional_merge really does leave a present value alone.
+        config = self._config({'loop_data_dir': '.'})
+        assert self._installer().configure(self._engine(config)) is True
+        weeutil.config.conditional_merge(
+            config,
+            # EXACTLY what install.py injects, read from the installer
+            # itself: a simulation of the merge that used a value the
+            # installer no longer ships proves nothing about the real one.
+            {'StdReport': {'CelestialReport': deepcopy(
+                self._installer()['config']['StdReport']['CelestialReport'])}})
+        assert self._derived(config) == '../loopdata/loop-data.txt'
+        assert config['StdReport']['CelestialReport']['Extras'][
+            'refresh_rate'] == 2        # the rest of the stanza still lands
+
+
+
 # ─────────────────────────────────────────────────────────────────────
 # The manual, pinned to the code.
 #
@@ -7000,6 +7432,22 @@ class TestManualInStepWithCode:
 
         heads = _headings(_doc_text('reading-the-page.md'))
         assert 'The Geocentric' in heads and 'The sky dome' in heads
+
+    def test_installer_placement_url_names_a_real_heading(self):
+        """install.py prints a manual URL at the one moment a user is
+        looking straight at this problem -- the loop-data file landing
+        outside the reports tree, or inside a tree a report sync copies.
+        A hand-written anchor no heading generates is a dead link, and
+        nothing else on either side would catch it."""
+        with open(os.path.join(REPO_ROOT, 'install.py'), encoding='utf-8') as f:
+            src = f.read()
+        m = re.search(r'configuration\.html#([a-z0-9-]+)', src)
+        assert m, 'install.py no longer names the placement section'
+        anchors = {_heading_anchor(h)
+                   for h in _headings(_doc_text('configuration.md'))}
+        assert m.group(1) in anchors, (
+            'install.py points at #%s, which configuration.md does not '
+            'generate: %s' % (m.group(1), sorted(anchors)))
 
     def test_anchor_rule_matches_kramdown(self):
         """Landmarks read off the site jekyll actually generated -- the
@@ -7250,7 +7698,11 @@ class TestManualInStepWithCode:
         """{option: documented default} from the Configuration page: the
         sample [Extras] block, plus every option bullet."""
         page = _doc_text('configuration.md')
-        sample = _block_containing(page, 'CelestialReport')
+        # 'HTML_ROOT = celestial', not 'CelestialReport': the page names
+        # the report in a second block too (the loop-data placement
+        # section's absolute-URL example), and only the installer's own
+        # stanza carries the report's HTML_ROOT.
+        sample = _block_containing(page, 'HTML_ROOT = celestial')
         # Only the [[[Extras]]] sub-block: the lines above it (HTML_ROOT,
         # enable, skin) are WeeWX's own report keys, not this skin's
         # options, and are shown for context.
@@ -7424,7 +7876,8 @@ class TestManualInStepWithCode:
         """Every key = value in the Configuration page's sample stanza,
         at any nesting level -- the report's own keys included, unlike
         _documented_options, which is deliberately Extras-only."""
-        sample = _block_containing(_doc_text('configuration.md'), 'CelestialReport')
+        sample = _block_containing(_doc_text('configuration.md'),
+                                   'HTML_ROOT = celestial')
         pairs = {}
         for line in sample.splitlines():
             m = re.match(r'^\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$', line)
@@ -7461,6 +7914,28 @@ class TestManualInStepWithCode:
         assert invented == set(), (
             'the sample stanza shows settings a fresh install does not '
             'write: %s' % sorted(invented))
+
+    def test_skin_conf_ships_the_installers_defaults(self):
+        """Two files answer the same question -- skins/Celestial/skin.conf's
+        [Extras] and install.py's config dict -- and weewx.conf's copy is
+        the one report time reads (build_skin_dict merges the report's
+        stanza last).  So a skin.conf that drifts is invisible: it breaks
+        nothing until someone reads it as documentation, cribs from it, or
+        deletes the weewx.conf entry.  weewx-loopdata shipped exactly that
+        drift on loop_data_file, found 2026-08-22.  Every option both
+        files declare must agree."""
+        import configobj
+        extras = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),
+                                     encoding='utf-8',
+                                     file_error=True)['Extras']
+        shipped = self._installer_config_pairs()
+        shared = [name for name in extras if name in shipped]
+        assert 'loop_data_file' in shared and len(shared) >= 4, shared
+        wrong = {name: (extras[name], str(shipped[name])) for name in shared
+                 if str(extras[name]) != str(shipped[name])}
+        assert wrong == {}, (
+            'skin.conf and install.py disagree (skin.conf, install.py): %s'
+            % wrong)
 
     # ── absolute links to the published site ─────────────────────────
     # GitHub Pages serves what jekyll BUILDS: `installation.html`, not

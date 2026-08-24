@@ -23,10 +23,26 @@ Install over the top and restart WeeWX — that is the whole procedure:
 weectl extension install weewx-celestial.zip
 ```
 
-There are no configuration changes between 8.x releases.  The install
-appends any fields-line entries a newer version reads (append-only,
-printing each one), and the restart both reloads that line in
-weewx-loopdata and refreshes the deployed `celestial.css` and `sky.js`.
+There are no configuration changes you have to make between 8.x releases.
+The install appends any fields-line entries a newer version reads
+(append-only, printing each one), and the restart both reloads that line
+in weewx-loopdata and refreshes the deployed `celestial.css` and
+`sky.js`.
+
+From 8.4 the install also settles `loop_data_file` — the URL the page
+polls — for a station that has none, deriving it from where
+weewx-loopdata is configured to write.  A value already in your
+`weewx.conf` is never rewritten.  If yours disagrees with what the
+installer worked out, it says so and leaves it alone:
+
+```
+Note: loop_data_file is ../loop-data.txt, but weewx-loopdata writes
+where ../loopdata/loop-data.txt points ...
+```
+
+That is a report, not a change.  Your page kept working across the
+upgrade if it was working before; the line is worth reading only if its
+badge says `NO DATA (HTTP 404)`.
 
 8.3.5 finishes what 8.3.4 began: the page's clock is now the loop
 packet's own timestamp, and nothing else — not carried forward between

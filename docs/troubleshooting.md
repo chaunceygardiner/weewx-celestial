@@ -45,21 +45,35 @@ The page found your web server but not the loop-data file.  This is the
 single most common problem, and it is a path mismatch between two
 extensions:
 
-- The skin fetches `loop_data_file`, default `../loop-data.txt` —
-  relative to *this report's* HTML_ROOT.
-- weewx-loopdata writes to `[[FileSpec]] loop_data_dir`, relative to
-  *its target report's* HTML_ROOT.
+- The skin fetches `loop_data_file`, a URL relative to *this report's*
+  HTML_ROOT.
+- weewx-loopdata writes to `[[FileSpec]] loop_data_dir`, a path relative
+  to *its target report's* HTML_ROOT.
 
-Make the two meet: either set `loop_data_dir = ..` on loopdata's side, or
-point `loop_data_file` at wherever loopdata already writes.  Then confirm
-the web server actually serves it:
+The installer derives the first from the second, so the likeliest reason
+you are reading this is that it could not: weewx-loopdata was installed
+*after* this extension, or the file lands outside your reports tree.
+Re-running the install reads your configuration as it now stands and
+names the value it makes:
 
 ```
-curl -sI http://localhost/loop-data.txt | head -1
+weectl extension install weewx-celestial.zip -y
+```
+
+It will not rewrite a `loop_data_file` that is already there — yours may
+be answering a web-server alias it cannot see — so when it reports a
+disagreement, the change is yours to make.  Set `loop_data_file` to
+wherever loopdata writes, and confirm the web server actually serves it:
+
+```
+curl -sI http://localhost/loopdata/loop-data.txt | head -1
 ```
 
 A file on disk that no URL reaches is the classic failure — loopdata
-writing into `/dev/shm` with no alias is the usual version of it.
+writing into `/dev/shm` with no alias is the usual version of it, and
+[Where the loop-data file should
+live](configuration.md#where-the-loop-data-file-should-live) has the
+alias to pair with it.
 
 {: .note }
 If your pages live on a **remote** web server, `loop-data.txt` has to
@@ -198,7 +212,7 @@ A healthy station reads a second or two.  Anything approaching a minute
 deserves attention; more than one archive interval will freeze the dome
 as described.
 
-The line names this case as its own from 8.3.6.  Earlier versions marked
+The line names this case as its own from 8.4.  Earlier versions marked
 the fetch healthy before refusing the answer, so the panel read `no newer
 backdrop has arrived` — which sent readers looking for a report cycle
 that was running the whole time.

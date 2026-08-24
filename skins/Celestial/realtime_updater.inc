@@ -1524,7 +1524,7 @@
     // ten steps -- 605 s, whose ten 60 s slots reach 600 -- leaves a
     // tail no slot depicts, and a clock inside it names a k of 10
     // against a count of 10.  That tail is served by the last slot.
-    // (Before 8.3.6 every non-dividing interval had one, because the
+    // (Before 8.4 every non-dividing interval had one, because the
     // count was floor-divided while the set wrote the extra fragment
     // anyway: a 350 s station declared five 60 s slots, and the sixth it
     // had written was unaskable.)

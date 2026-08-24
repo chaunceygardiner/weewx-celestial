@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.3.5**, the current release.
+This manual documents weewx-celestial **8.4**, the current release.
 
 ## Start here
 
@@ -75,13 +75,11 @@ client-side
 arithmetic on an event instant weewx-loopdata computes once and caches
 until it passes.
 
-The row riding through a sunset, live (captured under 8.1, when the
-chips ticked once a second — since 8.3.5 they step with each loop packet
-— at about 15× speed): the sunset chip counts `hh:mm:ss` down through
-zero, then rolls itself to the next sunrise — loopdata expires the event
-and the page follows, no reload:
+The row riding through a sunset, live (at about 15× speed): the sunset
+chip counts `hh:mm:ss` down through zero, then rolls itself to the next
+sunrise — loopdata expires the event and the page follows, no reload:
 
-![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll.gif)
+![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll-2026-08-18.gif)
 
 **The Geocentric** — Earth at the center, every body (sun, moon, the
 eight planets, Proxima Centauri) placed by compass bearing and log

@@ -20,17 +20,23 @@ Installing registers the report; its options live in `weewx.conf`:
         enable = true
         skin = Celestial
         [[[Extras]]]
-            loop_data_file = ../loop-data.txt
+            loop_data_file = ../loopdata/loop-data.txt
             refresh_rate = 2
             expiration_time = 24
             page_update_pwd = foobar
 ```
 
 - `loop_data_file`: where the javascript fetches loop data; relative paths
-  are relative to this report's HTML_ROOT.  The file must be reachable
-  through your **web server** — if weewx-loopdata writes outside the web
-  root (say `/dev/shm`) with no alias serving it, the page's badge will
-  tell you: `NO DATA (HTTP 404) — check loop_data_file`.
+  are relative to this report's HTML_ROOT.  You should not have to set
+  this: the installer reads your `[LoopData]` settings, works out where
+  weewx-loopdata actually writes, and puts that here — the value above is
+  what a stock weewx-loopdata gives you, its own report's directory.  An
+  existing setting is never rewritten, only flagged when it disagrees.
+  The file must be reachable through your **web server** — if
+  weewx-loopdata writes outside the web root (say `/dev/shm`) with no
+  alias serving it, the installer cannot know the URL that reaches it and
+  says so, and the page's badge will tell you the same:
+  `NO DATA (HTTP 404) — check loop_data_file`.
 - `refresh_rate`: seconds between loop-data polls (match weewx-loopdata's
   write cadence: 2 for the Vantage driver).  The countdown chips and the
   satellite rosters advance with each packet a poll brings, since the
@@ -52,6 +58,37 @@ Installing registers the report; its options live in `weewx.conf`:
   See [Dark, light and auto](#dark-light-and-auto) below.
 - `title` / `meta_title` (Extras): override the page heading and the HTML
   `<title>`.
+
+## Where the loop-data file should live
+
+Where the file lands is weewx-loopdata's decision — its `loop_data_dir`,
+relative to its target report — and this page simply follows: whatever
+`loop_data_file` you set has to be the URL that reaches it.  The
+installer works that out for you whenever both sit inside your reports
+tree, which is the arrangement weewx-loopdata ships with and where most
+stations leave it.
+
+If you are comfortable editing your web server's configuration, there is
+a tidier place for the file — a memory filesystem outside the web root,
+which keeps it out of your report sync and off an SD card.  That is
+weewx-loopdata's ground, and its manual has the recipe: [Where the
+loop-data file should
+live](https://chaunceygardiner.github.io/weewx-loopdata/configuration.html#where-the-loop-data-file-should-live).
+
+Two things to know on this side if you take it.  `loop_data_file` becomes
+an absolute URL — the one your alias serves — because the file no longer
+shares a tree with the page:
+
+```
+[StdReport]
+    [[CelestialReport]]
+        [[[Extras]]]
+            loop_data_file = /loop-data/loop-data.txt
+```
+
+And the installer cannot work that one out: a path on disk does not say
+what URL reaches it, and only your web server knows about the alias.  It
+reports what it found and leaves your setting alone.
 
 ## Report timing is not supported
 
