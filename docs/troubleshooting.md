@@ -109,7 +109,7 @@ weewx-loopdata still configured and enabled, and is the file's
 modification time advancing?
 
 ```
-ls -l --time-style=full-iso /home/weewx/gauge-data/loop-data.txt   # your loop_data_dir
+ls -l --time-style=full-iso /home/weewx/public_html/loopdata/loop-data.txt   # your loop_data_dir
 ```
 
 If the timestamp is advancing but the page's age is not resetting, the
@@ -374,7 +374,7 @@ actually carries, and what the log said:
 
 ```
 # the paths below are examples -- use your own loop_data_dir
-python3 -c "import json; d=json.load(open('/home/weewx/gauge-data/loop-data.txt')); print(sorted(k for k in d if k.startswith('almanac')))"
+python3 -c "import json; d=json.load(open('/home/weewx/public_html/loopdata/loop-data.txt')); print(sorted(k for k in d if k.startswith('almanac')))"
 grep -i -e celestial -e loopdata -e skyfield /var/log/syslog | tail -40
 # or, where journald has replaced the syslog file:
 journalctl -u weewx --no-pager | grep -i -e celestial -e loopdata -e skyfield | tail -40

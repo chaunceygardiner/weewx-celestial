@@ -124,7 +124,7 @@ isolates a different half of the wiring.
 file itself:
 
 ```
-python3 -c "import json; d=json.load(open('/home/weewx/gauge-data/loop-data.txt')); print(sorted(k for k in d if k.startswith('almanac')))"
+python3 -c "import json; d=json.load(open('/home/weewx/public_html/loopdata/loop-data.txt')); print(sorted(k for k in d if k.startswith('almanac')))"
 ```
 
 (Use your own `loop_data_dir` path.)  An empty list means the fields line

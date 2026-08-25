@@ -7100,17 +7100,17 @@ class TestInstallerLoopDataFile:
         assert 'outside the reports tree' in '\n'.join(engine.printer.lines)
 
     def test_outside_the_reports_tree_is_hinted_never_guessed(self):
-        """/dev/shm, /home/weewx/gauge-data: real layouts whose URL lives
-        in the web server's aliases, not in weewx.conf.  Say so; never
-        invent a ../../../.. path that is a filesystem answer to a URL
-        question."""
-        config = self._config({'loop_data_dir': '/home/weewx/gauge-data'})
+        """/dev/shm, or any directory the web server reaches by alias:
+        real layouts whose URL lives in those aliases, not in weewx.conf.
+        Say so; never invent a ../../../.. path that is a filesystem
+        answer to a URL question."""
+        config = self._config({'loop_data_dir': '/home/weewx/loopdata'})
         engine = self._engine(config)
         assert self._installer().configure(engine) is False
         assert 'CelestialReport' not in config['StdReport']
         text = '\n'.join(engine.printer.lines)
         assert 'outside the reports tree' in text
-        assert '/home/weewx/gauge-data/loop-data.txt' in text
+        assert '/home/weewx/loopdata/loop-data.txt' in text
         assert 'NO DATA (HTTP 404)' in text
 
     def test_an_empty_setting_is_no_setting(self):
