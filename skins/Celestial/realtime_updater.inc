@@ -695,8 +695,10 @@
     // The moon's phase, for its dial disc: percent full plus waxing
     // (the next full moon precedes the next new moon).
     var moonFrac = num(latest, 'almanac.moon.phase');
-    // Pinned spellings since 7.6; the pre-7.6 unpinned keys remain as
-    // fallbacks so a fields line migrated earlier keeps working unchanged.
+    // Pinned spellings since 7.6, which the skin's own declaration
+    // uses; the bare .raw keys stay as fallbacks for a `moon` group of
+    // your own in the report's stanza that overrides the skin's with
+    // the unpinned spellings.
     var nextFull = num(latest, 'almanac.next_full_moon.unix_epoch.raw');
     if (nextFull === null) {
       nextFull = num(latest, 'almanac.next_full_moon.raw');
@@ -941,8 +943,9 @@
   ## enumerated through skyfield 2.0's public satellite_names() (guarded:
   ## an older skyfield has no method and no satellites).  The template
   ## builds the roster rows from the same list, so rows and live layer
-  ## always agree; the loopdata fields line stays per-satellite manual
-  ## (the README shows the pattern).
+  ## always agree; the per-satellite fields are declared by the
+  ## installer, from the same [[Satellites]] section (the satellites
+  ## group of the report's [[[LoopData]]] [[[[fields]]]]).
   #set $sat_names = []
   #if $sky_page
   #try
@@ -1124,8 +1127,9 @@
   // The live satellite layer: our own marker (dot + name), created
   // inside the current backdrop and rebuilt after every swap.  Feature
   // detection is key PRESENCE: a loop feed without the
-  // satellite keys (older skyfield, no [[Satellites]], unmigrated fields
-  // line) leaves the static dome untouched; keys present but null mean
+  // satellite keys (older skyfield, no [[Satellites]], a station not
+  // re-installed since its satellites changed) leaves the static dome
+  // untouched; keys present but null mean
   // unusable elements -- configured, but nothing to draw.
   var satMarks = null;
   // NOTE (2026-08-06, tried and rejected -- do not re-add without a
@@ -1205,7 +1209,7 @@
     // elements, the weewxd-log row without.  setHtml is a no-op when
     // the report almanac never served the row.
     if (!hasKey(base + '.rise.unix_epoch.raw') && !hasKey(base + '.rise.raw')) {
-      // Not in the fields line at all: the report-time first paint
+      // Not declared at all: the report-time first paint
       // stands.  A key PRESENT with a null value is different -- that
       // is loopdata's honest "no pass", handled below.
       return;
@@ -2442,7 +2446,7 @@
     // disagreed whenever the satellite crossed the shadow line mid-pass
     // (NOAA-21's Aug 8 shadow culmination wore the ring from rise while
     // the dome showed the live shadow entry).  Only when the feed
-    // carries the key: a trimmed fields line keeps the chart as drawn.
+    // carries the key: a feed without it keeps the chart as drawn.
     var sl = latest['almanac.' + b.tag + '.sunlit'];
     if (sl !== undefined) {
       passDotLit(b, sl !== false);
@@ -2522,7 +2526,7 @@
   // with a packet (serverNow) -- each pure client arithmetic against an
   // event-tier loopdata field, computed once by the engine, cached
   // until the event, zero cost at this cadence.  Feature detection is
-  // the roster's: an ABSENT key (not on the fields line, or an almanac
+  // the roster's: an ABSENT key (not declared, or an almanac
   // that cannot serve it) leaves the chip's report-time first paint
   // alone; a key present but null is loopdata's honest "nothing ahead"
   // and hides the chip.  The windowed guests (supermoon, eclipse, a
@@ -2750,7 +2754,7 @@
     // begins at the -18 sunset, ends at the -18 sunrise -- stargazers
     // care about both ends of the window.  A high-latitude summer
     // where -18 never comes serves nulls and hides the chip.  The
-    // keys are the fields-line spellings verbatim.
+    // keys are the declaration's spellings verbatim.
     if (hasKey('almanac(horizon=-18).sun.next_setting.unix_epoch.raw') ||
         hasKey('almanac(horizon=-18).sun.next_rising.unix_epoch.raw')) {
       var darkSet = num(latest, 'almanac(horizon=-18).sun.next_setting.unix_epoch.raw');
@@ -2944,10 +2948,29 @@
       }
       var result;
       try {
-        result = JSON.parse(this.responseText);
+        // Since weewx-loopdata 7.0 the file carries each declaring
+        // report's fields under the REPORT's name (the [StdReport]
+        // section, not the skin: one skin can be listed under two
+        // reports, in two languages), each rendered with that report's
+        // own units, formats and [Almanac] names.  This page reads its
+        // own entry and nothing else; everything below sees the flat
+        // record it always saw.  A file without the key is a
+        // weewx-loopdata older than 7.0 (the installer refuses to
+        // install beside one), or this report not declaring its fields;
+        // BAD DATA covers both -- the file is there, this page's data is
+        // not.  The name goes through json.dumps like every other string
+        // Cheetah hands this script: a report name is any [StdReport]
+        // section name, quotes and non-ASCII included.
+        result = JSON.parse(this.responseText)[$json.dumps($REPORT_NAME)];
+        if (result === undefined) {
+          throw new Error('no ' + $json.dumps($REPORT_NAME) +
+                          ' entry in loop_data_file (weewx-loopdata 7.0 or ' +
+                          'later writes one per declaring report)');
+        }
       } catch (e) {
-        // A 200 with a non-JSON body: loop_data_file points at something,
-        // but not at weewx-loopdata's output.
+        // A 200 with a non-JSON body, or JSON without this report's
+        // entry: loop_data_file points at something, but not at
+        // weewx-loopdata's output for this page.
         setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
         console.log(e);
         return;
@@ -2968,9 +2991,10 @@
           // looking dead, which is what it is, and DEAD_FEED restores the
           // dome's marks on its own schedule.  8.3.3 and earlier stamped
           // these from the BROWSER's clock, which is the one clock this
-          // page may not read; the fields line the README prescribes
-          // always carries current.dateTime.raw, so a feed doing this is
-          // misconfigured and the badge says so.  (John, 2026-08-16.)
+          // page may not read; the skin's own declaration (its `clock`
+          // group) always carries current.dateTime.raw, so a feed doing
+          // this is misconfigured and the badge says so.  (John,
+          // 2026-08-16.)
           setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
           console.log('loop record has no current.dateTime.raw; ignored');
           return;

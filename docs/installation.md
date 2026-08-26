@@ -2,7 +2,7 @@
 title: Installation
 layout: default
 nav_order: 2
-description: Installing weewx-celestial 8.x — the extension, the loop-data fields it reads, wiring weewx-loopdata's output to where the page looks, and verifying the live feed.
+description: Installing weewx-celestial 8.x — the extension, how the page declares the loop-data fields it reads, wiring weewx-loopdata's output to where the page looks, and verifying the live feed.
 ---
 
 # Installation
@@ -18,12 +18,18 @@ separately.
 ## Fresh install
 
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
-   6.9 or later and
+   7.0 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.3.2 or later, both per their instructions.  (weewx-skyfield's installer
-   configures its default satellites — the ISS and Tiangong — and its
-   default comets — Halley and Hale-Bopp — which is what the fields line
-   below assumes.)
+   2.3.2 or later, both per their instructions, in that order.
+   weewx-loopdata **must** come first: this extension's installer refuses
+   to run beside an older weewx-loopdata, or none, because the page's
+   live values reach it only through 7.0's per-report field declaration
+   (below), and an older weewx-loopdata never reads one — the page would
+   say `BAD DATA` for ever with nothing in any log to explain it.
+   weewx-skyfield's installer configures its default satellites — the ISS
+   and Tiangong — and its default comets — Halley and Hale-Bopp — which
+   is what this extension's installer declares fields for when it finds
+   no `[Skyfield]` sets of your own.
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases),
@@ -33,18 +39,34 @@ separately.
    weectl extension install weewx-celestial.zip
    ```
 
-1. Check the `fields` line of `[LoopData] [[Include]]` in `weewx.conf`.
-   The install step above appended the entries the report reads, printing
-   each one — append-only, so existing entries are never renamed, removed
-   or reordered.  The line must stay a **bare comma-separated list** (no
-   brackets, no quotes).
+1. There is no fields line to edit.  The page declares the loop-data
+   fields it reads to weewx-loopdata itself: the fields that never
+   change ship in the skin's own `skin.conf`, and the satellite and
+   comet fields — which follow your `[Skyfield] [[Satellites]]` and
+   `[[Comets]]` — are written by the install step above, under the
+   report's own stanza in `weewx.conf`:
 
-   The complete set, what each group feeds, and the line itself for hand
-   editing are in the [Fields reference](fields-reference.md).  To watch
-   more satellites or comets than the installer's defaults, see
+   ```
+   Declared 38 satellite fields (iss, tiangong) under [StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]] satellites.
+   Declared 12 comet fields (halley, hale_bopp) under [StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]] comets.
+   ```
+
+   Those two groups are the installer's, rebuilt on every install to
+   track your sets (under every report running the Celestial skin, so a
+   second one in another language needs nothing by hand); no fields
+   line of yours is edited — in particular, an
+   old `[LoopData] [[Include]] fields` line from an earlier
+   weewx-loopdata is left exactly as it is (the install counts the
+   entries on it this page now declares itself, which weewx-loopdata
+   evaluates twice per packet until the line is trimmed or retired; see
+   [Upgrading](upgrading.md#upgrading-within-8x)).
+
+   The complete set, what each group feeds, and the declaration itself
+   are in the [Fields reference](fields-reference.md).  To watch more
+   satellites or comets than the installer's defaults, see
    [Adding and removing satellites](satellites-and-comets.md#adding-and-removing-satellites)
    and [comets](satellites-and-comets.md#adding-and-removing-comets) — one command
-   makes every edit each one takes.
+   makes every edit each one takes, the declaration included.
 
    A display name belongs in an `[Almanac]` entry where every report sees
    it:
@@ -60,9 +82,10 @@ separately.
    5.2 the tag name itself is shown.  See
    [Translations](i18n.md#how-it-works).
 
-   (Live labels follow loopdata's *target report's* `[Almanac]` section,
-   so `[[Defaults]]` is the reliable home — a name set only in one
-   report's section does not reach the loop feed.)
+   (weewx-loopdata 7.0 renders this report's live values with this
+   report's own `[Almanac]` names, so a name set in `[[CelestialReport]]`
+   reaches the loop feed too; `[[Defaults]]` is simply where every
+   report, weewx-skyfield's Sky page included, sees it at once.)
 
 1. Check where the page will look for loop data — in most cases the
    installer has already settled it.  The page fetches `loop_data_file`,
@@ -82,10 +105,11 @@ separately.
 
    - **weewx-loopdata isn't installed yet.**  There is nothing to read,
      so the shipped default stands — `../loopdata/loop-data.txt`, which
-     is where a stock weewx-loopdata writes.  Install loopdata, then
-     either accept that or set the option by hand.  (Nothing is printed
-     about `loop_data_file` itself; the install does say it found no
-     `[LoopData]` `[[Include]]` fields line.)
+     is where a stock weewx-loopdata writes.  (You will not normally be
+     here: the installer refuses to run without weewx-loopdata 7.0, so
+     the only way to reach this case is a `[LoopData]` section removed
+     by hand.)  Install loopdata, then either accept that or set the
+     option by hand.
    - **The file lands outside your reports tree** — `/dev/shm`, say, or
      a directory of its own.  A filesystem path does not give a URL; only
      your web server's aliases do.  Set `loop_data_file` to the URL that
@@ -120,17 +144,20 @@ separately.
 Give WeeWX one report cycle, then check three things in order — each one
 isolates a different half of the wiring.
 
-**Is loopdata publishing the fields?**  The almanac keys should be in the
-file itself:
+**Is loopdata publishing the fields?**  The file carries each declaring
+report's fields under the report's name, and this page's entry is
+`CelestialReport`; the almanac keys should be in it:
 
 ```
-python3 -c "import json; d=json.load(open('/home/weewx/public_html/loopdata/loop-data.txt')); print(sorted(k for k in d if k.startswith('almanac')))"
+python3 -c "import json; d=json.load(open('/home/weewx/public_html/loopdata/loop-data.txt'))['CelestialReport']; print(sorted(k for k in d if k.startswith('almanac')))"
 ```
 
-(Use your own `loop_data_dir` path.)  An empty list means the fields line
-never reached loopdata — restart weewxd so it reloads the line.  Keys for
-the bodies but none for `iss`/`halley` means the almanac cannot serve
-those layers; see [the almanac tiers](configuration.md#the-almanac-tiers).
+(Use your own `loop_data_dir` path.)  A `KeyError: 'CelestialReport'`
+means loopdata has not read the declaration — restart weewxd (it reads
+every report's declaration at startup), and check that the report is
+enabled.  Keys for the bodies but none for `iss`/`halley` means the
+almanac cannot serve those layers; see
+[the almanac tiers](configuration.md#the-almanac-tiers).
 
 **Is the web server serving that file?**  Fetch it the way the page does:
 

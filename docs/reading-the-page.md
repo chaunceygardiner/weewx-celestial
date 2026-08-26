@@ -37,7 +37,7 @@ rather than a hopeful one:
 | `LIVE` | A packet arrived within the last 6 seconds.  Everything on the page is current. |
 | `12s ago` | The data on show is more than 6 seconds old; the number is its age.  Brief gaps are normal; a number that climbs means the feed has stopped — including the case where the web server goes on serving the same file loopdata stopped writing. |
 | `NO DATA (HTTP 404) — check loop_data_file` | The page fetched the loop-data file and the web server said it isn't there.  This is a wiring problem, not an astronomy problem — see [`loop_data_file`](configuration.md). |
-| `BAD DATA — check loop_data_file` | The file was served but could not be parsed as the expected json — or it parsed but carried no `current.dateTime.raw`, which the page needs to place anything at all. |
+| `BAD DATA — check loop_data_file` | The file was served but could not be parsed as the expected json — or it parsed but carried no entry for this report (the browser console says `no "CelestialReport" entry in loop_data_file`: a weewx-loopdata older than 7.0, or one not restarted since the install), or its entry carried no `current.dateTime.raw`, which the page needs to place anything at all. |
 | `OFFLINE` | The fetch itself failed — no network, or the web server is down. |
 | `CLICK-ME` | The page stopped polling after `expiration_time` hours.  Click it to resume. |
 
@@ -85,9 +85,9 @@ becomes an `hh:mm:ss` clock.
 
 {: .note }
 A chip you never see is not a fault.  A chip is hidden when its field is
-absent from the fields line, when the almanac cannot compute it, or —
-for the windowed guests — when the event is still more than 30 days out.
-See [the fields line](configuration.md#the-fields-line).
+missing from the feed, when the almanac cannot compute it, or — for the
+windowed guests — when the event is still more than 30 days out.  See
+[the declared fields](configuration.md#the-declared-fields).
 
 ## The two plates
 

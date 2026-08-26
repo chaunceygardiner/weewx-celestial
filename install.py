@@ -35,12 +35,77 @@ def loader():
     if weewx_version is not None and weewx_version < (5, 2):
         sys.exit("weewx-celestial requires WeeWX 5.2 or later, found %s" % weewx.__version__)
 
+    # The page's live values reach it only through weewx-loopdata 7.0's
+    # per-report declaration (the skin's own [LoopData] [[fields]], and
+    # the groups configure() writes): an older weewx-loopdata never reads
+    # either, writes no entry under this report's name, and the page says
+    # BAD DATA for ever with nothing in any log to say why.  So the
+    # install refuses, here, where the user is reading.
+    #
+    # Only an INSTALL is gated.  WeeWX keeps a copy of this file under
+    # user/installer/celestial and runs loader() from it for `weectl
+    # extension list` and `weectl extension uninstall` too (WeeWX 4's
+    # wee_extension likewise), and those catch only ExtensionError --
+    # a SystemExit here would leave a station that has since removed or
+    # downgraded weewx-loopdata unable to list its extensions or to
+    # uninstall this one.  The Python and WeeWX checks above have the
+    # same shape but cannot regress after install; this one can.
+    # (John's ruling, 2026-08-25, for celestial, weatherboard and
+    # liveseasons alike.)
+    if installing():
+        from weeutil.weeutil import version_compare
+        try:
+            from user.loopdata import LOOP_DATA_VERSION
+        except ImportError as e:
+            # Absent is one thing, broken is another, and the advice
+            # differs: only a module that is not THERE earns "install
+            # weewx-loopdata".  A user/loopdata.py present but failing
+            # on a dependency of its own raises ImportError too --
+            # ModuleNotFoundError naming something else, or a plain
+            # ImportError -- and telling that user to install what they
+            # have sends them the wrong way.
+            if (isinstance(e, ModuleNotFoundError)
+                    and e.name in ('user', 'user.loopdata')):
+                sys.exit("weewx-celestial requires weewx-loopdata 7.0 or later, "
+                         "and none is installed (user.loopdata cannot be "
+                         "imported).  Install weewx-loopdata first, then "
+                         "weewx-celestial.")
+            sys.exit("weewx-celestial requires weewx-loopdata 7.0 or later, and "
+                     "the installed one cannot be imported (%s: %s).  Repair or "
+                     "reinstall weewx-loopdata first, then install "
+                     "weewx-celestial." % (type(e).__name__, e))
+        except Exception as e:
+            sys.exit("weewx-celestial requires weewx-loopdata 7.0 or later, and "
+                     "the installed one cannot be imported (%s: %s).  Repair or "
+                     "reinstall weewx-loopdata first, then install "
+                     "weewx-celestial." % (type(e).__name__, e))
+        # WeeWX's own natural compare: '7' == '7.0', '7.10' > '7.2',
+        # '7.0a1' > '7.0' (a dev build of 7.0 is 7.0), '6.9b1' < '7.0'.
+        if version_compare(str(LOOP_DATA_VERSION), '7.0') < 0:
+            sys.exit("weewx-celestial requires weewx-loopdata 7.0 or later, found "
+                     "%s.  Upgrade weewx-loopdata first, then install "
+                     "weewx-celestial." % LOOP_DATA_VERSION)
+
     return CelestialInstaller()
+
+
+def installing():
+    """True when the command line is installing an extension: weectl
+    spells it `extension install`; WeeWX 4's wee_extension is optparse,
+    whose documented usage is `--install=FILE` and which also takes any
+    unambiguous prefix (`--inst`), so its test is the prefix `--i` --
+    wee_extension has no other option starting so (--list, --uninstall,
+    --config, --bin-root, --tmpdir, --dry-run, --verbosity), weectl's
+    extension subcommands none, and an argument value never starts with
+    `--`.  Same shape as weatherboard and liveseasons (John's ruling,
+    2026-08-26)."""
+    return any(arg == 'install' or arg.startswith('--i') for arg in sys.argv)
+
 
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "8.4",
+            version = "8.5",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
@@ -56,6 +121,20 @@ class CelestialInstaller(ExtensionInstaller):
                             'refresh_rate'     : 2,
                             'expiration_time'  : 24,
                             'page_update_pwd'  : 'foobar',
+                        },
+                        # The satellites and comets groups configure()
+                        # writes live here.  Listed EMPTY so that weectl
+                        # extension uninstall prunes them: weecfg's
+                        # remove_and_prune pops a section it is told
+                        # about once it has no subsections left, and
+                        # says nothing about one it is not -- without
+                        # this entry the uninstall left a [[CelestialReport]]
+                        # holding only [[[LoopData]]], with no skin, and
+                        # reportengine died on it (KeyError 'skin') every
+                        # archive cycle.  Empty, so that the conditional
+                        # merge after configure() adds nothing of its own.
+                        'LoopData': {
+                            'fields': {},
                         },
                     },
                 },
@@ -98,22 +177,22 @@ class CelestialInstaller(ExtensionInstaller):
             ])
 
     def configure(self, engine):
-        """Two install-time steps, each independently guarded, each
-        APPEND-ONLY in the sense that matters: nothing a user already
-        has is rewritten.
+        """Two install-time steps, each independently guarded, and neither
+        rewrites anything a user has set by hand.
 
-        1. Bring the station's [LoopData] [[Include]] fields line up to
-        date with what the sample page reads.  Entries the page reads
-        that are missing from the line are appended in place (an append
-        cannot break another page's consumption of the same line;
-        weectl saves the modified configuration and keeps its own
-        backup) -- existing entries are never renamed, removed or
-        reordered.  The migrator's destructive half (pre-6.0 renames,
-        drops) stays behind the human-reviewed --migrate-loopdata-fields
-        flow and is only hinted.  The bundled migrator runs in memory as
-        the oracle -- one source of truth for the field set, the
-        configuration's own [Skyfield] [[Satellites]] and [[Comets]]
-        included.
+        1. Declare the page's per-configuration fields to weewx-loopdata.
+        The skin's skin.conf declares the fields that do not depend on
+        the station; the satellite and comet fields follow the station's
+        [Skyfield] [[Satellites]] and [[Comets]], so they are written
+        here, under the report's own stanza ([StdReport]
+        [[CelestialReport]] [[[LoopData]]] [[[[fields]]]], the satellites
+        and comets groups), rebuilt on every install so they track the
+        configured set.  Those two groups are this installer's; nothing
+        else in the section is touched, and the legacy [LoopData]
+        [[Include]] fields line is never written -- only read, to count
+        the entries on it this page now declares itself -- it is
+        weewx-loopdata's, deprecated in 7.0 and removed by a later
+        release of it.
 
         2. Point the page at wherever weewx-loopdata actually writes,
         derived from the configuration rather than guessed.
@@ -123,10 +202,13 @@ class CelestialInstaller(ExtensionInstaller):
         note, never a failed install."""
         modified = False
         try:
-            modified |= self._update_fields(engine)
+            modified |= self._declare_fields(engine)
         except Exception as e:
-            engine.printer.out('Could not check the [LoopData] fields line '
-                               '(%s); the README shows what the page reads.' % e)
+            engine.printer.out('Could not declare the satellite and comet '
+                               'fields (%s); the manual\'s Fields reference '
+                               'shows the groups to write under [StdReport] '
+                               '[[CelestialReport]] [[[LoopData]]] '
+                               '[[[[fields]]]].' % e)
         try:
             modified |= self._set_loop_data_file(engine)
         except Exception as e:
@@ -135,6 +217,72 @@ class CelestialInstaller(ExtensionInstaller):
                                'DATA (HTTP 404), loop_data_file is the line '
                                'to fix (see the README).' % e)
         return modified
+
+    def _declare_fields(self, engine):
+        """The satellite and comet declaration (configure's step 1), done
+        by the bundled celestial.py's declare_page_fields -- the same
+        code the --add-satellite/--add-comet verbs run, so the installer
+        and the verbs cannot disagree about what a satellite needs.
+        Reports what changed, group by group; a configuration already
+        declaring the right sets is left silent and untouched.  Returns
+        True exactly when the configuration was modified."""
+        celestial = self._load_bundled_celestial()
+        config = engine.config_dict
+        dry_run = getattr(engine, 'dry_run', False)
+        # ensure_default: only the installer may add [[CelestialReport]]
+        # before it exists -- weectl's conditional merge fills in its skin
+        # and HTML_ROOT right after this hook.
+        report = celestial.declare_page_fields(config, apply=not dry_run,
+                                               ensure_default=True)
+        # The legacy [LoopData] [[Include]] fields line is never edited
+        # here, only counted: entries on it that this page now declares
+        # itself are evaluated twice per packet by weewx-loopdata 7.0
+        # (which defers de-duplicating until every extension declares),
+        # and the line is other pages' as well, so the user decides.
+        twice = celestial.legacy_entries_declared(
+            config, report['satellites'], report['comets'], report['reports'])
+        if not report['changes'] and not twice:
+            return False
+        for section, groups in report['changes'].items():
+            for group, (old, new) in groups.items():
+                tags = report[group]
+                where = ('[StdReport] [[%s]] [[[LoopData]]] [[[[fields]]]] %s'
+                         % (section, group))
+                if dry_run:
+                    verb = 'Would declare' if new else 'Would remove'
+                elif new:
+                    verb = 'Declared'
+                else:
+                    verb = 'Removed'
+                if new:
+                    engine.printer.out(
+                        '%s %d %s fields (%s) under %s%s.'
+                        % (verb, len(new), group[:-1], ', '.join(tags), where,
+                           ' (dry run)' if dry_run else ''))
+                else:
+                    engine.printer.out(
+                        '%s %s: [Skyfield] [[%s]] is empty, so the page '
+                        'reads no %s fields%s.'
+                        % (verb, where, group.capitalize(), group[:-1],
+                           ' (dry run)' if dry_run else ''))
+                if report['%s_defaulted' % group]:
+                    engine.printer.out(
+                        "    (weewx-skyfield's installer defaults: the "
+                        'configuration has no [Skyfield] [[%s]] to follow.  '
+                        'Re-install weewx-celestial after configuring your '
+                        'own, or use --add-%s.)'
+                        % (group.capitalize(), group[:-1]))
+        if report['changes'] and not dry_run:
+            engine.printer.out('Restart weewxd so weewx-loopdata reads the '
+                               'declaration.')
+        if twice:
+            engine.printer.out(
+                'Note: [LoopData] [[Include]] fields still carries %d '
+                'entries this page now declares itself; weewx-loopdata '
+                'evaluates those twice per loop packet until the line is '
+                'trimmed or retired.  It is left as it is -- other pages '
+                'may read it.' % len(twice))
+        return bool(report['changes']) and not dry_run
 
     def _set_loop_data_file(self, engine):
         """Derive Extras loop_data_file -- the URL the page polls -- from
@@ -161,7 +309,15 @@ class CelestialInstaller(ExtensionInstaller):
         configuration was modified."""
         config = engine.config_dict
         if 'LoopData' not in config:
-            return False        # the fields step has already said its piece
+            # Nothing to derive from: both halves of the answer live in
+            # weewx-loopdata's own section.  Nothing is said, either --
+            # the declaration step reads [Skyfield], not [LoopData], so
+            # (unlike 8.4's fields step, which printed an install-it
+            # note here) neither step has anything to report.  The
+            # loader gate means weewx-loopdata 7.0 IS installed, so a
+            # missing section is a hand edit; the Installation page says
+            # the shipped loop_data_file default stands for it.
+            return False
         reports = config.get('StdReport')
         if not reports:
             return False        # no reports at all: nothing certain to say
@@ -343,76 +499,6 @@ class CelestialInstaller(ExtensionInstaller):
                       else '.'))
         return False
 
-    def _update_fields(self, engine):
-        celestial = self._load_bundled_celestial()
-        config = engine.config_dict
-        try:
-            fields = config['LoopData']['Include']['fields']
-        except KeyError:
-            engine.printer.out(
-                'Note: no [LoopData] [[Include]] fields entry found.  The '
-                "page's live values are weewx-loopdata almanac fields; "
-                'install weewx-loopdata, then run the bundled '
-                '--migrate-loopdata-fields utility to write the fields line '
-                '(the README shows the commands).')
-            return False
-        if isinstance(fields, str):
-            fields = [f.strip() for f in fields.split(',') if f.strip()]
-        _, report = celestial.migrate_loopdata_fields(
-            list(fields), celestial._configured_satellites(config),
-            celestial._configured_comets(config))
-        modified = False
-        if report['added']:
-            if getattr(engine, 'dry_run', False):
-                engine.printer.out(
-                    'Would append %d entries the page reads to [LoopData] '
-                    '[[Include]] fields (dry run; existing entries are '
-                    'never touched).' % len(report['added']))
-            else:
-                config['LoopData']['Include']['fields'] = (
-                    list(fields) + list(report['added']))
-                engine.printer.out(
-                    'Appended %d entries the page reads to [LoopData] '
-                    '[[Include]] fields (append-only: existing entries are '
-                    'never renamed, removed or reordered):'
-                    % len(report['added']))
-                for name in report['added']:
-                    engine.printer.out('    ' + name)
-                engine.printer.out(
-                    'Restart weewxd so weewx-loopdata reloads the line.')
-                modified = True
-        if report['renamed']:
-            config_path = getattr(engine, 'config_path', '/home/weewx/weewx.conf')
-            # The user package's parent: WEEWX_ROOT/bin, exactly where
-            # _gen_file_paths just put this extension's 'bin/user' files.
-            bin_dir = os.path.abspath(os.path.join(
-                engine.root_dict.get('WEEWX_ROOT', '/home/weewx'), 'bin'))
-            engine.printer.out(
-                'Note: the [LoopData] [[Include]] fields line carries %d '
-                'entries with outdated spellings.  Renames deserve review, '
-                'so this installer never applies them; the bundled migrator '
-                'updates the line in one idempotent pass:'
-                % len(report['renamed']))
-            # On a deb/rpm package install WeeWX's own code lives in
-            # /usr/share/weewx, on sys.path only because /usr/bin/weectl
-            # exports PYTHONPATH -- a pasted bare command dies importing
-            # weewx.  Carry the running weewx's location explicitly;
-            # redundant on venv installs, essential on package installs.
-            weewx_dir = os.path.dirname(os.path.dirname(
-                os.path.abspath(weewx.__file__)))
-            engine.printer.out('    cd %s' % bin_dir)
-            engine.printer.out('    PYTHONPATH=%s %s -m user.celestial '
-                               '--migrate-loopdata-fields '
-                               '--config %s --output /tmp/weewx.conf.migrated'
-                               % (weewx_dir, sys.executable, config_path))
-            engine.printer.out('    git diff --no-index --word-diff %s '
-                               '/tmp/weewx.conf.migrated' % config_path)
-            engine.printer.out('Review the changes (the utility lists each one; '
-                               'the word-diff shows them in place -- a plain diff '
-                               'is unreadable on one long fields line), then move '
-                               'the file into place.  See the README for detail.')
-        return modified
-
     _PLACEMENT_URL = ('https://chaunceygardiner.github.io/weewx-celestial/'
                       'configuration.html#where-the-loop-data-file-should-live')
 
@@ -447,9 +533,9 @@ class CelestialInstaller(ExtensionInstaller):
     @staticmethod
     def _load_bundled_celestial():
         """The bundled celestial.py, imported from this extension's own
-        tree (beside this install.py) under a private module name: the
-        migrator is the field-set oracle, and this hint must never
-        duplicate it."""
+        tree (beside this install.py) under a private module name: it is
+        the field-set oracle, and this installer must never duplicate
+        it."""
         import importlib.util
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             'bin', 'user', 'celestial.py')

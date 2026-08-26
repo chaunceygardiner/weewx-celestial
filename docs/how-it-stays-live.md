@@ -97,9 +97,9 @@ zero and then becomes the next sunrise with no reload, and why a pass
 chip rolls to the next pass the moment the current one ends.
 
 The report also bakes each event's target timestamp into the page, so a
-chip whose event the feed does not carry — a lesser almanac, a trimmed
-fields line — still counts down toward the instant the page knew about
-at generation time, on the packets that do arrive.  With no feed at all
+chip whose event the feed does not carry — a lesser almanac, a group
+of your own that overrode it — still counts down toward the instant the
+page knew about at generation time, on the packets that do arrive.  With no feed at all
 the chips stand at their generation values, like everything else on the
 page: the clock they count on is the packet's (see
 [Whose time it is](#whose-time-it-is)).

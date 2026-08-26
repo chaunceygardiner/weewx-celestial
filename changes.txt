@@ -1,6 +1,74 @@
 weewx-celestial change history
 ------------------------------
 
+8.5 2026/08/26
+--------------
+- ACTION REQUIRED: weewx-loopdata 7.0 or later.  Upgrade it BEFORE
+  installing this release: the installer refuses to run beside an
+  older weewx-loopdata, or none, and says so.  The page's live values
+  now reach it only through weewx-loopdata 7.0's per-report field
+  declaration, which an older weewx-loopdata never reads -- the page
+  would say BAD DATA for ever with nothing in any log to explain it.
+  Only an install is checked: WeeWX runs an installed extension's
+  loader for `weectl extension list` and `uninstall` too, and the page
+  has to stay listable and removable after loopdata is gone.  Nothing
+  else to do: install, restart weewxd.
+- The page declares the loop-data fields it reads to weewx-loopdata
+  itself, and reads its own entry of loop-data.txt.  The fifty fields
+  that do not depend on your configuration ship in the skin's own
+  skin.conf ([LoopData] [[fields]], grouped by panel); the satellite
+  and comet fields, which follow your [Skyfield] [[Satellites]] and
+  [[Comets]], are written by the installer under the report's own
+  stanza -- [StdReport] [[CelestialReport]] [[[LoopData]]]
+  [[[[fields]]]], one group each -- and rebuilt on every install so
+  they track your sets (the installer defaults when there is no
+  section to follow).  A second report of your own running the
+  Celestial skin (another language, say) gets the same two groups.
+  weewx-loopdata 7.0 writes each declaring report's fields under the
+  REPORT's name, rendered in that report's own units, formats and
+  [Almanac] names, so a display name set in [[CelestialReport]] now
+  reaches the loop feed, and a Celestial report in German gets German
+  shower names from the feed whatever language loopdata's sample
+  report runs in.
+- The installer no longer edits the [LoopData] [[Include]] fields
+  line: a line left over from an earlier install is exactly as you had
+  it, weewx-loopdata warns about it at startup, and it retires the
+  line in a later release of its own.  It does count it: the entries
+  on it that this page now declares itself -- the ~100 that 8.1-8.4's
+  installers appended -- are evaluated twice per loop packet by
+  weewx-loopdata 7.0 while the line stands, and the install says how
+  many.  Trim this page's entries from it if no other page of yours
+  reads them, or leave it for loopdata; do not add this page's fields
+  to it.  --remove-satellite/--remove-comet likewise leave the line
+  alone and say how many entries for the removed tag remain on it.
+- A field of your own goes in a GROUP of your own, in the same
+  [StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]]
+  section: never in the skin's skin.conf, which the next upgrade
+  overwrites, and never in the satellites or comets groups, which the
+  next install rebuilds.  Note that weectl extension uninstall
+  celestial removes the report's whole stanza -- a group of your own
+  and your [[[Extras]]] settings with it, as it always has -- so keep
+  a copy if you uninstall, which the 6.x upgrade path does.
+- The --migrate-loopdata-fields utility is gone with the line it
+  edited.  A 5.x upgrade is now: uninstall, install weewx-loopdata
+  7.0 and weewx-skyfield, install this, restart -- the manual's
+  Upgrading page has the shortened sequence.
+- --add-satellite/--add-comet and their inverses declare fields the
+  same way: each rebuilds the report's satellites or comets group for
+  the configured set -- the same code the installer runs -- instead of
+  appending to or sweeping the fields line, and neither needs a
+  fields line to exist any more.
+- The badge reads BAD DATA -- check loop_data_file for a loop-data
+  file that parses but carries no entry under this report's name (an
+  older weewx-loopdata, or the report disabled), and the browser
+  console names the missing key.
+- The manual follows: Installation, Upgrading, the Fields reference
+  (which now prints both halves of the declaration as shipped),
+  Configuration, Satellites and comets, In your own skin,
+  Troubleshooting and Translations.
+- Drop-in over 8.4 once weewx-loopdata is 7.0: no configuration
+  change of yours; the installer prints what it declared.
+
 8.4 2026/08/24
 --------------
 - The installer works out where weewx-loopdata actually writes and

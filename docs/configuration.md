@@ -19,6 +19,10 @@ Installing registers the report; its options live in `weewx.conf`:
         HTML_ROOT = celestial
         enable = true
         skin = Celestial
+        [[[LoopData]]]
+            [[[[fields]]]]
+                satellites = almanac.iss.az, almanac.iss.alt, ...
+                comets = almanac.halley.az, almanac.halley.alt, ...
         [[[Extras]]]
             loop_data_file = ../loopdata/loop-data.txt
             refresh_rate = 2
@@ -58,11 +62,15 @@ Installing registers the report; its options live in `weewx.conf`:
   See [Dark, light and auto](#dark-light-and-auto) below.
 - `title` / `meta_title` (Extras): override the page heading and the HTML
   `<title>`.
+- `[[[LoopData]]] [[[[fields]]]]`: the satellite and comet fields the
+  page reads, declared to weewx-loopdata — written by the installer for
+  your `[Skyfield]` sets, rebuilt on every install, not for editing.  See
+  [the declared fields](#the-declared-fields) below.
 
 ## Where the loop-data file should live
 
 Where the file lands is weewx-loopdata's decision — its `loop_data_dir`,
-relative to its target report — and this page simply follows: whatever
+relative to its sample report — and this page simply follows: whatever
 `loop_data_file` you set has to be the URL that reaches it.  The
 installer works that out for you whenever both sit inside your reports
 tree, which is the arrangement weewx-loopdata ships with and where most
@@ -159,10 +167,11 @@ configuration:
 - **The satellite set** is `[Skyfield] [[Satellites]]` in `weewx.conf`
   (weewx-skyfield's installer defaults to the ISS and Tiangong).  The
   skin enumerates whatever is configured; each satellite needs its
-  nineteen fields-line entries (see
-  [Fields reference](fields-reference.md#satellites-19-entries-each)) to go live, and a
-  display name is best set under `[StdReport] [[Defaults]]
-  [[[Almanac]]]` so the loop feed sees it too.  The bundled
+  nineteen declared fields (see
+  [Fields reference](fields-reference.md#satellites-19-entries-each)) to go live,
+  which the installer writes for the set it finds, and a display name is
+  best set under `[StdReport] [[Defaults]] [[[Almanac]]]` so every
+  report calls it the same thing.  The bundled
   [`--add-satellite` utility](satellites-and-comets.md#adding-and-removing-satellites) makes
   all three edits in one command.
 - **The backdrop steps once a minute.**  Each report cycle renders a
@@ -187,7 +196,8 @@ configuration:
   configured comet gets a diamond on the Geocentric dial — placed like
   a planet, its tail fanning anti-sunward, solid when naked-eye bright
   — a roster row, and a windowed perihelion countdown chip; each needs
-  its six fields-line entries to go live.  The bundled
+  its six declared fields to go live, which the installer writes for
+  the set it finds.  The bundled
   [`--add-comet` utility](satellites-and-comets.md#adding-and-removing-comets) makes the three
   edits in one command.  The dome and the pass chart draw their own
   comet diamonds and meteor shower radiants inside weewx-skyfield's
@@ -198,7 +208,7 @@ configuration:
 The chip row at the top of the page has no options of its own: the
 always-on chips (the soonest visible pass, sunset/sunrise, the meteor
 shower peak, and astronomical darkness — begins at the −18° sunset,
-ends at the −18° sunrise, whichever is next) follow the fields line,
+ends at the −18° sunrise, whichever is next) follow the declaration,
 and the windowed guests (the next equinox or solstice — named by the
 season it begins — Earth's perihelion or aphelion, the next supermoon,
 the next eclipse visible from
@@ -216,7 +226,7 @@ own Sky page shows a perihelion as a dated chip up to a year out; the
 ## Adding and removing satellites and comets
 
 Each satellite or comet takes three separate `weewx.conf` edits — its
-`[Skyfield]` entry, its fields-line entries, and its display name — and
+`[Skyfield]` entry, its declared fields, and its display name — and
 the extension bundles `--add-satellite`/`--add-comet` to make all three
 in one command (with `--remove-satellite`/`--remove-comet` as exact
 inverses).  That is its own page:
@@ -255,22 +265,41 @@ installation from one that never asked.
 The footer credit is generated truthfully for whichever almanac actually
 serves the page.
 
-## The fields line
+## The declared fields
 
-Nothing about the fields line is configured in this skin — it belongs to
-weewx-loopdata — but two rules govern it, and breaking either is a
-common cause of a page that will not go live:
+The page declares the loop-data fields it reads to weewx-loopdata (7.0
+or later), which evaluates them on every loop packet and writes them
+into `loop-data.txt` under the report's name — `CelestialReport` — in
+this report's own units, formats and `[Almanac]` names.  The declaration
+is in two places, and neither wants editing:
 
-- `[LoopData] [[Include]] fields` must stay a **bare comma-separated
-  list** — no brackets, no quotes.  (Almanac entries are single-argument
-  precisely so they never contain a comma.)
-- Extra fields are harmless: weewx-loopdata publishes whatever you list,
-  and the page reads only its own keys.  If your own pages consume other
-  fields (as, for example,
-  [PaloAltoWeather.com](https://www.paloaltoweather.com/celestial.html)'s
-  do), keep them on the line — and never trim it to the Celestial page's set
-  without checking those pages first.
+- the fields that never change, in the skin's own `skin.conf`
+  (`[LoopData] [[fields]]`), and
+- the satellite and comet fields, which follow your `[Skyfield]` sets, in
+  the `satellites` and `comets` groups of the report's stanza above —
+  written by the installer and by `--add-satellite`/`--add-comet`, and
+  rebuilt whenever either runs.
 
-Every entry the skin reads, grouped by what it feeds, plus the complete
-line for hand editing, is in the
+A field of your own — for a page of your own reading this report's entry,
+say — goes in a **group of your own** in that stanza; weewx-loopdata
+merges the groups by name, so the skin's and the installer's are left
+alone.  The stanza is the report's, though: `weectl extension uninstall
+celestial` removes it whole, your groups with it, exactly as it removes
+`[[[Extras]]]` — so keep a copy of any group of your own if you uninstall
+(the 6.x upgrade path does).  It removes only `[[CelestialReport]]`: a
+second report of your own running the Celestial skin keeps its
+`satellites` and `comets` groups after an uninstall, and weewx-loopdata
+goes on evaluating those fields every loop packet for a page that is no
+longer there — delete that report's `[[[LoopData]]]` section by hand.  The older `[LoopData] [[Include]] fields` line is not this page's
+business: 8.5 never writes it — it only reads it to count the entries
+this page now declares itself, which weewx-loopdata evaluates twice per
+packet while the line stands — and weewx-loopdata retires it in a later
+release.  If your own pages still read it (as, for example,
+[PaloAltoWeather.com](https://www.paloaltoweather.com/celestial.html)'s
+do), that is between them and weewx-loopdata's
+[Declaring fields](https://chaunceygardiner.github.io/weewx-loopdata/declaring-fields.html)
+page.
+
+Every entry the skin reads, grouped by what it feeds, plus both halves of
+the declaration as shipped, is in the
 [Fields reference](fields-reference.md).

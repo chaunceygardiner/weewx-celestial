@@ -48,7 +48,8 @@ extensions:
 - The skin fetches `loop_data_file`, a URL relative to *this report's*
   HTML_ROOT.
 - weewx-loopdata writes to `[[FileSpec]] loop_data_dir`, a path relative
-  to *its target report's* HTML_ROOT.
+  to *its sample report's* HTML_ROOT (its `target_report` where one is
+  still set, `LoopDataReport` otherwise).
 
 The installer derives the first from the second, so the likeliest reason
 you are reading this is that it could not: weewx-loopdata was installed
@@ -95,12 +96,20 @@ Look at it directly (`head -c 300 loop-data.txt`).  A truncated or
 half-written file usually means something other than loopdata is writing
 there.
 
-It also means a file that parsed but carried no `current.dateTime.raw`.
-The page times everything by the station's own clock, which that field
-carries, so a record without it is ignored whole and the browser console
-says so.  The fields line in
-[Fields reference](fields-reference.md) always includes it — check that
-yours has not been trimmed.
+It also means a file that parsed but carries no `CelestialReport` entry
+— the browser console says `no "CelestialReport" entry in
+loop_data_file`.  weewx-loopdata 7.0 writes each declaring report's
+fields under the report's name, and this page reads its own; a file
+without it is an older weewx-loopdata (the installer refuses to run
+beside one, but a downgrade gets past it), or this report disabled, or
+renamed without its declaration.  Look at the file's top-level keys
+(`python3 -c "import json; print(list(json.load(open('loop-data.txt'))))"`).
+
+And it means an entry that carries no `current.dateTime.raw`.  The page
+times everything by the station's own clock, which that field carries,
+so a record without it is ignored whole and the browser console says
+so.  The skin's declaration always includes it; only a `clock` group of
+your own in the report's stanza could override it away.
 
 ## The badge age keeps climbing
 
@@ -239,10 +248,12 @@ quickest way to confirm which tier you are on.
 
 Three different causes, in the order worth checking:
 
-1. **Its field is not on the fields line.**  Check
+1. **Its field is not in the feed.**  Check this report's entry of
    `loop-data.txt` for the key (see the verification commands in
    [Installation](installation.md#verify-it)), and compare against the
-   [Fields reference](fields-reference.md).
+   [Fields reference](fields-reference.md) — every chip's field ships
+   declared in the skin, so a missing key means loopdata has not read
+   the declaration (restart weewxd) or cannot compute it (next).
 2. **The almanac cannot compute it.**  weewx-skyfield 2.1 is what serves
    the meteor shower and supermoon chips; older versions simply omit
    them, one log line per field at startup.
@@ -344,8 +355,10 @@ second — by design.
 
 By default the page shows the **station's** timezone, auto-detected at
 report time, so remote viewers see station time.  Override with
-`time_zone` in the skin's `[Extras]`: an IANA name forces that zone,
-`browser` uses the viewer's own.  See [Configuration](configuration.md).
+`time_zone` in the report's `[[[Extras]]]` in `weewx.conf` (not in the
+skin's `skin.conf`, which an upgrade overwrites): an IANA name forces
+that zone, `browser` uses the viewer's own.  See
+[Configuration](configuration.md).
 
 ## The translation did not take
 
@@ -359,8 +372,11 @@ Four separate things can be meant by this:
   page translates normally and the bodies read `Moon`, `Jupiter`,
   `Proxima`.  See [Translations](i18n.md#how-it-works).
 - **Labels translated, live values did not.**  Loop-data values follow
-  *loopdata's target report*, not this one — one language per loopdata
-  instance.  See [Translations](i18n.md#constellations-and-loop-data-values).
+  *this* report's language — weewx-loopdata 7.0 renders each report's
+  entry with that report's own `[Almanac]` — but it reads the report's
+  configuration at startup, so a `lang` changed while it runs takes
+  effect at the next weewxd restart.  See
+  [Translations](i18n.md#constellations-and-loop-data-values).
 - **My edits vanished after an upgrade.**  `weectl extension install`
   overwrites `skins/Celestial/`, including its `lang/` files.  Put local
   overrides in `weewx.conf` as `[[[Texts]]]`/`[[[Almanac]]]` entries under
@@ -374,7 +390,7 @@ actually carries, and what the log said:
 
 ```
 # the paths below are examples -- use your own loop_data_dir
-python3 -c "import json; d=json.load(open('/home/weewx/public_html/loopdata/loop-data.txt')); print(sorted(k for k in d if k.startswith('almanac')))"
+python3 -c "import json; d=json.load(open('/home/weewx/public_html/loopdata/loop-data.txt'))['CelestialReport']; print(sorted(k for k in d if k.startswith('almanac')))"
 grep -i -e celestial -e loopdata -e skyfield /var/log/syslog | tail -40
 # or, where journald has replaced the syslog file:
 journalctl -u weewx --no-pager | grep -i -e celestial -e loopdata -e skyfield | tail -40

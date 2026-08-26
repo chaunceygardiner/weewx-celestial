@@ -2,7 +2,7 @@
 title: Upgrading
 layout: default
 nav_order: 3
-description: Upgrading weewx-celestial within 8.x, or from 7.x, 6.x or 5.x and earlier — what each path needs, the bundled --migrate-loopdata-fields utility, and the three 6.0 field changes with no 1:1 equivalent.
+description: Upgrading weewx-celestial within 8.x, or from 7.x, 6.x or 5.x and earlier — what each path needs, the weewx-loopdata 7.0 declaration that 8.5 moves to, and the three 6.0 field changes with no 1:1 equivalent.
 ---
 
 # Upgrading
@@ -13,21 +13,51 @@ description: Upgrading weewx-celestial within 8.x, or from 7.x, 6.x or 5.x and e
 
 Find your current version below.  Every path ends the same way: the page
 reads the entries listed in the [Fields reference](fields-reference.md),
-and as of 8.1 the installer appends the missing ones for you.
+and as of 8.5 it declares them to weewx-loopdata itself — the skin ships
+the fixed ones, the installer writes the satellite and comet ones.
 
 ## Upgrading within 8.x
 
-Install over the top and restart WeeWX — that is the whole procedure:
+Upgrade weewx-loopdata to **7.0 or later first** — 8.5 requires it, and
+this extension's installer refuses to run beside an older one — then
+install over the top and restart WeeWX:
 
 ```
+weectl extension install weewx-loopdata.zip
 weectl extension install weewx-celestial.zip
 ```
 
 There are no configuration changes you have to make between 8.x releases.
-The install appends any fields-line entries a newer version reads
-(append-only, printing each one), and the restart both reloads that line
-in weewx-loopdata and refreshes the deployed `celestial.css` and
-`sky.js`.
+The install declares the satellite and comet fields for your `[Skyfield]`
+sets under the report's stanza (printing what it wrote), and the restart
+both makes weewx-loopdata read the declaration and refreshes the deployed
+`celestial.css` and `sky.js`.
+
+8.5 is where the page stops reading weewx-loopdata's station-wide
+`[LoopData] [[Include]] fields` line and reads its own entry of
+`loop-data.txt` instead, which weewx-loopdata 7.0 writes under the
+report's name from what the report declares.  Two things follow.  The
+installer no longer appends anything to that line — it never writes it,
+and an old one is left exactly as you have it.  That has a cost worth
+knowing: 8.1–8.4's installers appended this page's ~100 fields to that
+line, and weewx-loopdata 7.0 evaluates the line as a context of its own
+beside the declaration, so every one of those entries is computed
+**twice per loop packet** until the line is trimmed or weewx-loopdata
+retires it (a later release of its own; it warns at startup while the
+line stands).  The install tells you how many.  Trim this page's entries
+from the line only if no other page of yours reads them —
+[PaloAltoWeather.com](https://www.paloaltoweather.com/celestial.html)'s
+do, for instance — or leave it for loopdata.  And the page's live values
+now follow **this report's** units, formats and `[Almanac]` names rather
+than loopdata's target report's: a display name in `[[CelestialReport]]`
+reaches the feed, and a Celestial report in German gets German shower
+names from the feed whatever language loopdata's sample report runs in.
+See [Declaring fields](https://chaunceygardiner.github.io/weewx-loopdata/declaring-fields.html)
+in weewx-loopdata's manual for the mechanism.
+
+The `--migrate-loopdata-fields` utility is gone with the line it edited.
+If you are coming from 5.x or earlier, see that section below: the
+sequence is shorter than it was.
 
 From 8.4 the install also settles `loop_data_file` — the URL the page
 polls — for a station that has none, deriving it from where
@@ -73,8 +103,8 @@ countdown targets, the header clock — instead of measuring some of them
 against the viewer's own clock.  Once a page has its first loop packet —
 normally a second or two after it loads — nothing looks different on a
 machine whose clock is right.  A loop record carrying no `current.dateTime.raw`
-is now ignored rather than timestamped from the browser; the fields line
-this extension prescribes always carries it.
+is now ignored rather than timestamped from the browser; the declaration
+this extension ships always carries it.
 
 8.3.3 makes the Next Visible Pass chart's sweeping dot leave the chart
 when the pass ends, instead of jumping back to mid-arc.  The fix reads
@@ -103,32 +133,26 @@ dome's Mars stays a shade darker than the dial's.  Upgrade both.
 
 ## Upgrading from 7.x
 
-Install right over the existing version, then restart WeeWX —
+Upgrade weewx-loopdata to 7.0 or later, install this version right over
+the existing one, then restart WeeWX —
 
 ```
+weectl extension install weewx-loopdata.zip
 weectl extension install weewx-celestial.zip
 ```
 
-One action lights up the new layers: your `[LoopData] [[Include]] fields`
-line needs the satellite entries (8.0) and 8.1's countdown-chip and
-per-comet entries.  As of 8.1 the install itself appends them —
-append-only, each one printed — so restart weewxd afterwards to make
-weewx-loopdata reload the line, and that is the whole upgrade.
+Nothing lights up the new layers but the install itself: the page
+declares every field it reads — the satellite layer (8.0), the countdown
+chips and the comets (8.1) included — the fixed ones from the skin, the
+satellite and comet ones written by the installer for your `[Skyfield]`
+sets.  Your old fields line is neither needed nor touched.
 
 Run weewx-skyfield 2.3.2 — 2.1 brought the comets and the
 shower/supermoon chips, 2.3.2 the pass chart's own rise and set that
 lets its dot leave the chart when the pass ends; 2.0 still serves the
 satellites, and the sunset, darkness and pass chips count on any of them.
-Without the entries the page simply hides those layers and chips.  Everything else is drop-in, and the rest of the fields line
-is untouched.
-
-The `--migrate-loopdata-fields` utility remains available and appends the
-same entries: it follows your `[Skyfield]` `[[Satellites]]` and
-`[[Comets]]`, so a customized set gets entries for its own tags instead
-of the defaults, and it is idempotent and never touches non-celestial
-entries.  It is only *needed* when the line still carries pre-6.0
-spellings — renames deserve review, so the installer prints the exact
-migrator commands, tailored to your machine, instead of applying them.
+An almanac that cannot serve a field omits it, and the page simply hides
+that layer or chip.
 
 {: .note }
 Upgrading replaces the bundled skin (`skins/Celestial/`, including its
@@ -138,6 +162,14 @@ Upgrading replaces the bundled skin (`skins/Celestial/`, including its
 
 ## Upgrading from 6.x
 
+1. Upgrade weewx-loopdata to 7.0 or later — this extension's installer
+   refuses to run beside an older one, so do it before the uninstall
+   below leaves you without a page:
+
+   ```
+   weectl extension install weewx-loopdata.zip
+   ```
+
 1. Uninstall the old version, then install the new one:
 
    ```
@@ -145,21 +177,22 @@ Upgrading replaces the bundled skin (`skins/Celestial/`, including its
    weectl extension install weewx-celestial.zip
    ```
 
+   (The uninstall removes the report's whole `[[CelestialReport]]`
+   stanza — `[[[Extras]]]` settings of your own, and any group of your
+   own under `[[[LoopData]]]`, included.  Keep a copy to put back.)
+
 1. Restart WeeWX.  (The restart also refreshes the deployed
    `celestial.css` and `sky.js` — CopyGenerator re-copies `copy_once`
    files on every report first-run — and the page version-tags both
    URLs, so browsers refetch them too.)
 
-Your existing fields line keeps working as is: 8.x reads a subset of the
-6.0 field set, plus the Proxima Centauri, satellite, comet and countdown
-entries in the [Fields reference](fields-reference.md).  The installer
-appends those; `--migrate-loopdata-fields` does the same in one
-idempotent pass if you would rather run it by hand.
-
-The remaining 6.0 entries (rise/sets, twilights, ra/dec,
-equinox/solstice, `almanac.moon_phase`, `almanac.moon_index`, sun
-visible-time) are no longer read by this skin.  Keep them if your own
-pages consume them, or trim them.
+Your existing fields line is no longer read by this page at all: 8.5
+declares what it reads itself (see the
+[Fields reference](fields-reference.md)), and the line is left as it is
+for whatever pages of your own still read it, until weewx-loopdata
+retires it.  While it stands, the entries on it that this page also
+declares are evaluated twice per loop packet — the install counts them —
+so trim this page's entries from it if nothing else reads them.
 
 {: .important }
 If you still list `user.celestial.Celestial` under `data_services` in
@@ -171,8 +204,16 @@ keep weewxd from starting.
 
 6.0 removed this extension's own loop fields (`current.sunrise`,
 `current.earthMarsDistance`, `current.moonWaxing`, …); almanac fields
-replace them.  The sequence matters — the migration utility ships with
-this extension, so the new version must be installed before it can run:
+replace them, and as of 8.5 the page declares the ones it reads to
+weewx-loopdata itself, so your old fields line needs no rewriting for
+this page's sake (there was a `--migrate-loopdata-fields` utility for
+that through 8.4; it is gone).  The sequence:
+
+1. **Upgrade weewx-loopdata to 7.0 or later** (and install
+   [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
+   2.3.2+ if you have not already).  This extension's installer refuses
+   to run beside an older weewx-loopdata, so do it first — before the
+   uninstall below leaves you without a page.
 
 1. **Uninstall the old version** (required — see the 6.x note above about
    `data_services`):
@@ -190,52 +231,56 @@ this extension, so the new version must be installed before it can run:
    `[Engine] [[Services]]` and remove the two orphaned `celestial_*` data
    files from `bin/user` by hand.
 
-1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
-   6.9+ and [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.3.2+ if you have not already, then install this version.
-
-1. Run the bundled utility to rewrite your `[LoopData] [[Include]] fields`
-   line — every celestial entry (including pre-3.0 PascalCase names)
-   becomes its almanac equivalent, rendition suffixes are honored,
-   non-celestial entries are never touched, and the fields the report
-   needs are appended.  The satellite and comet entries follow your
-   `[Skyfield]` `[[Satellites]]` and `[[Comets]]` — fields for exactly
-   the sets you have configured, the installer defaults (iss and
-   tiangong; halley and hale_bopp) only when there is no section to
-   follow.  Raw times and durations arrive with pinned units
-   (`almanac.sunrise.unix_epoch.raw`, `almanac.sun.visible.second.raw`),
-   so they keep the old fields' fixed meanings — epoch seconds, seconds
-   of daylight — no matter how loopdata's target report units are set:
-
-   ```
-   source /home/weewx/weewx-venv/bin/activate
-   cd /home/weewx/bin    # the directory CONTAINING the `user` package
-                         # (~/weewx-data/bin on pip installs)
-   python -m user.celestial --migrate-loopdata-fields --config /home/weewx/weewx.conf --output /tmp/weewx.conf.migrated
-   git diff --no-index --word-diff /home/weewx/weewx.conf /tmp/weewx.conf.migrated   # review, then move into place
-   ```
-
-   On a Debian or Red Hat package install there is no venv to activate,
-   and WeeWX's own code lives in `/usr/share/weewx` — on the path only
-   inside `weectl` — so prefix the command instead:
-
-   ```
-   cd /etc/weewx/bin
-   PYTHONPATH=/usr/share/weewx python3 -m user.celestial --migrate-loopdata-fields --config /etc/weewx/weewx.conf --output /tmp/weewx.conf.migrated
-   git diff --no-index --word-diff /etc/weewx/weewx.conf /tmp/weewx.conf.migrated   # review, then move into place
-   ```
-
-   Review with a **word-diff**: the fields line is one long
-   comma-separated value, so a plain `diff` shows only two unreadable
-   lines.
-
-   (The commands `weectl extension install` prints are tailored to your
-   machine and carry the prefix already.  `--in-place` edits weewx.conf
-   directly after making a `.bak-celestial-<version>` backup;
-   `--print-fields-value` just prints the migrated line for
-   cut-and-paste.)
+1. Install this version.  It declares every field
+   the page reads, the satellite and comet ones for whatever
+   `[Skyfield]` `[[Satellites]]` and `[[Comets]]` you have (the
+   installer defaults — iss and tiangong; halley and hale_bopp — when
+   there is no section to follow), and prints what it wrote.
 
 1. Restart WeeWX.
+
+Your old `[LoopData] [[Include]] fields` line still carries the 5.x
+entries (`current.sunrise.raw`, `current.moonPhase`, …).  This page never
+reads them, weewx-loopdata logs each one it cannot evaluate and moves on,
+and it retires the whole line in a later release (any entry on it that
+this page declares as well is evaluated twice per packet meanwhile; the
+install counts those); a page of your own
+that read them has been without them since 6.0 and wants the almanac
+equivalents below.
+
+### The almanac equivalents
+
+If your own pages read the old fields, these are the almanac spellings
+that replace them on a declaration of your own (see weewx-loopdata's
+[Declaring fields](https://chaunceygardiner.github.io/weewx-loopdata/declaring-fields.html)).
+Raw times and durations carry a **pinned unit** (`.unix_epoch`,
+`.second`) so they keep the old fields' fixed meanings — epoch seconds,
+seconds of daylight — whatever the report's `[Units]` say.  Pre-3.0
+PascalCase names (`Sunrise`, `EarthMoonDistance`, `daySunshineDur`) map
+the same way as their camelCase successors.
+
+| Old field (`current.<name>`) | Raw (`.raw`) | Formatted |
+|---|---|---|
+| `sunrise`, `sunset` | `almanac.sunrise.unix_epoch.raw`, `almanac.sunset.unix_epoch.raw` | `almanac.sunrise`, `almanac.sunset` |
+| `sunTransit` | `almanac.sun.transit.unix_epoch.raw` | `almanac.sun.transit` |
+| `tomorrowSunrise`, `tomorrowSunset` | `almanac(days=1).sunrise.unix_epoch.raw`, `almanac(days=1).sunset.unix_epoch.raw` | `almanac(days=1).sunrise`, `almanac(days=1).sunset` |
+| `daylightDur` (`daySunshineDur`) | `almanac.sun.visible.second.raw` | `almanac.sun.visible` |
+| `yesterdayDaylightDur` | `almanac(days=-1).sun.visible.second.raw` | `almanac(days=-1).sun.visible` |
+| `astronomicalTwilightStart` / `End` | `almanac(horizon=-18).sun(use_center=1).rise.unix_epoch.raw` / `.set.unix_epoch.raw` | `almanac(horizon=-18).sun(use_center=1).rise` / `.set` |
+| `nauticalTwilightStart` / `End` | `almanac(horizon=-12).sun(use_center=1).rise.unix_epoch.raw` / `.set.unix_epoch.raw` | `almanac(horizon=-12).sun(use_center=1).rise` / `.set` |
+| `civilTwilightStart` / `End` | `almanac(horizon=-6).sun(use_center=1).rise.unix_epoch.raw` / `.set.unix_epoch.raw` | `almanac(horizon=-6).sun(use_center=1).rise` / `.set` |
+| `moonrise`, `moonset`, `moonTransit` | `almanac.moon.rise.unix_epoch.raw`, `almanac.moon.set.unix_epoch.raw`, `almanac.moon.transit.unix_epoch.raw` | `almanac.moon.rise`, `almanac.moon.set`, `almanac.moon.transit` |
+| `nextEquinox`, `nextSolstice` | `almanac.next_equinox.unix_epoch.raw`, `almanac.next_solstice.unix_epoch.raw` | `almanac.next_equinox`, `almanac.next_solstice` |
+| `nextFullMoon`, `nextNewMoon` | `almanac.next_full_moon.unix_epoch.raw`, `almanac.next_new_moon.unix_epoch.raw` | `almanac.next_full_moon`, `almanac.next_new_moon` |
+| `moonPhase`, `moonPhaseIndex` | `almanac.moon_phase`, `almanac.moon_index` | (same) |
+| `moonFullness` | `almanac.moon.phase` (a raw percent — see below) | (same) |
+| `<body>Azimuth`, `<body>Altitude` | `almanac.<body>.az`, `almanac.<body>.alt` (plain degrees) | `almanac.<body>.azimuth`, `almanac.<body>.altitude` |
+| `<body>RightAscension`, `<body>Declination` | `almanac.<body>.ra`, `almanac.<body>.dec` | `almanac.<body>.topo_ra`, `almanac.<body>.topo_dec` |
+| `earth<Body>Distance` | `almanac.<body>.earth_distance` (raw AU — see below) | (same) |
+
+`<body>` is `sun`, `moon`, `mercury`, `venus`, `mars`, `jupiter`,
+`saturn`, `uranus`, `neptune` or `pluto` (`proxima_centauri` for the
+distance).
 
 ### The three changes with no 1:1 equivalent
 

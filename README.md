@@ -95,7 +95,7 @@ weewx-skyfield is the atlas; weewx-celestial is the live instrument.
 ## Requirements
 
 **This extension requires Python 3.9 or later, WeeWX 5.2 or later,
-[weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 6.9 or
+[weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 7.0 or
 later, and (strongly recommended)
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.3.2
 or later for the Next Visible Pass chart's dot to leave the chart when the
@@ -107,8 +107,10 @@ are drawn on.**
 ## Installing
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
-   6.9+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.3.2+, per their instructions.
+   7.0+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
+   2.3.2+, per their instructions.  (The installer refuses to run beside
+   an older weewx-loopdata: the page's live values reach it only through
+   7.0's per-report field declaration.)
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)
@@ -118,8 +120,11 @@ are drawn on.**
    weectl extension install weewx-celestial.zip
    ```
 
-   The installer appends the loop-data fields the page reads to your
-   `[LoopData] [[Include]] fields` line — append-only, printing each one.
+   The page declares the loop-data fields it reads to weewx-loopdata
+   itself: the ones that never change ship in the skin, and the
+   installer writes the satellite and comet ones — which follow your
+   `[Skyfield]` sets — under the report's own stanza in `weewx.conf`,
+   printing what it wrote.  No fields line of yours is edited.
 
 1. Restart WeeWX.  The report appears under `celestial/` of your web root.
 
@@ -168,12 +173,13 @@ cd weewx-celestial                       # your checkout
 The suite renders the bundled skin end to end through Cheetah's errorCatcher
 with the weewx-skyfield, PyEphem and built-in almanacs (skipping the
 weewx-skyfield tier when that extension is not importable), ties the
-javascript's loop-data keys to the migrator's field set, lints the
-javascript's top-level names against hazardous window globals,
-cross-checks every entry the migration utility can produce against the
-weewx-loopdata almanac-field parser (when a weewx-loopdata checkout is
+javascript's loop-data keys and the skin's field declaration to one field
+set, lints the javascript's top-level names against hazardous window
+globals, cross-checks every declared entry against the weewx-loopdata
+almanac-field parser and reads the whole declaration back through
+weewx-loopdata's own declaration reader (when a weewx-loopdata checkout is
 available), and audits the manual against the code — the fields reference
-against the migrator's field set, the translation dictionary against the
+against the shipped declaration, the translation dictionary against the
 skin's `lang/en.conf`, the report's options across skin.conf, the templates
 and the manual, every link and anchor between manual pages, and that every
 screenshot the manual shows is a file this repository ships.

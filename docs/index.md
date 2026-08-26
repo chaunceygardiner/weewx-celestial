@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.4**, the current release.
+This manual documents weewx-celestial **8.5**, the current release.
 
 ## Start here
 
@@ -189,13 +189,15 @@ What installs:
 
 - The `Celestial` skin (the sample report), registered as
   `CelestialReport`.
-- The `--migrate-loopdata-fields` command-line utility (see
-  [upgrading](upgrading.md#upgrading-from-5x-or-earlier)), and the
-  `--add-satellite`/`--remove-satellite` and
+- The `--add-satellite`/`--remove-satellite` and
   `--add-comet`/`--remove-comet` utilities that make (or unmake) every
   weewx.conf edit a satellite or comet takes in one command (see
   [Adding and removing satellites](satellites-and-comets.md#adding-and-removing-satellites)
   and [comets](satellites-and-comets.md#adding-and-removing-comets)).
+- The page's declaration of the loop-data fields it reads: the fixed
+  ones in the skin, the satellite and comet ones written by the
+  installer for your `[Skyfield]` sets (see the
+  [Fields reference](fields-reference.md)).
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
@@ -218,7 +220,7 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - Python 3.9 or later
 - WeeWX 5.2 or later
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
-  6.9 or later
+  7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
   strongly recommended (required for Proxima Centauri; 2.0 or later
   required for the sky dome's satellites and the Next Visible Pass

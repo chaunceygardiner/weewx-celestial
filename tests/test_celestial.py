@@ -6,19 +6,21 @@ Distributed under the terms of the GNU Public License (GPLv3)
 
 Tests for weewx-celestial: the bundled Celestial skin (the live
 Geocentric panel, the sky dome and the Next Visible Pass panel, rendered end to
-end through Cheetah's errorCatcher), the --migrate-loopdata-fields
-utility that rewrites a pre-6.0 [LoopData] [[Include]] fields line to
-weewx-loopdata almanac entries, and the --add-satellite /
---remove-satellite utility.
+end through Cheetah's errorCatcher), the page's field set and its
+declaration to weewx-loopdata (the skin's own skin.conf, and the
+satellite and comet groups the installer writes), the installer, and the
+--add-satellite / --remove-satellite and --add-comet / --remove-comet
+utilities.
 
 Run with the WeeWX virtual environment's Python, from the root of this repo:
     /home/weewx/weewx-venv/bin/python -m pytest tests
 
 The skin-render tests use the independent weewx-skyfield extension (the
 installed copy or a sibling checkout) as the report almanac, exactly as
-production does; they skip when it is not available.  The migration tests
-cross-check every produced entry against the sibling weewx-loopdata
-checkout's almanac-field parser when that repo is available.
+production does; they skip when it is not available.  The field-set
+tests cross-check every declared entry against the sibling weewx-loopdata
+checkout's almanac-field parser and declaration reader when that repo is
+available.
 """
 
 import contextlib
@@ -86,13 +88,28 @@ requires_almanac_texts = pytest.mark.skipif(
            'body names (the page renders, in English)')
 
 # Where the sibling weewx-loopdata checkout may be found (its parser is the
-# oracle for the migration tests' almanac grammar).
+# oracle for the field-set tests' almanac grammar, and its declaration
+# reader the oracle for how skin.conf and weewx.conf merge).
 LOOPDATA_DIRS = [
     os.path.join(os.path.dirname(REPO_ROOT), 'weewx-loopdata', 'bin', 'user'),
     '/home/weewx/bin/user',
 ]
 
 SKIN_DIR = os.path.join(REPO_ROOT, 'skins', 'Celestial')
+
+# The report name the render harness generates the page under, and the
+# key every served loop-data file carries: weewx-loopdata 7.0 writes each
+# declaring report's fields under the REPORT's name, and the page unwraps
+# its own.  $REPORT_NAME is a core tag on every WeeWX this extension
+# supports (reportengine sets it on the skin dict; verified on the 5.2.0
+# wheel), so the harness may supply it.
+REPORT_NAME = 'CelestialReport'
+
+
+def loop_file(record):
+    """loop-data.txt as weewx-loopdata 7.0 writes it for this page: the
+    flat record under the report's name."""
+    return json.dumps({REPORT_NAME: record})
 
 
 def load_wxskyfield():
@@ -491,6 +508,7 @@ class TestSampleSkinRenders:
                            stn_info=Obj(latitude_f=LATITUDE, longitude_f=LONGITUDE)),
             'Extras': extras,
             'lang': lang,
+            'REPORT_NAME': REPORT_NAME,
             'gettext': lambda key: texts.get(key, key),
             # What celestial_sky.CelestialSkyPage serves in production: the
             # real weewx-skyfield SkyPage, or None when skyfield is absent
@@ -1644,8 +1662,8 @@ class TestSampleSkinRenders:
         """The javascript's loop-data keys, expanded the way the include
         builds them (a per-body prefix plus .az/.alt/.earth_distance, and
         the literal moon-phase and dateTime keys), must equal
-        _MIGRATION_NEW_FIELDS exactly -- the skin consumes the whole
-        migrated field set and nothing else."""
+        PAGE_FIELDS exactly -- the skin consumes the whole
+        page field set and nothing else."""
         include = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
         m = re.search(r'var GEO_BODIES = \[(.*?)\];', include, re.DOTALL)
         assert m is not None
@@ -1683,12 +1701,12 @@ class TestSampleSkinRenders:
         # type detail is generation-painted from the report tag
         # ($almanac.next_eclipse_type in the template) and never
         # rewritten live, so the line carries no field for it.
-        assert 'almanac.next_eclipse_type' not in celestial._MIGRATION_NEW_FIELDS
+        assert 'almanac.next_eclipse_type' not in celestial.PAGE_FIELDS
         # The satellite layer is DYNAMIC: SAT_NAMES is generated from
         # skyfield 2.0's public $sky_page.satellite_names() (the template
         # builds the roster rows from the same enumeration), and the
         # javascript composes each satellite's keys from the pinned
-        # suffix set below.  _MIGRATION_NEW_FIELDS therefore carries the
+        # suffix set below.  PAGE_FIELDS therefore carries the
         # installer-DEFAULT satellites only (iss, tiangong); extra
         # [[Satellites]] entries take the same suffix set by hand -- the
         # README documents the pattern.
@@ -1722,7 +1740,7 @@ class TestSampleSkinRenders:
             keys.add('almanac.%s.next_pass.visible' % sat)
         # The comet layer is dynamic the same way: COMET_NAMES from
         # skyfield 2.1's public comet_names(), the per-comet keys
-        # composed from the suffix set below.  _MIGRATION_NEW_FIELDS
+        # composed from the suffix set below.  PAGE_FIELDS
         # carries the installer-DEFAULT comets (halley, hale_bopp);
         # extra [[Comets]] entries take the same six-entry pattern
         # (--add-comet writes it).
@@ -1733,12 +1751,12 @@ class TestSampleSkinRenders:
             for suffix in ('.az', '.alt', '.earth_distance', '.mag', '.label',
                            '.perihelion.unix_epoch.raw'):
                 keys.add('almanac.%s%s' % (comet, suffix))
-        assert keys == set(celestial._MIGRATION_NEW_FIELDS)
-        # The pre-7.6 unpinned moon keys survive as read fallbacks, so a
-        # fields line migrated under <= 7.5 keeps working across the
-        # upgrade with no weewx.conf change -- and the pass times,
-        # duration and peak altitude keep bare-.raw fallbacks for the same
-        # reason (a hand-written unpinned fields line).
+        assert keys == set(celestial.PAGE_FIELDS)
+        # The pre-7.6 unpinned moon keys survive as read fallbacks, and
+        # the pass times, duration and peak altitude keep bare-.raw
+        # fallbacks likewise: the skin's own declaration is pinned, but a
+        # group of your own in the report's stanza that overrides one of
+        # the skin's with the bare spellings still drives the page.
         for legacy in ('almanac.next_full_moon.raw', 'almanac.next_new_moon.raw'):
             assert "'%s'" % legacy in include or '"%s"' % legacy in include, legacy
         for legacy_attr in ('.rise.raw', '.set.raw',
@@ -1852,7 +1870,7 @@ class TestSampleSkinRenders:
                 r['almanac.%s.next_pass.set_azimuth.ordinal_compass' % s] = \
                     str(p2.set_azimuth.ordinal_compass())
                 r['almanac.%s.next_pass.visible' % s] = p2.visible
-            packets.append(jsonlib.dumps(r).encode())
+            packets.append(loop_file(r).encode())
 
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
         html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % wall,
@@ -2121,7 +2139,7 @@ class TestSampleSkinRenders:
         # their <title>s exist only once a packet arrives, and a single
         # packet derives no rates, so the title holds exactly these values.
         (tmp_path / 'gauge-data').mkdir()
-        (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(jsonlib.dumps({
+        (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(loop_file({
             'current.dateTime.raw': PACKET_TS,
             'almanac.mars.az': 120.0,
             'almanac.mars.alt': 30.0,
@@ -2323,7 +2341,7 @@ class TestSampleSkinRenders:
         now = time.time()
 
         def packet(i, sunlit):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': now + 2 * i,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
@@ -2494,7 +2512,7 @@ class TestSampleSkinRenders:
             now = time.time()
             chart_rise, chart_set = win.get('rise', now - 60), win.get('set', now + 30)
             rolled = now >= chart_set
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': now,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
@@ -2679,7 +2697,7 @@ class TestSampleSkinRenders:
         # latest === null guard until one lands, and a single stamp keeps
         # the page's clock still, which is the state the latch is for.
         (tmp_path / 'gauge-data').mkdir()
-        (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(jsonlib.dumps({
+        (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(loop_file({
             'current.dateTime.raw': PACKET_TS,
             'almanac.iss.az': 120.0,
             'almanac.iss.alt': 45.0,
@@ -2794,7 +2812,7 @@ class TestSampleSkinRenders:
                 state['t0'] = time.time()
             i, t0 = state['n'], state['t0']
             past = i >= 3
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': time.time(),
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
@@ -2987,7 +3005,7 @@ class TestSampleSkinRenders:
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
 
         def packet(ts, sun_alt):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': ts,
                 # Below the horizon: the live layer HIDES the sun, which
                 # the backdrop drew high (fixture noon).
@@ -3120,7 +3138,7 @@ class TestSampleSkinRenders:
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
 
         def packet(ts):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': ts,
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
@@ -3279,7 +3297,7 @@ class TestSampleSkinRenders:
             # A live sky: the sun and the ISS both up and moving, so a
             # dome that had NOT frozen would nudge marks and draw a
             # satellite marker within the first two packets.
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': now + 2 * i,
                 'almanac.sun.az': 180.0 + 0.5 * i,
                 'almanac.sun.alt': 30.0,
@@ -3460,7 +3478,7 @@ class TestSampleSkinRenders:
         (tmp_path / 'dome-svg.txt').write_text(frag)
 
         def packet(i):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': now + 2 * i,
                 'almanac.sun.az': 180.0 + 0.5 * i,
                 'almanac.sun.alt': 30.0,
@@ -3599,7 +3617,7 @@ class TestSampleSkinRenders:
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
 
         def packet_for(ts):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': ts,
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                 'almanac.sun.earth_distance': 1.016,
@@ -3739,7 +3757,7 @@ class TestSampleSkinRenders:
             'almanac': wxskyfield_almanac,
         })
         assert 'data-dome-ts="%s"' % page_dome_ts in frag
-        packet = jsonlib.dumps({
+        packet = loop_file({
             'current.dateTime.raw': int(time.time()),
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
             'almanac.sun.earth_distance': 1.016,
@@ -3861,7 +3879,7 @@ class TestSampleSkinRenders:
         })
         frag = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (page_dome_ts + 60),
                          frag, count=1).encode()
-        packet = jsonlib.dumps({
+        packet = loop_file({
             'current.dateTime.raw': int(time.time()),
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
             'almanac.sun.earth_distance': 1.016,
@@ -4009,7 +4027,7 @@ class TestSampleSkinRenders:
             (tmp_path / asset).write_bytes(
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
         now = int(time.time())
-        packet = jsonlib.dumps({
+        packet = loop_file({
             'current.dateTime.raw': now,
             'almanac(horizon=-18).sun.next_setting.unix_epoch.raw': now + 3600,
             'almanac(horizon=-18).sun.next_rising.unix_epoch.raw': now + 7200,
@@ -4201,7 +4219,7 @@ class TestSampleSkinRenders:
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
                     polls['n'] += 1
-                    body = jsonlib.dumps({
+                    body = loop_file({
                         'current.dateTime.raw': phase(polls['n'])[0],
                         'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                         'almanac.sun.earth_distance': 1.016,
@@ -4326,7 +4344,7 @@ class TestSampleSkinRenders:
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
 
         def packet(i, rolled):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': now + 2 * i,
                 # Sunset 4 s out; once it passes, the "feed" rolls
                 # next_setting to tomorrow and the min() flips the chip
@@ -4536,7 +4554,7 @@ class TestSampleSkinRenders:
                 open(os.path.join(SKIN_DIR, asset), 'rb').read())
 
         def packet(i):
-            return jsonlib.dumps({
+            return loop_file({
                 'current.dateTime.raw': int(now + 2 * i),
                 'almanac.sun.next_setting.unix_epoch.raw': int(now + 3000),
                 'almanac.sun.next_rising.unix_epoch.raw': int(now + 40000),
@@ -4726,7 +4744,7 @@ class TestSampleSkinRenders:
                 r['almanac.%s.earth_distance' % c] = comet.earth_distance
                 r['almanac.%s.mag' % c] = comet.mag
                 r['almanac.%s.label' % c] = str(comet.label)
-            packets.append(jsonlib.dumps(r).encode())
+            packets.append(loop_file(r).encode())
 
         (tmp_path / 'index.html').write_text(
             self.render(wxskyfield_comet_almanac, sky_page=make_sky_page()))
@@ -4906,6 +4924,78 @@ class TestSampleSkinRenders:
         assert out['errors'] == []
         assert 'NO DATA (HTTP 404)' in out['badge']
         assert 'check loop_data_file' in out['badge']
+
+    def test_page_reports_a_file_without_its_entry_in_badge(self, wxskyfield_almanac,
+                                                             tmp_path):
+        """A loop-data file that parses but carries no entry under this
+        report's name -- a weewx-loopdata older than 7.0 (flat keys, the
+        record itself at the top level), or this report not declaring
+        its fields -- must read BAD DATA, not silently stand: the file is
+        there, this page's data is not.  Both shapes are served here,
+        and neither may throw.  Skips when the playwright env is
+        absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
+        (tmp_path / 'celestial.css').write_bytes(
+            open(os.path.join(SKIN_DIR, 'celestial.css'), 'rb').read())
+        record = {'current.dateTime.raw': int(time.time()),
+                  'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
+                  'almanac.sun.earth_distance': 1.016}
+        shapes = {
+            # loopdata 7.0 serving another report's entry and not ours.
+            'other-report': jsonlib.dumps({'LoopDataReport': record}),
+            # a pre-7.0 loopdata: the record flat at the top level.
+            'flat-legacy': jsonlib.dumps(record),
+        }
+        (tmp_path / 'gauge-data').mkdir()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.goto('http://127.0.0.1:%d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            '    page.wait_for_timeout(2500)\n'
+            "    out = {'errors': errors, 'badge': page.inner_text('#live-label')}\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % port)
+        try:
+            for shape, body in shapes.items():
+                (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(body)
+                proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                      text=True, timeout=120)
+                assert proc.returncode == 0, proc.stderr
+                out = jsonlib.loads(proc.stdout)
+                assert out['errors'] == [], shape
+                assert 'BAD DATA' in out['badge'], (shape, out['badge'])
+                assert 'check loop_data_file' in out['badge'], shape
+        finally:
+            httpd.shutdown()
 
     def test_no_hex_colors_in_cheetah_files(self):
         """Cheetah owns '#': hex color literals in the template or the
@@ -5792,118 +5882,80 @@ class TestI18n:
         assert 'Beräknat med %s: Skyfield' % LINKED_NAME in html
 
 
-class TestMigrateLoopdataFields:
-    """The --migrate-loopdata-fields utility: rewrites celestial loop-field
-    entries (including pre-3.0 PascalCase names) to weewx-loopdata almanac
-    entries in place, drops moonWaxing and the duplicates the rewrites
-    create, appends the current sample-report fields (satellite entries
-    following the configuration's [Skyfield] [[Satellites]], the installer
-    defaults only when there is no [[Satellites]] to follow), and touches
-    nothing else."""
+class TestPageFields:
+    """PAGE_FIELDS is the one source of truth for what the page reads,
+    and weewx-loopdata 7.0 reads it in two halves: the static fields
+    from the skin's own skin.conf ([LoopData] [[fields]]), the satellite
+    and comet fields from the groups declare_page_fields writes under
+    the report's stanza in weewx.conf.  These tests pin both halves to
+    the list, and every entry to the sibling weewx-loopdata's grammar
+    and evaluator."""
 
-    def test_camel_names_map_to_almanac(self):
-        fields = ['current.outTemp', 'current.sunrise.raw', 'current.sunset',
-                  'current.civilTwilightStart.raw', 'current.tomorrowSunrise.raw',
-                  'current.yesterdayDaylightDur.raw', 'current.sunTransit.raw',
-                  'day.rain.sum']
-        new, report = celestial.migrate_loopdata_fields(fields)
-        # Rewrites happen in place, order preserved, renditions honored.
-        # Raw times and durations arrive with pinned units (.unix_epoch,
-        # .second): the old loop fields' fixed meanings survive any [Units]
-        # [[Groups]] overrides on loopdata's target report.
-        assert new[:8] == ['current.outTemp', 'almanac.sunrise.unix_epoch.raw', 'almanac.sunset',
-                           'almanac(horizon=-6).sun(use_center=1).rise.unix_epoch.raw',
-                           'almanac(days=1).sunrise.unix_epoch.raw',
-                           'almanac(days=-1).sun.visible.second.raw',
-                           'almanac.sun.transit.unix_epoch.raw', 'day.rain.sum']
-        assert ('current.sunrise.raw', 'almanac.sunrise.unix_epoch.raw') in report['renamed']
+    @staticmethod
+    def _skin_conf():
+        import configobj
+        return configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),
+                                   encoding='utf-8', file_error=True)
 
-    def test_pascal_names_chain_through(self):
-        """Pre-3.0 PascalCase entries collapse to camelCase first, then map
-        to almanac entries -- one pass migrates even a 2.x fields line."""
-        fields = ['current.Sunrise.raw', 'current.EarthMoonDistance',
-                  'current.daySunshineDur.raw']
-        new, report = celestial.migrate_loopdata_fields(fields)
-        assert new[:3] == ['almanac.sunrise.unix_epoch.raw', 'almanac.moon.earth_distance',
-                           'almanac.sun.visible.second.raw']
+    def test_skin_conf_declares_the_static_fields(self):
+        """skins/Celestial/skin.conf's [LoopData] [[fields]] groups, in
+        order, are exactly PAGE_FIELDS less the satellite and comet
+        patterns -- same entries, same order, none twice.  Both
+        directions: a field the page gained and the skin does not
+        declare never reaches loop-data.txt; a field declared and not
+        read is evaluated on every packet for nothing."""
+        groups = self._skin_conf()['LoopData']['fields']
+        declared = []
+        for group, value in groups.items():
+            assert not isinstance(value, dict), group
+            declared.extend([value] if isinstance(value, str) else list(value))
+        assert len(declared) == len(set(declared)), 'a field declared twice'
+        assert declared == celestial.static_page_fields()
+        assert 'almanac.iss.az' not in declared        # the installer's
+        assert 'almanac.halley.az' not in declared     # ... and comets
 
-    def test_angle_renditions(self):
-        """.raw angles become the plain-degree tags; formatted angles become
-        the ValueHelper tags."""
-        fields = ['current.sunAzimuth.raw', 'current.sunAzimuth',
-                  'current.moonDeclination.raw', 'current.marsAltitude.raw']
-        new, _ = celestial.migrate_loopdata_fields(fields)
-        assert new[:4] == ['almanac.sun.az', 'almanac.sun.azimuth',
-                           'almanac.moon.dec', 'almanac.mars.alt']
+    def test_loopdata_reads_the_skin_declaration(self):
+        """The sibling weewx-loopdata's own declaration reader, given the
+        shipped skin.conf as the skin dict, yields the static field set
+        -- the contract itself, not a re-implementation of it."""
+        loopdata = load_loopdata()
+        if not hasattr(loopdata.LoopData, 'declared_fields_from_skin_dict'):
+            pytest.skip('the sibling weewx-loopdata predates 7.0')
+        fields = loopdata.LoopData.declared_fields_from_skin_dict(
+            self._skin_conf(), REPORT_NAME)
+        assert fields == celestial.static_page_fields()
 
-    def test_pre_76_moon_keys_upgrade_to_pinned(self):
-        """A fields line migrated under <= 7.5 carries the moon-phase keys
-        unpinned; a re-run upgrades them to the pinned spellings the 7.6
-        sample page reads, and a second run is a no-op."""
-        fields = ['almanac.next_full_moon.raw', 'almanac.next_new_moon.raw',
-                  'current.outTemp']
-        new, report = celestial.migrate_loopdata_fields(fields)
-        assert 'almanac.next_full_moon.unix_epoch.raw' in new
-        assert 'almanac.next_new_moon.unix_epoch.raw' in new
-        assert not any(f.endswith('_moon.raw') for f in new)
-        assert ('almanac.next_full_moon.raw',
-                'almanac.next_full_moon.unix_epoch.raw') in report['renamed']
-        twice, report2 = celestial.migrate_loopdata_fields(new)
-        assert twice == new and report2['renamed'] == []
+    def test_loopdata_reads_the_whole_declaration(self):
+        """End to end: skin.conf merged with the stanza the installer
+        writes (declare_page_fields on a station with no [Skyfield]
+        section -- the installer defaults), read by the sibling
+        weewx-loopdata's declaration reader the way WeeWX merges a
+        report's configuration (ConfigObj's recursive merge, the
+        report's stanza last), is PAGE_FIELDS exactly, in order."""
+        import configobj
+        loopdata = load_loopdata()
+        if not hasattr(loopdata.LoopData, 'declared_fields_from_skin_dict'):
+            pytest.skip('the sibling weewx-loopdata predates 7.0')
+        config = configobj.ConfigObj()
+        celestial.declare_page_fields(config, ensure_default=True)
+        skin_dict = self._skin_conf()
+        skin_dict.merge(config['StdReport'][REPORT_NAME])
+        fields = loopdata.LoopData.declared_fields_from_skin_dict(
+            skin_dict, REPORT_NAME)
+        assert fields == list(celestial.PAGE_FIELDS)
 
-    def test_moonwaxing_dropped_with_note(self):
-        fields = ['current.moonWaxing.raw', 'current.outTemp']
-        new, report = celestial.migrate_loopdata_fields(fields)
-        assert 'current.moonWaxing.raw' in report['dropped']
-        assert not any('moonWaxing' in f for f in new)
-        assert any('next_full_moon' in note for note in report['notes'])
-
-    def test_distance_and_fullness_notes(self):
-        _, report = celestial.migrate_loopdata_fields(['current.earthMarsDistance'])
-        assert any('astronomical units' in note for note in report['notes'])
-        _, report = celestial.migrate_loopdata_fields(['current.moonFullness.raw'])
-        assert any('almanac.moon.phase' in note for note in report['notes'])
-
-    def test_rewrites_dedup(self):
-        # moonFullness and moonFullness.raw both land on almanac.moon.phase.
-        fields = ['current.moonFullness', 'current.moonFullness.raw']
-        new, report = celestial.migrate_loopdata_fields(fields)
-        assert new.count('almanac.moon.phase') == 1
-        assert report['dropped'] == ['almanac.moon.phase']
-
-    def test_non_celestial_entries_untouched(self):
-        # current.Data.raw / current.UV are not celestial names despite the
-        # capital letter; unit.label entries have no obstype to rename.
-        fields = ['current.Data.raw', 'current.UV', 'unit.label.outTemp',
-                  'trend.barometer.desc']
-        new, report = celestial.migrate_loopdata_fields(fields)
-        assert new[:4] == fields
-        assert report['renamed'] == []
-
-    def test_idempotent(self):
-        fields = ['current.Sunrise.raw', 'current.outTemp']
-        once, _ = celestial.migrate_loopdata_fields(fields)
-        twice, report = celestial.migrate_loopdata_fields(once)
-        assert twice == once
-        assert report['renamed'] == [] and report['dropped'] == [] and report['added'] == []
-
-    def test_migrated_line_stays_comma_free(self):
-        """Every appended entry is single-kwarg (no commas), so the
-        [LoopData] [[Include]] fields value stays a bare comma-separated
-        list."""
-        for field in celestial._MIGRATION_NEW_FIELDS:
+    def test_page_fields_stay_comma_free(self):
+        """Every entry is single-kwarg (no commas), so no group line ever
+        needs a quoted entry -- weewx-loopdata splits an unquoted comma
+        into two bogus fields."""
+        for field in celestial.PAGE_FIELDS:
             assert ',' not in field, field
 
-    def test_produced_entries_parse_in_loopdata(self):
-        """Every almanac entry the migrator can produce -- the appended
-        sample-report set and every map target -- must parse in the sibling
+    def test_page_fields_parse_in_loopdata(self):
+        """Every almanac entry the page reads must parse in the sibling
         weewx-loopdata checkout's almanac grammar."""
         loopdata = load_loopdata()
-        entries = set(celestial._MIGRATION_NEW_FIELDS)
-        for raw_entry, formatted_entry in celestial._ALMANAC_FIELD_MAP.values():
-            entries.add(raw_entry)
-            entries.add(formatted_entry)
-        for entry in sorted(entries):
+        for entry in celestial.PAGE_FIELDS:
             if not entry.startswith('almanac'):
                 assert entry == 'current.dateTime.raw'
                 continue
@@ -5911,7 +5963,7 @@ class TestMigrateLoopdataFields:
 
     def test_satellite_fields_evaluate_in_loopdata(self, wxskyfield_sat_sky):
         """The whole pipeline the satellite layer depends on: every
-        satellite entry in _MIGRATION_NEW_FIELDS EVALUATES through the
+        satellite entry in PAGE_FIELDS EVALUATES through the
         sibling weewx-loopdata's own evaluator (parse, chain walk, format
         spec, json coercion -- evaluate/to_json_value touch no instance
         state, so they are called unbound) against a satellites-configured
@@ -5929,7 +5981,7 @@ class TestMigrateLoopdataFields:
                                         altitude=ALTITUDE_M,
                                         formatter=weewx.units.get_default_formatter())
             values = {}
-            for entry in celestial._MIGRATION_NEW_FIELDS:
+            for entry in celestial.PAGE_FIELDS:
                 if not entry.startswith(('almanac.iss.', 'almanac.tiangong.')):
                     continue
                 af = loopdata.LoopData.parse_almanac_field(entry)
@@ -5967,17 +6019,20 @@ class TestMigrateLoopdataFields:
             'almanac.iss.next_pass.max_altitude.degree_angle.raw',
             'almanac.iss.next_pass.visible',
         ]
-        # The evaluator reads its Configuration by attribute, so a
-        # namespace with the seven attributes it touches serves.
-        cfg = types.SimpleNamespace(
+        # loopdata 7.0 builds one evaluator per report from the report's
+        # context (its fields, [Almanac] texts, formatter and converter)
+        # and the shared configuration (the station's position); both
+        # are read by attribute, so two namespaces serve.
+        ctx = types.SimpleNamespace(
             almanac_fields=loopdata.LoopData.get_almanac_fields(pin_fields),
-            latitude=LATITUDE, longitude=LONGITUDE, altitude_m=ALTITUDE_M,
             almanac_texts={}, formatter=weewx.units.get_default_formatter(),
             converter=weewx.units.Converter())
-        assert len(cfg.almanac_fields) == len(pin_fields)
+        cfg = types.SimpleNamespace(
+            latitude=LATITUDE, longitude=LONGITUDE, altitude_m=ALTITUDE_M)
+        assert len(ctx.almanac_fields) == len(pin_fields)
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
-            evaluator = loopdata.AlmanacFieldEvaluator(cfg)
+            evaluator = loopdata.AlmanacFieldEvaluator(ctx, cfg)
             # All five fields name the same pass: one group.
             assert len(evaluator.groups) == 1
 
@@ -6016,7 +6071,7 @@ class TestMigrateLoopdataFields:
             assert again['almanac.iss.next_pass.set.unix_epoch.raw'] == set2
 
     def test_comet_fields_evaluate_in_loopdata(self, wxskyfield_comet_sky):
-        """Every comet entry in _MIGRATION_NEW_FIELDS (and the mcnaught
+        """Every comet entry in PAGE_FIELDS (and the mcnaught
         substitution) evaluates through the sibling weewx-loopdata's own
         evaluator against a comets-configured skyfield 2.1 almanac,
         reproducing the skyfield fixture pins.  Halley is honestly faint
@@ -6061,7 +6116,7 @@ class TestMigrateLoopdataFields:
         eclipse instants reproduce skyfield's own pins."""
         loopdata = load_loopdata()
         mod, _ = load_wxskyfield()
-        entries = [f for f in celestial._MIGRATION_NEW_FIELDS
+        entries = [f for f in celestial.PAGE_FIELDS
                    if ('.next_setting.' in f or '.next_rising.' in f
                        or f.startswith(('almanac.next_equinox.',
                                         'almanac.next_solstice.',
@@ -6115,171 +6170,219 @@ class TestMigrateLoopdataFields:
         assert values['almanac.next_eclipse.unix_epoch.raw'] > TIME_TS
         assert values['almanac.next_eclipse_kind'] in ('lunar', 'solar')
 
-    def test_satellites_follow_configured_set(self):
-        """With a configured satellite set, the appended satellite entries
-        are that set exactly -- the nineteen-entry pattern per tag, in
-        configuration order, the installer defaults nowhere in sight --
-        and a second run adds nothing."""
-        new, report = celestial.migrate_loopdata_fields(
-            ['current.outTemp'], satellites=['terra', 'noaa21'])
-        assert len([f for f in new if f.startswith('almanac.terra.')]) == 19
-        assert len([f for f in new if f.startswith('almanac.noaa21.')]) == 19
-        assert 'almanac.noaa21.next_pass.visible' in new
-        assert not any(f.startswith(('almanac.iss.', 'almanac.tiangong.'))
-                       for f in new)
-        assert new.index('almanac.terra.az') < new.index('almanac.noaa21.az')
-        assert any('almanac.terra.*' in note and '[[Satellites]]' in note
-                   for note in report['notes'])
-        twice, report2 = celestial.migrate_loopdata_fields(
-            new, satellites=['terra', 'noaa21'])
-        assert twice == new and report2['added'] == []
 
-    def test_empty_satellites_appends_none_keeps_existing(self):
+
+class TestDeclarePageFields:
+    """declare_page_fields: the satellite and comet groups of every
+    Celestial report's [[[LoopData]]] [[[[fields]]]] section converge
+    to the configured [Skyfield] sets -- replaced wholesale, removed
+    when the set is empty, the installer defaults only when there is no
+    section to follow, and nothing else in the section touched.  The
+    installer and the --add/--remove verbs both run it, so it is tested
+    once, here, on plain dicts and on ConfigObj alike."""
+
+    @staticmethod
+    def _groups(config, report='CelestialReport'):
+        return config['StdReport'][report]['LoopData']['fields']
+
+    def test_no_skyfield_section_declares_the_defaults(self):
+        config = {}
+        report = celestial.declare_page_fields(config, ensure_default=True)
+        groups = self._groups(config)
+        assert list(groups) == ['satellites', 'comets']
+        assert groups['satellites'] == (celestial.satellite_fields('iss')
+                                        + celestial.satellite_fields('tiangong'))
+        assert groups['comets'] == (celestial.comet_fields('halley')
+                                    + celestial.comet_fields('hale_bopp'))
+        assert len(groups['satellites']) == 38 and len(groups['comets']) == 12
+        assert report['satellites'] == ['iss', 'tiangong']
+        assert report['comets'] == ['halley', 'hale_bopp']
+        assert report['satellites_defaulted'] and report['comets_defaulted']
+        assert report['reports'] == ['CelestialReport']
+        assert set(report['changes']) == {'CelestialReport'}
+        assert set(report['changes']['CelestialReport']) == {'satellites', 'comets'}
+        old, new = report['changes']['CelestialReport']['satellites']
+        assert old == [] and new == groups['satellites']
+
+    def test_follows_the_configured_sets(self):
+        """The configured tags, in configuration order, the defaults
+        nowhere in sight; a [Skyfield] with no [[Comets]] still falls
+        back to the comet defaults."""
+        config = {'Skyfield': {'Satellites': {'terra': '25994', 'noaa21': '54234'}}}
+        report = celestial.declare_page_fields(config, ensure_default=True)
+        groups = self._groups(config)
+        assert groups['satellites'] == (celestial.satellite_fields('terra')
+                                        + celestial.satellite_fields('noaa21'))
+        assert not any(f.startswith(('almanac.iss.', 'almanac.tiangong.'))
+                       for f in groups['satellites'])
+        assert groups['comets'] == (celestial.comet_fields('halley')
+                                    + celestial.comet_fields('hale_bopp'))
+        assert not report['satellites_defaulted'] and report['comets_defaulted']
+
+    def test_empty_section_declares_none_and_removes_the_group(self):
         """A present-but-empty [[Satellites]] is authoritative: no
-        satellite fields are appended (a deliberately emptied set is not
-        resurrected), but satellite entries already on the line are
-        non-celestial-style untouchables and stay."""
-        fields = ['current.outTemp', 'almanac.iss.az']
-        new, report = celestial.migrate_loopdata_fields(fields, satellites=[])
-        assert [f for f in new if f.startswith('almanac.iss.')] == ['almanac.iss.az']
-        assert not any(f.startswith('almanac.tiangong.') for f in new)
-        assert any('empty' in note and '--add-satellite' in note
-                   for note in report['notes'])
+        satellite fields, and a group left over from an earlier set is
+        removed rather than left declaring satellites the station no
+        longer tracks."""
+        config = {'Skyfield': {'Satellites': {}, 'Comets': {'encke': '2P'}},
+                  'StdReport': {'CelestialReport': {'skin': 'Celestial', 'LoopData': {'fields': {
+                      'satellites': celestial.satellite_fields('iss'),
+                      'mine': ['current.outTemp']}}}}}
+        report = celestial.declare_page_fields(config)
+        groups = self._groups(config)
+        assert 'satellites' not in groups
+        assert groups['comets'] == celestial.comet_fields('encke')
+        assert groups['mine'] == ['current.outTemp']        # never touched
+        old, new = report['changes']['CelestialReport']['satellites']
+        assert old == celestial.satellite_fields('iss') and new == []
 
-    def test_no_satellites_section_appends_defaults(self):
-        """No [[Satellites]] to follow (weewx-skyfield absent or pre-2.0):
-        the installer defaults are provisioned, and the note says so."""
-        new, report = celestial.migrate_loopdata_fields(['current.outTemp'])
-        assert len([f for f in new if f.startswith('almanac.iss.')]) == 19
-        assert len([f for f in new if f.startswith('almanac.tiangong.')]) == 19
-        assert any('installer defaults' in note for note in report['notes'])
+    def test_no_section_created_for_nothing(self):
+        """Empty sets on a station with no declaration: nothing to write,
+        so no [[[LoopData]]] section appears."""
+        config = {'Skyfield': {'Satellites': {}, 'Comets': {}}}
+        report = celestial.declare_page_fields(config, ensure_default=True)
+        assert report['changes'] == {}
+        assert config == {'Skyfield': {'Satellites': {}, 'Comets': {}}}
 
-    def test_conf_rewrite(self, tmp_path):
-        conf = tmp_path / 'weewx.conf'
-        conf.write_text(
-            '# a comment\n'
-            '[Station]\n'
-            '    location = Test Station\n'
-            '[LoopData]\n'
-            '    [[Include]]\n'
-            '        fields = current.Sunrise.raw, current.outTemp, current.sunset.raw\n'
-        )
-        out = tmp_path / 'weewx.conf.migrated'
-        report = celestial.migrate_loopdata_conf(str(conf), str(out))
-        assert ('current.Sunrise.raw', 'almanac.sunrise.unix_epoch.raw') in report['renamed']
+    def test_idempotent(self):
+        config = {'Skyfield': {'Satellites': {'terra': '25994'}}}
+        celestial.declare_page_fields(config, ensure_default=True)
+        before = json.dumps(config, sort_keys=True)
+        report = celestial.declare_page_fields(config, ensure_default=True)
+        assert report['changes'] == {}
+        assert json.dumps(config, sort_keys=True) == before
+
+    def test_replaces_a_stale_group_wholesale(self):
+        """The group is the declaration's, not a list to append to: a
+        hand-added entry in it, or a satellite since removed, goes."""
+        config = {'Skyfield': {'Satellites': {'terra': '25994'}},
+                  'StdReport': {'CelestialReport': {'skin': 'Celestial', 'LoopData': {'fields': {
+                      'satellites': celestial.satellite_fields('iss')
+                      + ['almanac(horizon=10).terra.az']}}}}}
+        celestial.declare_page_fields(config)
+        assert self._groups(config)['satellites'] == celestial.satellite_fields('terra')
+
+    def test_apply_false_reports_without_writing(self):
+        config = {'Skyfield': {'Satellites': {'terra': '25994'}}}
+        report = celestial.declare_page_fields(config, apply=False, ensure_default=True)
+        assert set(report['changes']['CelestialReport']) == {'satellites', 'comets'}
+        assert config == {'Skyfield': {'Satellites': {'terra': '25994'}}}
+
+    def test_every_celestial_report_is_declared(self):
+        """One skin under two reports (two languages, say): loopdata
+        serves each under its own name, so each carries the groups.
+        CelestialReport is declared whether or not it exists yet; any
+        other report is found by its skin; other skins are not."""
+        config = {'StdReport': {'HTML_ROOT': 'public_html',
+                                'CelestialDE': {'skin': 'Celestial', 'lang': 'de'},
+                                'LoopDataReport': {'skin': 'LoopData'}}}
+        report = celestial.declare_page_fields(config, ensure_default=True)
+        assert report['reports'] == ['CelestialReport', 'CelestialDE']
+        assert set(report['changes']) == {'CelestialReport', 'CelestialDE'}
+        assert 'LoopData' not in config['StdReport']['LoopDataReport']
+        assert (self._groups(config, 'CelestialDE')['satellites']
+                == self._groups(config)['satellites'])
+
+    def test_only_the_installer_adds_the_default_report(self):
+        """Without ensure_default -- the --add/--remove verbs' case --
+        [[CelestialReport]] is never created: a report holding only a
+        [[[LoopData]]] section has no skin, and reportengine dies on it
+        every cycle.  A Celestial report under another name is declared
+        under its own name; with no Celestial report at all nothing is
+        written and the report says so."""
+        config = {'StdReport': {'Himmel': {'skin': 'Celestial'}}}
+        report = celestial.declare_page_fields(config)
+        assert report['reports'] == ['Himmel']
+        assert 'CelestialReport' not in config['StdReport']
+        assert self._groups(config, 'Himmel')['satellites'] == (
+            celestial.satellite_fields('iss') + celestial.satellite_fields('tiangong'))
+        bare = {'Skyfield': {'Satellites': {'iss': '25544'}}}
+        report = celestial.declare_page_fields(bare)
+        assert report['reports'] == [] and report['changes'] == {}
+        assert bare == {'Skyfield': {'Satellites': {'iss': '25544'}}}
+
+    def test_a_reused_report_name_under_another_skin_is_not_ours(self):
+        """ensure_default seeds [[CelestialReport]] only where the name is
+        free or already this skin's: a section of that name running some
+        OTHER skin (reused after an uninstall, repurposed) belongs to
+        somebody else, and declaring fifty almanac fields under it would
+        have weewx-loopdata evaluate them every packet for a page that is
+        not there.  A section with no skin at all IS ours -- the fresh
+        install, whose skin weectl merges in right after."""
+        theirs = {'StdReport': {'CelestialReport': {'skin': 'Seasons'}}}
+        report = celestial.declare_page_fields(theirs, ensure_default=True)
+        assert report['reports'] == [] and report['changes'] == {}
+        assert theirs['StdReport']['CelestialReport'] == {'skin': 'Seasons'}
+        # ... and the real page's report, under its own name, still is.
+        both = {'StdReport': {'CelestialReport': {'skin': 'Seasons'},
+                              'Himmel': {'skin': 'Celestial'}}}
+        assert celestial.declare_page_fields(
+            both, ensure_default=True)['reports'] == ['Himmel']
+        # No skin key yet: the fresh install, and ours.
+        fresh = {'StdReport': {'CelestialReport': {'HTML_ROOT': 'celestial'}}}
+        assert celestial.declare_page_fields(
+            fresh, ensure_default=True)['reports'] == ['CelestialReport']
+
+    def test_flat_fields_line_is_refused(self):
+        """A `fields =` line where the [[[[fields]]]] section belongs --
+        the shape weewx-loopdata 7.0 itself refuses -- is a ValueError
+        naming the report, raised before anything is written: with two
+        Celestial reports and the SECOND malformed, the first is left
+        undeclared too (a half-declared configuration must not be what
+        the installer then saves).  A [[[LoopData]]] that is not a
+        section at all is the same error, not a TypeError."""
+        config = {'StdReport': {'CelestialReport': {'skin': 'Celestial'},
+                                'Himmel': {'skin': 'Celestial',
+                                           'LoopData': {'fields': ['a', 'b']}}}}
+        with pytest.raises(ValueError, match=r'\[\[Himmel\]\].*flat fields = line.*named groups'):
+            celestial.declare_page_fields(config)
+        assert config['StdReport']['CelestialReport'] == {'skin': 'Celestial'}
+        assert config['StdReport']['Himmel']['LoopData']['fields'] == ['a', 'b']
+        scalar = {'StdReport': {'CelestialReport': {'skin': 'Celestial', 'LoopData': 'x'}}}
+        with pytest.raises(ValueError, match=r'\[\[CelestialReport\]\].*is not a section'):
+            celestial.declare_page_fields(scalar)
+
+    def test_configobj_round_trip(self, tmp_path):
+        """On a real ConfigObj the groups land as one comma-separated
+        line each, under the report's stanza, and read back as lists;
+        a single-entry group reads back as a str, which the next run
+        must treat as one field (never split by character)."""
         import configobj
-        migrated = configobj.ConfigObj(str(out))
-        fields = migrated['LoopData']['Include']['fields']
-        assert 'almanac.sunrise.unix_epoch.raw' in fields
-        assert 'current.Sunrise.raw' not in fields
-        assert 'current.outTemp' in fields          # non-celestial preserved
-        assert 'almanac.mars.az' in fields          # sample-report fields appended
-        assert 'almanac.proxima_centauri.az' in fields
-        assert 'almanac.iss.az' in fields           # no [Skyfield]: default satellites
-        # The rest of the configuration survives the round trip.
-        assert migrated['Station']['location'] == 'Test Station'
-        # The original file is untouched.
-        assert 'current.Sunrise.raw' in conf.read_text()
-
-    def test_conf_rewrite_follows_skyfield_satellites(self, tmp_path):
-        """The migrator reads [Skyfield] [[Satellites]] from the very
-        configuration it rewrites: fields for the configured satellites,
-        none for the installer defaults the user does not have."""
         conf = tmp_path / 'weewx.conf'
-        conf.write_text(
-            '[Skyfield]\n'
-            '    [[Satellites]]\n'
-            '        terra = 25994\n'
-            '        noaa21 = 54234\n'
-            '[LoopData]\n'
-            '    [[Include]]\n'
-            '        fields = current.outTemp\n'
-        )
-        out = tmp_path / 'weewx.conf.migrated'
-        report = celestial.migrate_loopdata_conf(str(conf), str(out))
-        import configobj
-        fields = configobj.ConfigObj(str(out))['LoopData']['Include']['fields']
-        assert len([f for f in fields if f.startswith('almanac.terra.')]) == 19
-        assert len([f for f in fields if f.startswith('almanac.noaa21.')]) == 19
-        assert not any(f.startswith(('almanac.iss.', 'almanac.tiangong.'))
-                       for f in fields)
-        assert any('[[Satellites]]' in note for note in report['notes'])
-
-    def test_comets_follow_configured_set(self):
-        """With a configured comet set, the appended comet entries are
-        that set exactly -- the six-entry pattern per tag, in
-        configuration order, the installer default nowhere in sight --
-        and a second run adds nothing."""
-        new, report = celestial.migrate_loopdata_fields(
-            ['current.outTemp'], satellites=[], comets=['a3', 'encke'])
-        assert len([f for f in new if f.startswith('almanac.a3.')]) == 6
-        assert len([f for f in new if f.startswith('almanac.encke.')]) == 6
-        assert 'almanac.a3.perihelion.unix_epoch.raw' in new
-        assert not any(f.startswith(('almanac.halley.', 'almanac.hale_bopp.'))
-                       for f in new)
-        assert new.index('almanac.a3.az') < new.index('almanac.encke.az')
-        assert any('almanac.a3.*' in note and '[[Comets]]' in note
-                   for note in report['notes'])
-        twice, report2 = celestial.migrate_loopdata_fields(
-            new, satellites=[], comets=['a3', 'encke'])
-        assert twice == new and report2['added'] == []
-
-    def test_empty_comets_appends_none_keeps_existing(self):
-        """A present-but-empty [[Comets]] is authoritative: no comet
-        fields are appended (a deliberately emptied set is not
-        resurrected), but comet entries already on the line stay."""
-        fields = ['current.outTemp', 'almanac.halley.az']
-        new, report = celestial.migrate_loopdata_fields(
-            fields, satellites=[], comets=[])
-        assert [f for f in new if f.startswith('almanac.halley.')] == [
-            'almanac.halley.az']
-        assert any('[[Comets]]' in note and '--add-comet' in note
-                   for note in report['notes'])
-
-    def test_no_comets_section_appends_defaults(self):
-        """No [[Comets]] to follow (weewx-skyfield absent or pre-2.1):
-        the installer defaults (halley and hale_bopp) are provisioned,
-        and the note says so."""
-        new, report = celestial.migrate_loopdata_fields(['current.outTemp'])
-        assert len([f for f in new if f.startswith('almanac.halley.')]) == 6
-        assert len([f for f in new if f.startswith('almanac.hale_bopp.')]) == 6
-        assert any('almanac.halley.*' in note and 'almanac.hale_bopp.*' in note
-                   and 'installer defaults' in note
-                   for note in report['notes'])
-
-    def test_conf_rewrite_follows_skyfield_comets(self, tmp_path):
-        """The migrator reads [Skyfield] [[Comets]] from the very
-        configuration it rewrites: fields for the configured comets,
-        none for the installer default the user does not have."""
-        conf = tmp_path / 'weewx.conf'
-        conf.write_text(
-            '[Skyfield]\n'
-            '    [[Satellites]]\n'
-            '        iss = 25544\n'
-            '    [[Comets]]\n'
-            '        a3 = "C/2023 A3"\n'
-            '[LoopData]\n'
-            '    [[Include]]\n'
-            '        fields = current.outTemp\n'
-        )
-        out = tmp_path / 'weewx.conf.migrated'
-        report = celestial.migrate_loopdata_conf(str(conf), str(out))
-        import configobj
-        fields = configobj.ConfigObj(str(out))['LoopData']['Include']['fields']
-        assert len([f for f in fields if f.startswith('almanac.a3.')]) == 6
-        assert len([f for f in fields if f.startswith('almanac.iss.')]) == 19
-        assert not any(f.startswith(('almanac.halley.', 'almanac.tiangong.'))
-                       for f in fields)
-        assert any('[[Comets]]' in note for note in report['notes'])
+        conf.write_text('[Skyfield]\n    [[Satellites]]\n        iss = 25544\n'
+                        '    [[Comets]]\n        encke = 2P\n'
+                        '[StdReport]\n    [[CelestialReport]]\n'
+                        '        skin = Celestial\n')
+        config = configobj.ConfigObj(str(conf))
+        celestial.declare_page_fields(config)
+        config.write()
+        text = conf.read_text()
+        assert '[[[LoopData]]]' in text and '[[[[fields]]]]' in text
+        assert 'satellites = almanac.iss.az, almanac.iss.alt,' in text
+        assert 'comets = almanac.encke.az,' in text
+        again = configobj.ConfigObj(str(conf))
+        assert again['StdReport']['CelestialReport']['skin'] == 'Celestial'
+        assert (again['StdReport']['CelestialReport']['LoopData']['fields']['satellites']
+                == celestial.satellite_fields('iss'))
+        assert celestial.declare_page_fields(again)['changes'] == {}
+        # A one-entry group is a str to ConfigObj.
+        again['StdReport']['CelestialReport']['LoopData']['fields']['comets'] = \
+            'almanac.encke.az'
+        report = celestial.declare_page_fields(again)
+        old, new = report['changes']['CelestialReport']['comets']
+        assert old == ['almanac.encke.az']
 
 
 class TestSatelliteUtility:
     """The --add-satellite / --remove-satellite utility: the three
     weewx.conf edits a satellite takes -- the [Skyfield] [[Satellites]]
-    entry, the nineteen fields-line entries, the [StdReport] [[Defaults]]
+    entry, its nineteen declared fields (the report's satellites group,
+    rebuilt for the configured set), the [StdReport] [[Defaults]]
     [[[Almanac]]] display name -- each independently idempotent, so any
     mixed starting state converges."""
 
+    # A station the installer has already declared for: the satellites
+    # group carries the two defaults, as configure() writes it.
     BASE_CONF = (
         '# a comment\n'
         '[Station]\n'
@@ -6289,10 +6392,23 @@ class TestSatelliteUtility:
         '    [[Satellites]]\n'
         '        iss = 25544\n'
         '        tiangong = 48274\n'
-        '[LoopData]\n'
-        '    [[Include]]\n'
-        '        fields = current.dateTime.raw, almanac.sun.az, almanac.iss.az\n'
+        '[StdReport]\n'
+        '    [[CelestialReport]]\n'
+        '        skin = Celestial\n'
+        '        [[[LoopData]]]\n'
+        '            [[[[fields]]]]\n'
+        '                satellites = %s\n'
+        % ', '.join(celestial.satellite_fields('iss')
+                    + celestial.satellite_fields('tiangong'))
     )
+
+    @staticmethod
+    def _group(conf_path, group='satellites'):
+        import configobj
+        groups = configobj.ConfigObj(str(conf_path))['StdReport'][
+            'CelestialReport']['LoopData']['fields']
+        value = groups.get(group, [])
+        return [value] if isinstance(value, str) else list(value)
 
     def _write_conf(self, tmp_path, text=None):
         conf = tmp_path / 'weewx.conf'
@@ -6301,11 +6417,11 @@ class TestSatelliteUtility:
 
     def test_pattern_is_nineteen_tag_substituted(self):
         """The per-satellite pattern is the almanac.iss.* subset of
-        _MIGRATION_NEW_FIELDS with the tag substituted -- one source of
+        PAGE_FIELDS with the tag substituted -- one source of
         truth with the page's satellite consumption -- and stays
-        comma-free (the fields line is a bare comma-separated list)."""
+        comma-free (a group line is a bare comma-separated list)."""
         fields = celestial.satellite_fields('zenit23088')
-        iss_fields = [f for f in celestial._MIGRATION_NEW_FIELDS
+        iss_fields = [f for f in celestial.PAGE_FIELDS
                       if f.startswith('almanac.iss.')]
         assert len(fields) == 19
         assert fields == [f.replace('almanac.iss.', 'almanac.zenit23088.')
@@ -6332,11 +6448,15 @@ class TestSatelliteUtility:
         new = configobj.ConfigObj(str(out))
         assert new['Skyfield']['Satellites']['zenit23088'] == '23088'
         assert new['Skyfield']['Satellites']['iss'] == '25544'   # untouched
-        fields = new['LoopData']['Include']['fields']
+        fields = self._group(out)
         assert 'almanac.zenit23088.az' in fields
         assert 'almanac.zenit23088.next_pass.visible' in fields
-        assert fields[:3] == ['current.dateTime.raw', 'almanac.sun.az',
-                              'almanac.iss.az']                  # appended, not reordered
+        # The group is rebuilt in configuration order: the defaults first,
+        # the new satellite last.
+        assert fields == (celestial.satellite_fields('iss')
+                          + celestial.satellite_fields('tiangong')
+                          + celestial.satellite_fields('zenit23088'))
+        assert report['fields_added'] == celestial.satellite_fields('zenit23088')
         assert new['StdReport']['Defaults']['Almanac']['zenit23088'] == 'Zenit-2 23088'
         # The rest of the configuration survives; the original is untouched.
         assert new['Station']['location'] == 'Test Station'
@@ -6353,15 +6473,13 @@ class TestSatelliteUtility:
         assert report['satellites_entry'] == 'unchanged'
         assert report['fields_added'] == []
         assert report['name_entry'] == 'unchanged'
-        import configobj
-        assert (configobj.ConfigObj(str(once))['LoopData']['Include']['fields']
-                == configobj.ConfigObj(str(twice))['LoopData']['Include']['fields'])
+        assert self._group(once) == self._group(twice)
 
     def test_add_converges_mixed_states(self, tmp_path):
         """John's scenario: the satellite was already added per
         weewx-skyfield's instructions -- the [[Satellites]] entry exists,
-        the fields do not.  The entry is kept and the fields appended.
-        And the reverse: fields hand-added, entry missing."""
+        the fields do not.  The entry is kept and the fields declared.
+        And the reverse: fields declared by hand, entry missing."""
         conf = self._write_conf(tmp_path, self.BASE_CONF.replace(
             '        tiangong = 48274\n',
             '        tiangong = 48274\n        zenit23088 = 23088\n'))
@@ -6370,11 +6488,12 @@ class TestSatelliteUtility:
                                               'zenit23088', '23088')
         assert report['satellites_entry'] == 'unchanged'
         assert len(report['fields_added']) == 19
-        # The reverse: every field present, no [[Satellites]] entry.
+        # The reverse: every field declared, no [[Satellites]] entry.
         hand_fields = ', '.join(celestial.satellite_fields('zenit23088'))
         conf2 = tmp_path / 'weewx2.conf'
         conf2.write_text(self.BASE_CONF.replace(
-            'almanac.iss.az\n', 'almanac.iss.az, %s\n' % hand_fields))
+            'almanac.tiangong.next_pass.visible\n',
+            'almanac.tiangong.next_pass.visible, %s\n' % hand_fields))
         out2 = tmp_path / 'weewx2.conf.new'
         report2 = celestial.add_satellite_conf(str(conf2), str(out2),
                                                'zenit23088', '23088')
@@ -6438,24 +6557,164 @@ class TestSatelliteUtility:
             celestial.add_satellite_conf(str(conf), str(out), 'zenit23088', '23088a')
         assert not out.exists()   # nothing was written
 
-    def test_add_requires_fields_line(self, tmp_path):
-        """Without a [LoopData] [[Include]] fields entry there is nothing
-        to append to: the error points at --migrate-loopdata-fields."""
+    def test_add_before_install_declares_nothing(self, tmp_path):
+        """A configuration with no Celestial report at all -- weewx-celestial
+        not yet installed -- gets the [[Satellites]] entry and NO
+        declaration: a [[CelestialReport]] created here would hold only
+        [[[LoopData]]], no skin, and reportengine dies on such a section
+        every cycle.  The installer declares when it comes; the hint
+        says so."""
         conf = self._write_conf(tmp_path, '[Station]\n    location = Test\n')
         out = tmp_path / 'weewx.conf.new'
-        with pytest.raises(ValueError, match='migrate-loopdata-fields'):
-            celestial.add_satellite_conf(str(conf), str(out), 'zenit23088', '23088')
+        report = celestial.add_satellite_conf(str(conf), str(out), 'zenit23088', '23088')
+        assert report['satellites_entry'] == 'added'
+        assert report['fields_added'] == [] and report['reports'] == []
+        assert any('No report runs the Celestial skin yet' in h for h in report['hints'])
+        import configobj
+        assert 'StdReport' not in configobj.ConfigObj(str(out)) or \
+            'CelestialReport' not in configobj.ConfigObj(str(out))['StdReport']
+
+    def test_add_declares_under_the_report_that_runs_the_skin(self, tmp_path):
+        """The Celestial skin under a name of the user's own and no
+        [[CelestialReport]]: the groups go under that name, and no ghost
+        [[CelestialReport]] appears (the review's KeyError 'skin' case)."""
+        conf = self._write_conf(tmp_path, self.BASE_CONF.replace(
+            '    [[CelestialReport]]\n', '    [[Himmel]]\n'))
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_satellite_conf(str(conf), str(out), 'noaa21', '54234')
+        assert report['reports'] == ['Himmel']
+        assert report['fields_added'] == celestial.satellite_fields('noaa21')
+        import configobj
+        new = configobj.ConfigObj(str(out))
+        assert 'CelestialReport' not in new['StdReport']
+        assert (new['StdReport']['Himmel']['LoopData']['fields']['satellites']
+                == celestial.satellite_fields('iss') + celestial.satellite_fields('tiangong')
+                + celestial.satellite_fields('noaa21'))
+
+    def test_add_says_what_the_other_family_got(self, tmp_path):
+        """One declaration covers both families, so --add-satellite on a
+        station with no [[Comets]] section declares weewx-skyfield's
+        default comets as well -- exactly as the next install would.
+        Unannounced that is four edits where the manual promises three,
+        so the hint names them; with the section already declared for,
+        nothing is said."""
+        conf = self._write_conf(tmp_path)          # no [[Comets]] at all
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_satellite_conf(str(conf), str(out), 'noaa21', '54234')
+        assert report['fields_added'] == celestial.satellite_fields('noaa21')
+        [note] = [h for h in report['hints'] if 'both families' in h]
+        assert '12 comet fields (halley, hale_bopp) were declared as well' in note
+        assert "weewx-skyfield's installer defaults" in note
+        assert '[[Comets]]' in note and '--add-comet' in note
+        assert self._group(out, 'comets') == (celestial.comet_fields('halley')
+                                              + celestial.comet_fields('hale_bopp'))
+        # Re-run: the comets group is right now, so nothing more is said.
+        again = celestial.add_satellite_conf(str(out), str(tmp_path / 'b.conf'),
+                                             'noaa21', '54234')
+        assert not any('both families' in h for h in again['hints'])
+
+    def _run_cli(self, tmp_path, *args):
+        """The utility as a user runs it: python -m user.celestial from
+        the directory holding the `user` package.  Returns its output
+        (the log goes to stderr through weeutil.logger's handler)."""
+        import subprocess
+        proc = subprocess.run(
+            [sys.executable, '-m', 'user.celestial'] + list(args),
+            cwd=os.path.join(REPO_ROOT, 'bin'), capture_output=True,
+            text=True, timeout=180)
+        assert proc.returncode == 0, proc.stderr
+        return proc.stdout + proc.stderr
+
+    def test_a_no_op_removal_claims_nothing_about_the_declaration(self, tmp_path):
+        """"fields already declared for x" answers "did my add take?".
+        On a removal of a tag that was never configured it answers a
+        question nobody asked, with the opposite of the truth -- and it
+        printed directly under 'no [Skyfield] [[Satellites]] entry for
+        zenit99'.  The add verbs keep the line."""
+        conf = self._write_conf(tmp_path)
+        text = self._run_cli(tmp_path, '--remove-satellite', 'zenit99',
+                             '--config', str(conf),
+                             '--output', str(tmp_path / 'removed.conf'))
+        assert 'no [Skyfield] [[Satellites]] entry for zenit99' in text
+        assert 'already declared' not in text
+        # The add verb still says it, on a run that changes nothing.
+        text = self._run_cli(tmp_path, '--add-satellite', 'iss=25544',
+                             '--config', str(conf),
+                             '--output', str(tmp_path / 'added.conf'))
+        assert 'fields already declared for iss' in text
+
+    def test_every_verb_reports_both_directions_of_its_own_family(self, tmp_path):
+        """Each verb REBUILDS its family's group from the configured set,
+        so an add can delete (a stale entry the rebuild drops) and a
+        remove can write (a set the rebuild re-derives).  Reporting only
+        the direction the verb is named for left the other silent."""
+        # An add that deletes: zenit declared, but not configured.
+        stale = self.BASE_CONF.rstrip('\n') + (
+            ', almanac.zenit.az, almanac.zenit.alt\n')
+        conf = self._write_conf(tmp_path, stale)
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_satellite_conf(str(conf), str(out), 'noaa21', '54234')
+        assert report['fields_added'] == celestial.satellite_fields('noaa21')
+        assert report['fields_removed'] == ['almanac.zenit.az', 'almanac.zenit.alt']
+        # A remove that writes: no [[Satellites]] section at all, so the
+        # rebuild re-derives the installer defaults (John has twice
+        # ruled that behaviour stands -- but it may not happen SILENTLY).
+        bare = ('[Station]\n    location = Test\n[StdReport]\n'
+                '    [[CelestialReport]]\n        skin = Celestial\n')
+        conf2 = self._write_conf(tmp_path, bare)
+        out2 = tmp_path / 'b.conf'
+        report2 = celestial.remove_satellite_conf(str(conf2), str(out2), 'zenit')
+        assert report2['satellites_entry'] == 'absent'
+        assert report2['fields_removed'] == []
+        assert report2['fields_added'] == (celestial.satellite_fields('iss')
+                                           + celestial.satellite_fields('tiangong'))
+
+    def test_the_other_familys_note_names_the_tags_that_changed(self, tmp_path):
+        """The cross-family note takes its tags from the entries that
+        changed, not from the family's current set: a run that UNdeclares
+        the other family (its [Skyfield] set emptied since the last one)
+        has an empty current list, and the note must not read "12 comet
+        fields (none)"."""
+        # An emptied [[Comets]] (authoritative), and a comets group left
+        # from when it was not: this run undeclares halley.
+        conf = self._write_conf(tmp_path, self.BASE_CONF.replace(
+            '[StdReport]\n', '    [[Comets]]\n[StdReport]\n') + (
+            '                comets = %s\n'
+            % ', '.join(celestial.comet_fields('halley'))))
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_satellite_conf(str(conf), str(out), 'noaa21', '54234')
+        [note] = [h for h in report['hints'] if 'both families' in h]
+        assert '6 comet fields (halley) were undeclared as well' in note
+        assert '(none)' not in note
+        # An UNdeclaring run is not the defaults standing in for a
+        # missing section, so that clause must not ride along.
+        assert 'installer defaults' not in note
+        assert self._group(out, 'comets') == []
+
+    def test_add_reports_a_second_reports_restored_group(self, tmp_path):
+        """Two Celestial reports, the first already right, the second's
+        group deleted by hand: the add restores the second and says so
+        -- fields_added is the union over every report declared under."""
+        conf = self._write_conf(tmp_path, self.BASE_CONF + (
+            '    [[Himmel]]\n        skin = Celestial\n'))
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_satellite_conf(str(conf), str(out), 'noaa21', '54234')
+        assert report['reports'] == ['CelestialReport', 'Himmel']
+        assert report['fields_added'] == (
+            celestial.satellite_fields('noaa21') + celestial.satellite_fields('iss')
+            + celestial.satellite_fields('tiangong'))
 
     def test_remove_conf_roundtrip(self, tmp_path):
         conf = self._write_conf(tmp_path)
         added = tmp_path / 'added.conf'
         celestial.add_satellite_conf(str(conf), str(added),
                                      'zenit23088', '23088', 'Zenit-2 23088')
-        # A hand-added entry with almanac arguments belongs to the
-        # satellite too; removal sweeps every spelling.
+        # The group is the declaration's and is rebuilt for the
+        # remaining set, so a hand-added entry in it goes with the
+        # satellite (a field of your own belongs in a group of your own).
         import configobj
         cfg = configobj.ConfigObj(str(added))
-        cfg['LoopData']['Include']['fields'].append(
+        cfg['StdReport']['CelestialReport']['LoopData']['fields']['satellites'].append(
             'almanac(horizon=10).zenit23088.next_pass.rise.unix_epoch.raw')
         cfg.write()
         out = tmp_path / 'removed.conf'
@@ -6467,10 +6726,10 @@ class TestSatelliteUtility:
         assert any('wxskyfield_sat_23088.tle' in h for h in report['hints'])
         new = configobj.ConfigObj(str(out))
         assert 'zenit23088' not in new['Skyfield']['Satellites']
-        fields = new['LoopData']['Include']['fields']
+        fields = self._group(out)
         assert not any('zenit23088' in f for f in fields)
-        assert 'almanac.iss.az' in fields            # other satellites untouched
-        assert 'almanac.sun.az' in fields
+        assert fields == (celestial.satellite_fields('iss')
+                          + celestial.satellite_fields('tiangong'))  # others untouched
         assert 'zenit23088' not in new['StdReport']['Defaults']['Almanac']
         # Removing an absent satellite is a no-op, not an error.
         out2 = tmp_path / 'removed2.conf'
@@ -6478,6 +6737,26 @@ class TestSatelliteUtility:
         assert report2['satellites_entry'] == 'absent'
         assert report2['fields_removed'] == []
         assert report2['name_entry'] == 'absent'
+
+    def test_remove_reminds_about_stranded_legacy_entries(self, tmp_path):
+        """The legacy [[Include]] line is never edited by the verbs; a
+        removal whose tag it still carries says how many entries are
+        stranded there (any almanac spelling), and nothing when it
+        carries none."""
+        conf = self._write_conf(tmp_path, self.BASE_CONF + (
+            '[LoopData]\n    [[Include]]\n        fields = %s\n'
+            % ', '.join(['current.outTemp'] + celestial.satellite_fields('iss')
+                        + ['almanac(horizon=10).iss.next_pass.rise.unix_epoch.raw'])))
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.remove_satellite_conf(str(conf), str(out), 'iss')
+        assert any(h.startswith('20 entries for iss remain on the legacy')
+                   for h in report['hints'])
+        import configobj
+        line = configobj.ConfigObj(str(out))['LoopData']['Include']['fields']
+        assert len(line) == 21                       # untouched
+        report = celestial.remove_satellite_conf(str(out), str(tmp_path / 'b.conf'),
+                                                 'tiangong')
+        assert not any('remain on the legacy' in h for h in report['hints'])
 
     def test_remove_default_satellite_warns(self, tmp_path):
         """iss/tiangong removal works like any other -- with the warning
@@ -6487,7 +6766,8 @@ class TestSatelliteUtility:
         out = tmp_path / 'weewx.conf.new'
         report = celestial.remove_satellite_conf(str(conf), str(out), 'iss')
         assert report['satellites_entry'] == 'removed'
-        assert report['fields_removed'] == ['almanac.iss.az']
+        assert report['fields_removed'] == celestial.satellite_fields('iss')
+        assert self._group(out) == celestial.satellite_fields('tiangong')
         assert any('installer default' in h for h in report['hints'])
         import configobj
         new = configobj.ConfigObj(str(out))
@@ -6513,10 +6793,11 @@ class TestSatelliteUtility:
 
 class TestCometUtility:
     """The --add-comet / --remove-comet utility: the three weewx.conf
-    edits a comet takes -- the [Skyfield] [[Comets]] entry, the six
-    fields-line entries, the [StdReport] [[Defaults]] [[[Almanac]]]
-    display name -- each independently idempotent, mirroring the
-    satellite utility."""
+    edits a comet takes -- the [Skyfield] [[Comets]] entry, its six
+    declared fields (the report's comets group, rebuilt for the
+    configured set), the [StdReport] [[Defaults]] [[[Almanac]]] display
+    name -- each independently idempotent, mirroring the satellite
+    utility."""
 
     BASE_CONF = (
         '# a comment\n'
@@ -6528,10 +6809,18 @@ class TestCometUtility:
         '        iss = 25544\n'
         '    [[Comets]]\n'
         '        halley = 1P\n'
-        '[LoopData]\n'
-        '    [[Include]]\n'
-        '        fields = current.dateTime.raw, almanac.sun.az, almanac.halley.az\n'
+        '[StdReport]\n'
+        '    [[CelestialReport]]\n'
+        '        skin = Celestial\n'
+        '        [[[LoopData]]]\n'
+        '            [[[[fields]]]]\n'
+        '                satellites = %s\n'
+        '                comets = %s\n'
+        % (', '.join(celestial.satellite_fields('iss')),
+           ', '.join(celestial.comet_fields('halley')))
     )
+
+    _group = staticmethod(TestSatelliteUtility._group)
 
     def _write_conf(self, tmp_path, text=None):
         conf = tmp_path / 'weewx.conf'
@@ -6540,11 +6829,11 @@ class TestCometUtility:
 
     def test_pattern_is_six_tag_substituted(self):
         """The per-comet pattern is the almanac.halley.* subset of
-        _MIGRATION_NEW_FIELDS with the tag substituted -- one source of
+        PAGE_FIELDS with the tag substituted -- one source of
         truth with the page's comet consumption -- and stays comma-free
-        (the fields line is a bare comma-separated list)."""
+        (a group line is a bare comma-separated list)."""
         fields = celestial.comet_fields('mcnaught')
-        halley_fields = [f for f in celestial._MIGRATION_NEW_FIELDS
+        halley_fields = [f for f in celestial.PAGE_FIELDS
                          if f.startswith('almanac.halley.')]
         assert len(fields) == 6
         assert fields == [f.replace('almanac.halley.', 'almanac.mcnaught.')
@@ -6571,11 +6860,13 @@ class TestCometUtility:
         new = configobj.ConfigObj(str(out))
         assert new['Skyfield']['Comets']['mcnaught'] == '220P'
         assert new['Skyfield']['Comets']['halley'] == '1P'       # untouched
-        fields = new['LoopData']['Include']['fields']
+        fields = self._group(out, 'comets')
         assert 'almanac.mcnaught.az' in fields
         assert 'almanac.mcnaught.perihelion.unix_epoch.raw' in fields
-        assert fields[:3] == ['current.dateTime.raw', 'almanac.sun.az',
-                              'almanac.halley.az']               # appended, not reordered
+        assert fields == (celestial.comet_fields('halley')
+                          + celestial.comet_fields('mcnaught'))  # configuration order
+        assert report['fields_added'] == celestial.comet_fields('mcnaught')
+        assert self._group(out) == celestial.satellite_fields('iss')  # untouched
         assert new['StdReport']['Defaults']['Almanac']['mcnaught'] == 'McNaught'
         # The rest of the configuration survives; the original is untouched.
         assert new['Station']['location'] == 'Test Station'
@@ -6608,9 +6899,7 @@ class TestCometUtility:
         assert report['comets_entry'] == 'unchanged'
         assert report['fields_added'] == []
         assert report['name_entry'] == 'unchanged'
-        import configobj
-        assert (configobj.ConfigObj(str(once))['LoopData']['Include']['fields']
-                == configobj.ConfigObj(str(twice))['LoopData']['Include']['fields'])
+        assert self._group(once, 'comets') == self._group(twice, 'comets')
 
     def test_add_updates_differing_designation(self, tmp_path):
         """The invocation is authoritative: an existing entry with a
@@ -6638,24 +6927,26 @@ class TestCometUtility:
                 celestial.add_comet_conf(str(conf), str(out), 'encke', designation)
         assert not out.exists()   # nothing was written
 
-    def test_add_requires_fields_line(self, tmp_path):
-        """Without a [LoopData] [[Include]] fields entry there is nothing
-        to append to: the error points at --migrate-loopdata-fields."""
+    def test_add_before_install_declares_nothing(self, tmp_path):
+        """No Celestial report yet: the [[Comets]] entry is written, no
+        declaration is (see the satellite twin), and the hint says so."""
         conf = self._write_conf(tmp_path, '[Station]\n    location = Test\n')
         out = tmp_path / 'weewx.conf.new'
-        with pytest.raises(ValueError, match='migrate-loopdata-fields'):
-            celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
+        report = celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
+        assert report['comets_entry'] == 'added'
+        assert report['fields_added'] == [] and report['reports'] == []
+        assert any('No report runs the Celestial skin yet' in h for h in report['hints'])
 
     def test_remove_conf_roundtrip(self, tmp_path):
         conf = self._write_conf(tmp_path)
         added = tmp_path / 'added.conf'
         celestial.add_comet_conf(str(conf), str(added),
                                  'mcnaught', '220P', 'McNaught')
-        # A hand-added entry with almanac arguments belongs to the comet
-        # too; removal sweeps every spelling.
+        # The group is rebuilt for the remaining set, so a hand-added
+        # entry in it goes with the comet.
         import configobj
         cfg = configobj.ConfigObj(str(added))
-        cfg['LoopData']['Include']['fields'].append(
+        cfg['StdReport']['CelestialReport']['LoopData']['fields']['comets'].append(
             'almanac(horizon=10).mcnaught.az')
         cfg.write()
         out = tmp_path / 'removed.conf'
@@ -6666,10 +6957,10 @@ class TestCometUtility:
         assert report['name_entry'] == 'removed'
         new = configobj.ConfigObj(str(out))
         assert 'mcnaught' not in new['Skyfield']['Comets']
-        fields = new['LoopData']['Include']['fields']
+        fields = self._group(out, 'comets')
         assert not any('mcnaught' in f for f in fields)
-        assert 'almanac.halley.az' in fields         # other comets untouched
-        assert 'almanac.sun.az' in fields
+        assert fields == celestial.comet_fields('halley')    # other comets untouched
+        assert self._group(out) == celestial.satellite_fields('iss')
         assert 'mcnaught' not in new['StdReport']['Defaults']['Almanac']
         # Removing an absent comet is a no-op, not an error.
         out2 = tmp_path / 'removed2.conf'
@@ -6686,12 +6977,14 @@ class TestCometUtility:
         out = tmp_path / 'weewx.conf.new'
         report = celestial.remove_comet_conf(str(conf), str(out), 'halley')
         assert report['comets_entry'] == 'removed'
-        assert report['fields_removed'] == ['almanac.halley.az']
+        assert report['fields_removed'] == celestial.comet_fields('halley')
         assert any('installer default' in h for h in report['hints'])
         import configobj
         new = configobj.ConfigObj(str(out))
         assert 'halley' not in new['Skyfield']['Comets']
         assert new['Skyfield']['Satellites']['iss'] == '25544'   # untouched
+        # The emptied set removes the group rather than leaving it empty.
+        assert 'comets' not in new['StdReport']['CelestialReport']['LoopData']['fields']
 
 
 def load_installer():
@@ -6719,16 +7012,15 @@ def load_installer():
     return module
 
 
-class TestInstallerFieldsHint:
-    """The install-time fields update: weectl's configure() hook brings
-    the station's [LoopData] [[Include]] fields line up to date with
-    what the page reads -- the bundled migrator run in memory as the
-    oracle, [Skyfield] [[Satellites]] and [[Comets]] included.
-    APPEND-ONLY: missing entries are appended in place (configure
-    returns True and weectl saves); existing entries are never renamed,
-    removed or reordered -- the migrator's destructive half stays
-    behind the human-reviewed CLI flow and is only hinted.  Honors
-    weectl's dry run and never fails the install."""
+class TestInstallerDeclaresFields:
+    """The install-time declaration: weectl's configure() hook writes the
+    satellite and comet groups under the report's stanza ([StdReport]
+    [[CelestialReport]] [[[LoopData]]] [[[[fields]]]]) for the station's
+    configured [Skyfield] sets, through the bundled celestial.py's
+    declare_page_fields -- rebuilt on every install, silent when already
+    right, dry-run honored, never a failed install.  The legacy
+    [LoopData] [[Include]] fields line is never written -- only read, to
+    count the entries this page now declares itself."""
 
     class _Printer:
         def __init__(self):
@@ -6748,136 +7040,351 @@ class TestInstallerFieldsHint:
     def _installer(self):
         return load_installer().CelestialInstaller()
 
-    def test_appends_missing_fields(self):
-        """A line missing entries gains exactly the migrator's appends,
-        AFTER the existing entries (never reordered), and configure
-        returns True so weectl saves the configuration."""
-        engine = self._engine(
-            {'LoopData': {'Include': {'fields': ['current.outTemp']}}})
+    @staticmethod
+    def _groups(config):
+        return config['StdReport']['CelestialReport']['LoopData']['fields']
+
+    def test_declares_the_defaults_on_a_bare_station(self):
+        """No [Skyfield] to follow: the installer defaults are declared,
+        the note says whose defaults they are, and configure returns
+        True so weectl saves."""
+        engine = self._engine({})
         assert self._installer().configure(engine) is True
-        new_line = engine.config_dict['LoopData']['Include']['fields']
-        # 50 base entries plus 19 each for the default satellites and 6
-        # each for the default comets (no [Skyfield] section to follow).
-        assert new_line[0] == 'current.outTemp'
-        assert len(new_line) == 101
-        assert 'almanac.halley.az' in new_line
-        assert 'almanac.iss.next_pass.visible' in new_line
+        groups = self._groups(engine.config_dict)
+        assert groups['satellites'] == (celestial.satellite_fields('iss')
+                                        + celestial.satellite_fields('tiangong'))
+        assert groups['comets'] == (celestial.comet_fields('halley')
+                                    + celestial.comet_fields('hale_bopp'))
         text = '\n'.join(engine.printer.lines)
-        assert 'Appended 100 entries' in text
-        assert '    almanac.sun.az' in text        # each entry is listed
+        assert ('Declared 38 satellite fields (iss, tiangong) under [StdReport] '
+                '[[CelestialReport]] [[[LoopData]]] [[[[fields]]]] satellites.') in text
+        assert ('Declared 12 comet fields (halley, hale_bopp) under [StdReport] '
+                '[[CelestialReport]] [[[LoopData]]] [[[[fields]]]] comets.') in text
+        assert text.count("weewx-skyfield's installer defaults") == 2
         assert 'Restart weewxd' in text
-        assert 'outdated spellings' not in text    # nothing to hint here
+        # The legacy line is nobody's business here.
+        assert 'LoopData' not in engine.config_dict
+        assert '[[Include]]' not in text
 
-    def test_appends_follow_satellites_and_comets(self):
+    def test_follows_the_configured_sets(self):
         engine = self._engine(
-            {'Skyfield': {'Satellites': {'terra': '25994'}},
-             'LoopData': {'Include': {'fields': ['current.outTemp']}}})
+            {'Skyfield': {'Satellites': {'terra': '25994'}, 'Comets': {'encke': '2P'}}})
         assert self._installer().configure(engine) is True
-        # 50 base + 19 for terra + 6 each for halley and hale_bopp (a
-        # [Skyfield] with no [[Comets]] section still falls back to the
-        # comet defaults).
-        assert 'Appended 81 entries' in '\n'.join(engine.printer.lines)
-        new_line = engine.config_dict['LoopData']['Include']['fields']
-        assert 'almanac.terra.az' in new_line
-        assert not any(f.startswith('almanac.iss.') for f in new_line)
+        groups = self._groups(engine.config_dict)
+        assert groups['satellites'] == celestial.satellite_fields('terra')
+        assert groups['comets'] == celestial.comet_fields('encke')
+        text = '\n'.join(engine.printer.lines)
+        assert 'Declared 19 satellite fields (terra)' in text
+        assert 'Declared 6 comet fields (encke)' in text
+        assert 'installer defaults' not in text
 
-    def test_silent_when_complete_for_configured_satellites(self):
-        """A line complete for the CONFIGURED set stays silent and
-        untouched -- the absent installer defaults must not be added or
-        nagged about."""
-        complete, _ = celestial.migrate_loopdata_fields(
-            ['current.outTemp'], satellites=['terra'])
-        engine = self._engine(
-            {'Skyfield': {'Satellites': {'terra': '25994'}},
-             'LoopData': {'Include': {'fields': list(complete)}}})
+    def test_silent_when_already_declared(self):
+        """A station whose groups already match the configured sets is
+        left silent and untouched -- an upgrade must not re-announce
+        the declaration for the rest of the station's life."""
+        config = {'Skyfield': {'Satellites': {'terra': '25994'}}}
+        celestial.declare_page_fields(config, ensure_default=True)
+        before = json.dumps(config, sort_keys=True)
+        engine = self._engine(config)
         assert self._installer().configure(engine) is False
         assert engine.printer.lines == []
-        assert engine.config_dict['LoopData']['Include']['fields'] == complete
+        assert json.dumps(engine.config_dict, sort_keys=True) == before
 
-    def test_silent_for_emptied_comets(self):
+    def test_rebuilds_a_stale_group(self):
+        """A satellite added to [[Satellites]] by hand since the last
+        install is declared on the next one: the group tracks the set."""
+        config = {'Skyfield': {'Satellites': {'iss': '25544'}}}
+        celestial.declare_page_fields(config)
+        config['Skyfield']['Satellites']['terra'] = '25994'
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert self._groups(config)['satellites'] == (
+            celestial.satellite_fields('iss') + celestial.satellite_fields('terra'))
+        assert 'Declared 38 satellite fields (iss, terra)' in '\n'.join(engine.printer.lines)
+
+    def test_emptied_set_removes_the_group(self):
         """A deliberately emptied [[Comets]] is authoritative for the
-        installer too: a line complete for the configured sets is left
-        alone, never re-provisioned with the halley defaults."""
-        complete, _ = celestial.migrate_loopdata_fields(
-            ['current.outTemp'], satellites=['terra'], comets=[])
-        engine = self._engine(
-            {'Skyfield': {'Satellites': {'terra': '25994'}, 'Comets': {}},
-             'LoopData': {'Include': {'fields': list(complete)}}})
-        assert self._installer().configure(engine) is False
-        assert engine.printer.lines == []
-        assert engine.config_dict['LoopData']['Include']['fields'] == complete
+        installer too: the comets group goes, and the note says why."""
+        config = {'Skyfield': {'Satellites': {'iss': '25544'}, 'Comets': {}}}
+        celestial.declare_page_fields({'Skyfield': {'Satellites': {'iss': '25544'}}})
+        config['StdReport'] = {'CelestialReport': {'LoopData': {'fields': {
+            'satellites': celestial.satellite_fields('iss'),
+            'comets': celestial.comet_fields('halley')}}}}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        assert 'comets' not in self._groups(config)
+        text = '\n'.join(engine.printer.lines)
+        assert ('Removed [StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]] '
+                'comets: [Skyfield] [[Comets]] is empty, so the page reads no comet '
+                'fields.') in text
+
+    def test_other_groups_untouched(self):
+        config = {'StdReport': {'CelestialReport': {'LoopData': {'fields': {
+            'mine': ['current.outTemp', 'current.barometer']}}}}}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        groups = self._groups(config)
+        assert groups['mine'] == ['current.outTemp', 'current.barometer']
+        assert set(groups) == {'mine', 'satellites', 'comets'}
 
     def test_dry_run_touches_nothing(self):
-        """weectl --dry-run: the would-append count prints, the
+        """weectl --dry-run: the would-declare lines print, the
         configuration is not modified, configure returns False."""
-        engine = self._engine(
-            {'LoopData': {'Include': {'fields': ['current.outTemp']}}},
-            dry_run=True)
+        engine = self._engine({}, dry_run=True)
         assert self._installer().configure(engine) is False
-        assert engine.config_dict['LoopData']['Include']['fields'] == \
-            ['current.outTemp']
+        assert engine.config_dict == {}
         text = '\n'.join(engine.printer.lines)
-        assert 'Would append 100 entries' in text
-
-    def test_renames_hinted_never_applied(self):
-        """Outdated spellings are the migrator's destructive half: the
-        installer prints the reviewed-migration commands but NEVER
-        rewrites an existing entry -- the legacy entry survives
-        verbatim, and with nothing to append the configuration is
-        unmodified."""
-        complete, _ = celestial.migrate_loopdata_fields([])
-        line = ['current.Sunrise.raw'] + complete
-        engine = self._engine(
-            {'LoopData': {'Include': {'fields': list(line)}}})
-        assert self._installer().configure(engine) is False
-        assert engine.config_dict['LoopData']['Include']['fields'] == line
-        text = '\n'.join(engine.printer.lines)
-        assert 'outdated spellings' in text
-        assert '--migrate-loopdata-fields' in text
-        assert 'cd /wx/bin' in text
-        assert '--config /wx/weewx.conf' in text
-        # The command must carry the running weewx's location: on a
-        # deb/rpm package install WeeWX lives in /usr/share/weewx, on
-        # sys.path only inside weectl, and the bare 7.8-8.0 hint died
-        # there with ModuleNotFoundError: weewx.
-        weewx_dir = os.path.dirname(os.path.dirname(
-            os.path.abspath(weewx.__file__)))
-        assert ('PYTHONPATH=%s %s -m user.celestial'
-                % (weewx_dir, sys.executable)) in text
-        # The review command is a word-diff: the fields line is one long
-        # comma-separated value, and a plain diff shows two unreadable lines.
-        assert 'git diff --no-index --word-diff /wx/weewx.conf' in text
-
-    def test_appends_and_hints_together(self):
-        """A legacy line missing entries gets BOTH: the safe appends
-        applied (configure returns True), the renames only hinted --
-        and the legacy entry still survives verbatim."""
-        engine = self._engine(
-            {'LoopData': {'Include': {'fields': ['current.Sunrise.raw']}}})
-        assert self._installer().configure(engine) is True
-        new_line = engine.config_dict['LoopData']['Include']['fields']
-        assert new_line[0] == 'current.Sunrise.raw'
-        # The rename target (almanac.sunrise.unix_epoch.raw) is not a
-        # page field, so it is NOT appended -- renames stay manual.
-        assert 'almanac.sunrise.unix_epoch.raw' not in new_line
-        text = '\n'.join(engine.printer.lines)
-        assert 'Appended 100 entries' in text
-        assert 'outdated spellings' in text
-
-    def test_hint_when_no_loopdata(self):
-        engine = self._engine({})
-        assert self._installer().configure(engine) is False
-        text = '\n'.join(engine.printer.lines)
-        assert 'no [LoopData] [[Include]] fields entry' in text
-        assert 'weewx-loopdata' in text
+        assert 'Would declare 38 satellite fields (iss, tiangong)' in text
+        assert '(dry run)' in text
+        assert 'Restart weewxd' not in text
 
     def test_never_fails_the_install(self):
-        """A configuration shaped wrong (fields not list-or-string) must
-        degrade to the could-not-check line, never an exception."""
+        """A flat `fields =` line where the section of groups belongs
+        degrades to the could-not-declare line -- naming the offending
+        report and the shape wanted -- never an exception."""
         engine = self._engine(
-            {'LoopData': {'Include': {'fields': 3.14}}})
+            {'StdReport': {'CelestialReport': {'LoopData': {'fields': ['a', 'b']}}}})
         assert self._installer().configure(engine) is False
-        assert any('Could not check' in line for line in engine.printer.lines)
+        text = '\n'.join(engine.printer.lines)
+        assert 'Could not declare' in text
+        assert '[[CelestialReport]] [[[LoopData]]] carries a flat fields = line' in text
+        assert 'named groups' in text
+
+    def test_legacy_line_entries_it_now_declares_are_counted(self):
+        """The legacy [[Include]] line is never edited, only counted: the
+        entries on it this page now declares are evaluated twice per
+        packet by loopdata 7.0, and the install says so -- exactly N,
+        the line left as it is -- and says nothing when the line carries
+        none of ours, or is absent."""
+        legacy = ['current.outTemp'] + celestial.static_page_fields() + \
+            celestial.satellite_fields('iss') + ['almanac.iss.next_pass.rise']
+        config = {'Skyfield': {'Satellites': {'iss': '25544'}, 'Comets': {}},
+                  'LoopData': {'Include': {'fields': list(legacy)}}}
+        engine = self._engine(config)
+        assert self._installer().configure(engine) is True
+        text = '\n'.join(engine.printer.lines)
+        assert ('still carries 69 entries this page now declares itself; '
+                'weewx-loopdata evaluates those twice per loop packet') in text
+        assert config['LoopData']['Include']['fields'] == legacy    # untouched
+        # Only what THIS station declares counts: tiangong's entries on
+        # the line are not ours here, since [[Satellites]] lacks it.
+        config['LoopData']['Include']['fields'] = celestial.satellite_fields('tiangong')
+        engine = self._engine(config)
+        self._installer().configure(engine)
+        assert 'still carries' not in '\n'.join(engine.printer.lines)
+        engine = self._engine({'LoopData': {'FileSpec': {}}})
+        self._installer().configure(engine)
+        assert 'still carries' not in '\n'.join(engine.printer.lines)
+
+    def test_a_disabled_target_report_shares_nothing(self):
+        """weewx-loopdata builds its declaring contexts from the ENABLED
+        reports but renders the legacy line through target_report
+        whatever its enable says.  So a disabled target declares
+        nothing, the line shares with nothing, and its entries ARE
+        evaluated a second time -- the shortcut must not silence the
+        note there."""
+        legacy = ['current.outTemp'] + celestial.static_page_fields()
+        config = {'Skyfield': {'Satellites': {}, 'Comets': {}},
+                  'StdReport': {'CelestialReport': {'skin': 'Celestial',
+                                                    'enable': 'false'}},
+                  'LoopData': {'Include': {'fields': list(legacy)},
+                               'Formatting': {'target_report': 'CelestialReport'}}}
+        engine = self._engine(config)
+        self._installer().configure(engine)
+        assert 'still carries 50 entries' in '\n'.join(engine.printer.lines)
+        # Enabled again (explicitly, and by saying nothing): shared.
+        for enable in ('true', None):
+            section = {'skin': 'Celestial'}
+            if enable is not None:
+                section['enable'] = enable
+            config['StdReport']['CelestialReport'] = section
+            engine = self._engine(config)
+            self._installer().configure(engine)
+            assert 'still carries' not in '\n'.join(engine.printer.lines)
+
+    def test_nothing_is_counted_twice_that_loopdata_renders_once(self):
+        """weewx-loopdata renders the legacy line through its
+        target_report, so where that IS one of the reports declaring
+        these fields it renders the shared entries once for both -- they
+        cost nothing, and the note must not claim otherwise.  (Naming
+        target_report to the user would teach a setting that dies with
+        the line, so it is read and never mentioned.)"""
+        legacy = ['current.outTemp'] + celestial.static_page_fields()
+        base = {'Skyfield': {'Satellites': {}, 'Comets': {}},
+                'LoopData': {'Include': {'fields': list(legacy)},
+                             'Formatting': {'target_report': 'CelestialReport'}}}
+        engine = self._engine(base)
+        self._installer().configure(engine)
+        assert 'still carries' not in '\n'.join(engine.printer.lines)
+        # A Celestial report of another name, named as the target: same.
+        other = {'Skyfield': {'Satellites': {}, 'Comets': {}},
+                 'StdReport': {'Himmel': {'skin': 'Celestial'}},
+                 'LoopData': {'Include': {'fields': list(legacy)},
+                              'Formatting': {'target_report': 'Himmel'}}}
+        engine = self._engine(other)
+        self._installer().configure(engine)
+        assert 'still carries' not in '\n'.join(engine.printer.lines)
+        # Any other target report renders them a second time: counted.
+        elsewhere = {'Skyfield': {'Satellites': {}, 'Comets': {}},
+                     'LoopData': {'Include': {'fields': list(legacy)},
+                                  'Formatting': {'target_report': 'LiveSeasonsReport'}}}
+        engine = self._engine(elsewhere)
+        self._installer().configure(engine)
+        assert 'still carries 50 entries' in '\n'.join(engine.printer.lines)
+
+    def test_uninstall_prunes_the_whole_stanza(self):
+        """The whole install/uninstall round trip through weecfg's own
+        merge and prune: configure() writes the groups, weectl's
+        conditional merge adds the installer's config around them, and
+        weectl extension uninstall's remove_and_prune must take the
+        whole [[CelestialReport]] away -- a leftover section holding
+        only [[[LoopData]]] has no skin, and reportengine dies on it
+        every archive cycle.  The installer's config dict lists the
+        subsection (empty) for exactly this; the merge must add nothing
+        of its own for it."""
+        import configobj
+        import weecfg
+        from weeutil.config import conditional_merge
+        installer = self._installer()
+        config = configobj.ConfigObj()
+        assert installer.configure(self._engine(config)) is True
+        conditional_merge(config, installer['config'])
+        stanza = config['StdReport']['CelestialReport']
+        assert stanza['skin'] == 'Celestial'
+        assert set(stanza['LoopData']['fields']) == {'satellites', 'comets'}
+        weecfg.remove_and_prune(config, installer['config'])
+        # (weecfg prunes an emptied [StdReport] as well; the point is
+        # that no [[CelestialReport]] survives.)
+        assert 'CelestialReport' not in config.get('StdReport', {})
+
+    def test_merge_adds_no_groups_when_the_sets_are_empty(self):
+        """Empty [Skyfield] sets: configure() writes no group, and the
+        installer's empty [[[LoopData]]] [[[[fields]]]] entry must not
+        resurrect the defaults through the conditional merge."""
+        import configobj
+        from weeutil.config import conditional_merge
+        installer = self._installer()
+        config = configobj.ConfigObj()
+        config['Skyfield'] = {'Satellites': {}, 'Comets': {}}
+        installer.configure(self._engine(config))
+        conditional_merge(config, installer['config'])
+        assert dict(config['StdReport']['CelestialReport']['LoopData']['fields']) == {}
+
+
+class TestInstallerLoader:
+    """install.py's loader() refuses to install beside a weewx-loopdata
+    older than 7.0, or none: the page's values reach it only through
+    7.0's per-report declaration, and an older loopdata never reads it
+    -- the page would say BAD DATA for ever with nothing in any log to
+    say why.  A dev build is given the benefit of the doubt, exactly as
+    the WeeWX floor is."""
+
+    def _with_loopdata(self, monkeypatch, version):
+        import types
+        user = types.ModuleType('user')
+        if version is not None:
+            loopdata = types.ModuleType('user.loopdata')
+            loopdata.LOOP_DATA_VERSION = version
+            user.loopdata = loopdata
+            monkeypatch.setitem(sys.modules, 'user.loopdata', loopdata)
+        else:
+            monkeypatch.delitem(sys.modules, 'user.loopdata', raising=False)
+        monkeypatch.setitem(sys.modules, 'user', user)
+
+    INSTALL_ARGV = ['weectl', 'extension', 'install', 'weewx-celestial.zip']
+
+    @pytest.mark.parametrize('version', ['7.0', '7', '7.1', '7.10', '8.0', '7.0a1'])
+    def test_loads_with_loopdata_7(self, monkeypatch, version):
+        """7.0 and later load -- a bare '7' included (it must read as
+        7.0, not as a tuple that orders below it) -- and a dev build is
+        given the benefit of the doubt."""
+        self._with_loopdata(monkeypatch, version)
+        monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
+        installer = load_installer().loader()
+        assert installer['name'] == 'celestial'
+        assert installer['version'] == celestial.CELESTIAL_VERSION
+
+    @pytest.mark.parametrize('version', ['6.11.2', '6.9', '5.0', '6.9b1'])
+    def test_refuses_an_older_loopdata(self, monkeypatch, version):
+        self._with_loopdata(monkeypatch, version)
+        monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
+        with pytest.raises(SystemExit) as info:
+            load_installer().loader()
+        message = str(info.value)
+        assert 'weewx-loopdata 7.0 or later' in message
+        assert 'found %s' % version in message
+
+    @pytest.mark.parametrize('argv', [
+        ['weectl', 'extension', 'install', 'weewx-celestial.zip'],
+        ['wee_extension', '--install', 'weewx-celestial.zip'],
+        # optparse's documented spelling, and its unambiguous-prefix one
+        ['wee_extension', '--install=weewx-celestial.zip'],
+        ['wee_extension', '--inst', 'weewx-celestial.zip'],
+    ])
+    def test_refuses_without_loopdata(self, monkeypatch, argv):
+        self._with_loopdata(monkeypatch, None)
+        monkeypatch.setattr(sys, 'argv', argv)
+        with pytest.raises(SystemExit) as info:
+            load_installer().loader()
+        message = str(info.value)
+        assert 'weewx-loopdata 7.0 or later' in message
+        assert 'none is installed' in message
+
+    @pytest.mark.parametrize('source, wanted', [
+        ("raise RuntimeError('boom')\n", 'RuntimeError: boom'),
+        # The shape that matters most: present, but a dependency of its
+        # own is not.  That is an ImportError too, and telling this user
+        # to install what they already have sends them the wrong way.
+        ('import a_dependency_this_station_lacks\n',
+         "ModuleNotFoundError: No module named 'a_dependency_this_station_lacks'"),
+        # A loopdata predating LOOP_DATA_VERSION (2020): the module is
+        # there and imports, the NAME is not.  That is a plain
+        # ImportError whose .name IS 'user.loopdata', so only the
+        # ModuleNotFoundError test keeps it out of the not-installed
+        # branch -- narrowing that guard to a bare name check would
+        # report an installed loopdata as missing.
+        ('# a loopdata older than LOOP_DATA_VERSION\n',
+         "ImportError: cannot import name 'LOOP_DATA_VERSION'"),
+    ])
+    def test_a_broken_loopdata_is_named_not_called_absent(self, monkeypatch, tmp_path,
+                                                          source, wanted):
+        """A user/loopdata.py present but failing to import (a half-copied
+        file, a missing dependency) is reported as such, with the
+        exception -- not as 'none is installed', and not as a raw
+        traceback."""
+        (tmp_path / 'user').mkdir()
+        (tmp_path / 'user' / '__init__.py').write_text('')
+        (tmp_path / 'user' / 'loopdata.py').write_text(source)
+        monkeypatch.delitem(sys.modules, 'user', raising=False)
+        monkeypatch.delitem(sys.modules, 'user.loopdata', raising=False)
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
+        with pytest.raises(SystemExit) as info:
+            load_installer().loader()
+        message = str(info.value)
+        assert 'cannot be imported (' in message
+        assert wanted in message
+        assert 'none is installed' not in message
+
+    @pytest.mark.parametrize('argv', [
+        ['weectl', 'extension', 'list'],
+        ['weectl', 'extension', 'uninstall', 'celestial'],
+        ['wee_extension', '--list'],
+        ['wee_extension', '--uninstall', 'celestial'],
+    ])
+    @pytest.mark.parametrize('version', [None, '6.11.2'])
+    def test_only_an_install_is_gated(self, monkeypatch, argv, version):
+        """WeeWX runs the CACHED install.py's loader() for `extension
+        list` and `extension uninstall` as well, catching only
+        ExtensionError: a SystemExit there would leave a station that
+        has since removed or downgraded weewx-loopdata unable to list
+        its extensions or to remove this one.  So with loopdata absent
+        or too old, everything but an install still gets the
+        installer."""
+        self._with_loopdata(monkeypatch, version)
+        monkeypatch.setattr(sys, 'argv', argv)
+        installer = load_installer().loader()
+        assert installer['name'] == 'celestial'
 
 
 class TestInstallerLoopDataFile:
@@ -6911,17 +7418,17 @@ class TestInstallerLoopDataFile:
     @staticmethod
     def _config(file_spec, target_report='LoopDataReport',
                 target_root='public_html/loopdata', ours=None):
-        """A station whose fields line is already complete, so anything
+        """A station with nothing for the declaration step to write
+        (empty [Skyfield] sets, and no group to remove), so anything
         printed comes from the step under test."""
-        complete, _ = celestial.migrate_loopdata_fields([])
         reports = {'HTML_ROOT': 'public_html',
                    target_report: {'HTML_ROOT': target_root}}
         if ours is not None:
             reports['CelestialReport'] = ours
-        return {'StdReport': reports,
+        return {'Skyfield': {'Satellites': {}, 'Comets': {}},
+                'StdReport': reports,
                 'LoopData': {'FileSpec': file_spec,
-                             'Formatting': {'target_report': target_report},
-                             'Include': {'fields': list(complete)}}}
+                             'Formatting': {'target_report': target_report}}}
 
     def _derived(self, config, engine=None):
         return config['StdReport']['CelestialReport']['Extras'][
@@ -7228,13 +7735,13 @@ class TestInstallerLoopDataFile:
         assert 'where-the-loop-data-file-should-live' in text
 
     def test_silent_without_loopdata(self):
-        """No [LoopData] at all: the fields step prints the install-it
-        note and this step says nothing -- there is nothing to derive
-        from."""
+        """No [LoopData] at all: the declaration step still declares
+        (it reads [Skyfield], not [LoopData]) and this step says nothing
+        -- there is nothing to derive from."""
         engine = self._engine({'StdReport': {'HTML_ROOT': 'public_html'}})
-        assert self._installer().configure(engine) is False
+        assert self._installer().configure(engine) is True
         text = '\n'.join(engine.printer.lines)
-        assert 'no [LoopData] [[Include]] fields entry' in text
+        assert 'Declared 38 satellite fields' in text
         assert 'loop_data_file' not in text
 
     def test_an_unknown_target_report_is_named(self):
@@ -7328,7 +7835,7 @@ class TestInstallerLoopDataFile:
 
 DOCS_DIR = os.path.join(REPO_ROOT, 'docs')
 
-# The bodies the Geocentric dial places, in _MIGRATION_NEW_FIELDS order.
+# The bodies the Geocentric dial places, in PAGE_FIELDS order.
 # Named here so the countdown-chip audit can subtract them; the skin's
 # own count is pinned separately by the render tests.
 _DIAL_BODIES = ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
@@ -7420,11 +7927,21 @@ class TestManualInStepWithCode:
     # before it is trusted to compare anything.
 
     def test_extractors_find_what_they_claim_to_find(self):
+        import configobj
+        import io
         page = _doc_text('fields-reference.md')
-        line = _fields_in(_block_containing(page, 'current.dateTime.raw'))
-        assert len(line) == len(celestial._MIGRATION_NEW_FIELDS), (
-            'the complete-line block parsed to %d entries' % len(line))
-        assert 'almanac.sun.az' in line and 'almanac.hale_bopp.mag' in line
+        shown = configobj.ConfigObj(io.StringIO(
+            _block_containing(page, 'clock = current.dateTime.raw')))
+        declared = [f for value in shown['LoopData']['fields'].values()
+                    for f in ([value] if isinstance(value, str) else value)]
+        assert len(declared) == len(celestial.static_page_fields()), (
+            'the shipped-declaration block parsed to %d entries' % len(declared))
+        assert 'almanac.sun.az' in declared and 'almanac.next_eclipse_kind' in declared
+        stanza = configobj.ConfigObj(io.StringIO(
+            _block_containing(page, 'satellites = almanac.iss.az')))
+        groups = stanza['StdReport']['CelestialReport']['LoopData']['fields']
+        assert len(groups['satellites']) == 38 and len(groups['comets']) == 12
+        assert 'almanac.hale_bopp.mag' in groups['comets']
 
         texts = _ini_pairs(_block_containing(_doc_text('i18n-dictionary.md'), '"LIVE"'))
         assert len(texts) > 70, 'the dictionary block parsed to %d entries' % len(texts)
@@ -7462,34 +7979,41 @@ class TestManualInStepWithCode:
 
     # ── the fields reference ─────────────────────────────────────────
 
-    def test_fields_reference_line_matches_migration_field_set(self):
-        """docs/fields-reference.md's complete line IS the field set the
-        migrator appends -- same entries, same order.  Both directions:
-        an entry the code gained, and an entry the docs still promise."""
-        documented = _fields_in(
-            _block_containing(_doc_text('fields-reference.md'),
-                              'current.dateTime.raw'))
-        shipped = list(celestial._MIGRATION_NEW_FIELDS)
-        assert set(documented) - set(shipped) == set(), (
-            'the manual documents fields the skin does not read: %s'
-            % sorted(set(documented) - set(shipped)))
-        assert set(shipped) - set(documented) == set(), (
-            'the skin reads fields the manual does not document: %s'
-            % sorted(set(shipped) - set(documented)))
-        assert documented == shipped, (
-            'same fields, different order -- the manual line is meant to '
-            'be pasted, so it must match what the migrator writes')
+    def test_fields_reference_prints_the_shipped_declaration(self):
+        """docs/fields-reference.md prints the skin.conf declaration as
+        shipped, so it must BE skins/Celestial/skin.conf's [LoopData]
+        section -- groups, entries and order, comments aside -- and the
+        weewx.conf stanza it prints for the installer's defaults must be
+        what declare_page_fields writes for them.  Both directions."""
+        import configobj
+        import io
+        page = _doc_text('fields-reference.md')
+        shown = configobj.ConfigObj(io.StringIO(
+            _block_containing(page, 'clock = current.dateTime.raw')))
+        shipped = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),
+                                      encoding='utf-8', file_error=True)
+        assert list(shown) == ['LoopData']
+        assert dict(shown['LoopData']['fields']) == dict(shipped['LoopData']['fields'])
+        assert list(shown['LoopData']['fields']) == list(shipped['LoopData']['fields']), \
+            'same groups, different order'
+        stanza = configobj.ConfigObj(io.StringIO(
+            _block_containing(page, 'satellites = almanac.iss.az')))
+        written = configobj.ConfigObj()
+        celestial.declare_page_fields(written, ensure_default=True)
+        assert (dict(stanza['StdReport']['CelestialReport']['LoopData']['fields'])
+                == dict(written['StdReport']['CelestialReport']['LoopData']['fields']))
 
     def test_fields_reference_per_tag_patterns(self):
         """The nineteen-entry satellite and six-entry comet patterns are
         the code's own, with the tag substituted."""
+        # The needles name the pattern blocks' line breaks: the installer's
+        # stanza carries the same entries on one line each.
         page = _doc_text('fields-reference.md')
         sat = _fields_in(_block_containing(
-            page, 'almanac.iss.next_pass.visible',
-            without='current.dateTime.raw'))
+            page, 'almanac.iss.label,\nalmanac.iss.next_visible_pass'))
         assert sat == celestial.satellite_fields('iss')
         comet = _fields_in(_block_containing(
-            page, 'almanac.halley.mag', without='current.dateTime.raw'))
+            page, 'almanac.halley.label,\nalmanac.halley.perihelion'))
         assert comet == celestial.comet_fields('halley')
 
     def test_fields_reference_countdown_table_is_complete(self):
@@ -7513,7 +8037,7 @@ class TestManualInStepWithCode:
             accounted.update(celestial.satellite_fields(tag))
         for tag in _DEFAULT_COMET_TAGS:
             accounted.update(celestial.comet_fields(tag))
-        expected = set(celestial._MIGRATION_NEW_FIELDS) - accounted
+        expected = set(celestial.PAGE_FIELDS) - accounted
 
         assert tabled == expected, (
             'countdown table vs the event fields the skin reads:\n'
@@ -7910,7 +8434,15 @@ class TestManualInStepWithCode:
             'sample stanza disagrees with what the installer writes '
             '(documented, installed): %s' % wrong)
 
+        # The two groups configure() writes are not in the config dict
+        # (they follow the station's [Skyfield] sets), and the stanza
+        # must show them: a reader cribbing from it needs the whole
+        # shape of what a fresh install writes.
         invented = set(documented) - set(shipped)
+        assert {'satellites', 'comets'} <= invented, (
+            'the sample stanza no longer shows the satellites/comets groups '
+            'the installer writes')
+        invented -= {'satellites', 'comets'}
         assert invented == set(), (
             'the sample stanza shows settings a fresh install does not '
             'write: %s' % sorted(invented))

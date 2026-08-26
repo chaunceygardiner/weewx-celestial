@@ -18,17 +18,22 @@ one takes the same **three separate edits**:
 
 1. the `[Skyfield] [[Satellites]]` or `[[Comets]]` entry, which tells
    weewx-skyfield to track it,
-2. its fields-line entries, which put it in the live feed — nineteen for
-   a satellite, six for a comet (see the
-   [Fields reference](fields-reference.md)),
+2. its declared fields, which put it in the live feed — nineteen for a
+   satellite, six for a comet, in the `satellites` or `comets` group of
+   `[StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]]` (see
+   the [Fields reference](fields-reference.md)),
 3. a display name under `[StdReport] [[Defaults]] [[[Almanac]]]`, so
    every report *and* the loop feed call it the same thing.  (Display
    names reach the page on WeeWX 5.3 and later; on 5.2 the tag name
    itself is shown.)
 
 The extension bundles a utility that makes all three in one command, one
-object per run, so the three cannot drift apart.  The skin itself needs
-no configuration: it enumerates whatever is configured.
+object per run, so the three cannot drift apart.  (The second is also
+made by `weectl extension install`, which rebuilds the two groups for
+whatever `[Skyfield]` sets it finds — so a satellite added by hand per
+weewx-skyfield's manual is declared on the next install, and the utility
+is the way to declare it now.)  The skin itself needs no configuration:
+it enumerates whatever is configured.
 
 ## Adding and removing satellites
 
@@ -57,8 +62,8 @@ backup (root-owned configurations need `sudo` for either the move or
 satellite's orbital elements soon after start.
 
 {: .note }
-Review with a **word-diff**.  The fields line is one very long
-comma-separated value, so a plain `diff` shows two unreadable lines and
+Review with a **word-diff**.  The `satellites` group is one very long
+comma-separated line, so a plain `diff` shows two unreadable lines and
 tells you nothing about what changed.
 
 Every edit is independently idempotent, so any starting state converges:
@@ -76,19 +81,23 @@ never crosses will honestly report no passes for ever
 (weewx-skyfield's manual has the details).
 
 `--remove-satellite zenit23088` is the exact inverse: it deletes the
-`[[Satellites]]` entry, every `almanac.zenit23088.*` fields entry, and
-the display name — each if present, so removing an absent satellite is a
-no-op.  Two things it deliberately leaves: the cached element file
-(`wxskyfield_sat_<norad>.tle`, beside the station database), and — when
-you remove an installer default (`iss`, `tiangong`) — the knowledge that
-a future weewx-skyfield upgrade re-adds the `[[Satellites]]` entry
-(only; the fields line stays as you left it), so re-run the removal
-afterwards.  The utility prints both reminders.
+`[[Satellites]]` entry, the satellite's declared fields (the group is
+rebuilt for the satellites that remain), and the display name — each if
+present, so removing an absent satellite is a no-op.  Three things it
+deliberately leaves: the cached element file
+(`wxskyfield_sat_<norad>.tle`, beside the station database); any
+`almanac.zenit23088.*` entries on the legacy `[LoopData] [[Include]]
+fields` line, which the utility never edits and which weewx-loopdata
+will warn about at startup until the line is trimmed or retired; and —
+when you remove an installer default (`iss`, `tiangong`) — the knowledge
+that a future weewx-skyfield upgrade re-adds the `[[Satellites]]` entry,
+and the next weewx-celestial install then declares its fields again, so
+re-run the removal afterwards.  The utility prints all three reminders.
 
 ## Adding and removing comets
 
 A comet is the same three edits — the `[Skyfield] [[Comets]]` entry (tag
-= MPC designation), six fields-line entries, the display name — and
+= MPC designation), six declared fields, the display name — and
 `--add-comet` makes them in one command, one comet per run:
 
 ```

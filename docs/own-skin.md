@@ -12,9 +12,15 @@ description: Building your own live celestial page on weewx-loopdata almanac fie
 ---
 
 Everything the sample skin does is ordinary weewx-loopdata consumption:
-list the almanac fields you want in `[LoopData] [[Include]] fields`, give
-your HTML elements ids equal to the json keys, and poll `loop-data.txt`
-from javascript.  `skins/Celestial/realtime_updater.inc` is the reference
+declare the almanac fields you want in your skin's `skin.conf`
+(`[LoopData] [[fields]]`, weewx-loopdata 7.0 — see its
+[Declaring fields](https://chaunceygardiner.github.io/weewx-loopdata/declaring-fields.html)),
+give your HTML elements ids equal to the json keys, and poll
+`loop-data.txt` from javascript, reading your report's own entry
+(`(await response.json())[$json.dumps($REPORT_NAME)]`, with
+`#import json` at the top of the template — `$REPORT_NAME` is a core
+WeeWX tag, `$json` is not).
+`skins/Celestial/realtime_updater.inc` is the reference
 implementation — the dial, the rate derivation, the countdown chips and
 the odometer are self-contained functions you can lift — and
 `skins/Celestial/celestial.css` holds every color — both plates' worth
@@ -107,16 +113,18 @@ The badge reports the feed's actual state: packet age, `OFFLINE` on
 network failure, `NO DATA (HTTP 404) — check loop_data_file` when the
 web server is not serving the loop-data file where the page expects it,
 and `BAD DATA — check loop_data_file` when what came back is not a
-loop-data record at all, or carries no `current.dateTime.raw`.
+loop-data file at all, carries no entry for this report (an older
+weewx-loopdata, or a report that declares nothing), or carries no
+`current.dateTime.raw`.
 A live page that silently shows stale numbers is worse than one that
 admits it.
 
 ### Absent versus null
 
 weewx-loopdata omits null-valued keys from `loop-data.txt`, which gives
-you two distinguishable states for free: a field **not on the fields
-line** (the report-time first paint stands) versus one **present but
-empty** (no pass to report, no elements, no comet).  The satellite rows,
+you two distinguishable states for free: a field **not declared** (the
+report-time first paint stands) versus one **present but empty** (no
+pass to report, no elements, no comet).  The satellite rows,
 the comet rows and the countdown chips all lean on this, and any page
 that renders optional facts wants the same distinction.
 
