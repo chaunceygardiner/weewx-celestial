@@ -8599,6 +8599,93 @@ class TestManualInStepWithCode:
                 '            loop_data_file = ../loopdata/loop-data.txt\n'):
             self._assert_comments_stay_in_their_section(target_text)
 
+    def _config_comment_lines(self):
+        """Every comment line in CONFIG, and the sub-list of them that
+        ConfigObj attaches to loop_data_file.
+
+        Only a LIVE key ends a comment span.  A blank line does not:
+        ConfigObj hands the whole preceding span, blank lines and all, to
+        the next key, so resetting on a blank would under-count the
+        exemption and fail the moment someone put a blank line inside
+        that block -- blaming a drop that is the deliberate one."""
+        every, block = [], []
+        run = []
+        for line in load_installer().CONFIG.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('#'):
+                every.append(stripped)
+                run.append(stripped)
+            elif not stripped:
+                continue
+            else:
+                if stripped.startswith('loop_data_file'):
+                    block = run
+                run = []
+        return every, block
+
+    def test_merged_stanza_drops_no_comment_block(self):
+        """Every comment line in CONFIG must actually REACH the merged
+        weewx.conf.  The placement guard above measures the indent of the
+        comment lines that survived, so a block that vanished leaves it
+        nothing to measure and it passes -- a silent hole this closes.
+
+        conditional_merge transfers comments[k] only inside its
+        `k not in a_dict` branch, for a new section AND a new scalar
+        alike, so a comment attached to a key the target ALREADY HAS is
+        dropped entirely.  A fresh install is exactly where the target's
+        other sections already exist, which makes the drop the FIELD
+        behavior rather than a corner case.
+
+        The derived target below is the sibling guard's, character for
+        character, and must stay that way: configure() creates
+        [[[LoopData]]] [[[[fields]]]] before the merge as surely as it
+        creates loop_data_file, and a target missing it goes blind to a
+        comment block attached to [[[LoopData]]] -- the very drop class
+        this test exists to catch (code review, 2026-08-28, which proved
+        it by sabotage).
+
+        CONFIG has one deliberate instance, and only one: configure()
+        derives loop_data_file BEFORE the merge, so its explanation
+        reaches exactly the station configure() could not derive for --
+        the owner who needs it.  That block is exempted BY NAME here, so
+        adding a second drop anywhere fails this test rather than
+        quietly writing a comment for nobody."""
+        import io
+        import configobj
+        import weeutil.config
+        every, loop_data_file_block = self._config_comment_lines()
+        assert loop_data_file_block, (
+            'the loop_data_file comment block was not found in CONFIG; '
+            'this test can no longer tell a deliberate drop from a bug')
+
+        for target_text, derived in (
+                ('[Station]\n    location = home\n', False),
+                ('[Station]\n    location = home\n'
+                 '[StdReport]\n    [[CelestialReport]]\n'
+                 '        [[[LoopData]]]\n            [[[[fields]]]]\n'
+                 '        [[[Extras]]]\n'
+                 '            loop_data_file = ../loopdata/loop-data.txt\n',
+                 True)):
+            target = configobj.ConfigObj(io.StringIO(target_text))
+            weeutil.config.conditional_merge(
+                target, load_installer().CelestialInstaller()['config'])
+            buf = io.BytesIO()
+            target.write(buf)
+            merged = [ln.strip()
+                      for ln in buf.getvalue().decode('utf-8').splitlines()
+                      if ln.strip().startswith('#')]
+
+            wanted = list(every)
+            if derived:
+                for line in loop_data_file_block:
+                    wanted.remove(line)
+            missing = [ln for ln in wanted if ln not in merged]
+            assert not missing, (
+                'these comment lines never reached weewx.conf -- '
+                'conditional_merge drops a comment block whose key the '
+                'target already has (loop_data_file derived: %s): %s'
+                % (derived, missing))
+
     def _assert_comments_stay_in_their_section(self, target_text):
         import io
         import configobj
