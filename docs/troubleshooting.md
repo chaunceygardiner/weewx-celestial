@@ -129,9 +129,11 @@ you and the file.
 
 Working as designed: the page stops polling after `expiration_time`
 hours so an unattended browser does not poll for ever.  Click to resume,
-or raise `expiration_time`.  Appending `?pageUpdate=<page_update_pwd>` to
-the URL disables expiration for that view — the password is visible in
-the page source, so treat it as a convenience, not a secret.
+or raise `expiration_time` in `weewx.conf` — uncommenting it first if
+your stanza has it commented out, as a fresh install now writes it.
+Appending `?pageUpdate=<page_update_pwd>` to the URL disables expiration
+for that view — the password is visible in the page source, so treat it
+as a convenience, not a secret.
 
 ## The star field is frozen
 
@@ -344,7 +346,8 @@ is the whole fix — this extension has run no service since 6.0.
 Rates need **two** loop packets.  For the first `refresh_rate` seconds
 after a page load nothing moves, by design.  If it never starts moving,
 the feed is delivering the same packet repeatedly — check that
-`refresh_rate` matches loopdata's write cadence (2 seconds for the
+`refresh_rate` (commented out in a stanza a fresh install wrote, in which
+case the skin's 2 seconds is in force) matches loopdata's write cadence (2 seconds for the
 Vantage driver) rather than being much shorter than it.
 
 The countdown chips and the satellite rosters are not this symptom: they

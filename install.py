@@ -16,6 +16,9 @@
 
 import os
 import sys
+from io import StringIO
+
+import configobj
 import weewx
 from setup import ExtensionInstaller
 
@@ -102,6 +105,74 @@ def installing():
     return any(arg == 'install' or arg.startswith('--i') for arg in sys.argv)
 
 
+# The stanza a fresh install writes into weewx.conf, as text rather than a
+# dict so that ConfigObj carries its comments into the user's file.
+# Which options are live and which are commented out is a convention with
+# reasons behind it; those live in CLAUDE.md, not here.
+CONFIG = """
+[StdReport]
+    [[CelestialReport]]
+        # The page's language.  Every string the page composes is
+        # translated at generation time, so this is read here, not in the
+        # browser; see the manual's Translations page for what ships.
+        # Left commented, the skin's own value answers -- unless you set
+        # a language in [StdReport] [[Defaults]], which beats the skin;
+        # uncommenting here beats both.
+        #lang = en
+
+        # The page's plate: dark (the night page), light (the paper-atlas
+        # page), or auto -- light while the sun is up at generation time,
+        # dark otherwise.  The whole page follows it, the sky dome and
+        # Next Visible Pass chart included.  Spelled and valued exactly as
+        # weewx-skyfield's Sky page spells it, so the two configure alike.
+        #theme = dark
+
+        # The Celestial report: one live page, generated every archive
+        # interval and kept moving between cycles by weewx-loopdata.
+        # Its files land in a subdirectory of your HTML_ROOT.
+        HTML_ROOT = celestial
+        enable = true
+        skin = Celestial
+        [[[Extras]]]
+            # Where the page fetches its live values from -- the file
+            # weewx-loopdata writes.  If not a full path, it is relative
+            # to this report's HTML_ROOT.  The install works this out
+            # from your own [LoopData] settings, so the value here should
+            # already be right; the file must also be reachable through
+            # your web server, or the page's badge reads NO DATA (HTTP
+            # 404).
+            loop_data_file = ../loopdata/loop-data.txt
+
+            # Seconds between fetches of that file.  Match
+            # weewx-loopdata's write cadence, which is your station's
+            # loop cadence (2 seconds for the Vantage driver).
+            #refresh_rate = 2
+
+            # Hours the page keeps polling before it gives up, so an
+            # abandoned browser tab does not poll forever.  Clicking the
+            # LIVE badge starts it again.
+            #expiration_time = 24
+
+            # The timezone of every time shown on the page.  Leave it
+            # commented and the STATION's zone is auto-detected at
+            # generation time, so remote viewers of a public page see
+            # station time -- which is why this one ships without a
+            # value: absence IS the setting.  The line below is an
+            # EXAMPLE, not a default.  Any IANA name forces that zone;
+            # the word browser forces the viewer's own.
+            #time_zone = America/New_York
+
+            # PLACEHOLDER -- choose your own password.  Loading the page
+            # as ?pageUpdate=<this password> exempts it from expiring,
+            # which is what a kiosk display wants.  Note the URL
+            # parameter is pageUpdate, not page_update_pwd.  The password
+            # is visible to anyone reading the page source.
+            page_update_pwd = foobar
+        [[[LoopData]]]
+            [[[[fields]]]]
+"""
+
+
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
@@ -110,35 +181,17 @@ class CelestialInstaller(ExtensionInstaller):
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
             author_email = "john@johnkline.com",
-            config = {
-                'StdReport': {
-                    'CelestialReport': {
-                        'HTML_ROOT':'celestial',
-                        'enable': 'true',
-                        'skin':'Celestial',
-                        'Extras': {
-                            'loop_data_file'   : '../loopdata/loop-data.txt',
-                            'refresh_rate'     : 2,
-                            'expiration_time'  : 24,
-                            'page_update_pwd'  : 'foobar',
-                        },
-                        # The satellites and comets groups configure()
-                        # writes live here.  Listed EMPTY so that weectl
-                        # extension uninstall prunes them: weecfg's
-                        # remove_and_prune pops a section it is told
-                        # about once it has no subsections left, and
-                        # says nothing about one it is not -- without
-                        # this entry the uninstall left a [[CelestialReport]]
-                        # holding only [[[LoopData]]], with no skin, and
-                        # reportengine died on it (KeyError 'skin') every
-                        # archive cycle.  Empty, so that the conditional
-                        # merge after configure() adds nothing of its own.
-                        'LoopData': {
-                            'fields': {},
-                        },
-                    },
-                },
-            },
+            # The satellites and comets groups configure() writes live
+            # under [[[LoopData]]] [[[[fields]]]].  CONFIG lists that
+            # section EMPTY so that weectl extension uninstall prunes it:
+            # weecfg's remove_and_prune pops a section it is told about
+            # once it has no subsections left, and says nothing about one
+            # it is not -- without this entry the uninstall left a
+            # [[CelestialReport]] holding only [[[LoopData]]], with no
+            # skin, and reportengine died on it (KeyError 'skin') every
+            # archive cycle.  Empty, so that the conditional merge after
+            # configure() adds nothing of its own.
+            config = configobj.ConfigObj(StringIO(CONFIG)),
             files = [
                 ('bin/user', [
                     'bin/user/celestial.py',

@@ -11,11 +11,15 @@ description: The CelestialReport options in weewx.conf — loop_data_file, refre
 
 ---
 
-Installing registers the report; its options live in `weewx.conf`:
+Installing registers the report; its options live in `weewx.conf`.  This
+is what a **fresh** install writes — see [what an existing station
+sees](#upgrading-an-existing-station) below, which is different:
 
 ```
 [StdReport]
     [[CelestialReport]]
+        #lang = en
+        #theme = dark
         HTML_ROOT = celestial
         enable = true
         skin = Celestial
@@ -25,10 +29,20 @@ Installing registers the report; its options live in `weewx.conf`:
                 comets = almanac.halley.az, almanac.halley.alt, ...
         [[[Extras]]]
             loop_data_file = ../loopdata/loop-data.txt
-            refresh_rate = 2
-            expiration_time = 24
+            #refresh_rate = 2
+            #expiration_time = 24
+            #time_zone = America/New_York
             page_update_pwd = foobar
 ```
+
+An option that merely selects a default is written **commented out**, with
+the default shown.  Nothing is lost: with the line commented, the value
+in force is the one in `skins/Celestial/skin.conf`, which every upgrade
+replaces — so if a later release picks a better default, your station
+follows it.  Uncomment one to pin your station to a value of your own.
+`loop_data_file` and `page_update_pwd` are live because neither is a
+default: the first is derived for your station at install, the second is a
+placeholder you are meant to replace.
 
 - `loop_data_file`: where the javascript fetches loop data; relative paths
   are relative to this report's HTML_ROOT.  You should not have to set
@@ -42,10 +56,11 @@ Installing registers the report; its options live in `weewx.conf`:
   says so, and the page's badge will tell you the same:
   `NO DATA (HTTP 404) — check loop_data_file`.
 - `refresh_rate`: seconds between loop-data polls (match weewx-loopdata's
-  write cadence: 2 for the Vantage driver).  The countdown chips and the
+  write cadence: 2 for the Vantage driver).  Ships commented out.  The countdown chips and the
   satellite rosters advance with each packet a poll brings, since the
   page's clock is the packet's own.
 - `expiration_time`: hours the page keeps polling before requiring a click.
+  Ships commented out.
   An unattended browser therefore stops polling overnight instead of for
   ever; the badge reads `CLICK-ME` and a click resumes it.
 - `page_update_pwd`: appending `?pageUpdate=<page_update_pwd>` to the URL
@@ -54,9 +69,10 @@ Installing registers the report; its options live in `weewx.conf`:
 - `time_zone`: the timezone of displayed times.  By default the
   *station's* zone is auto-detected at report time, so remote viewers see
   station time.  Set an IANA name (`America/New_York`) to force a zone,
-  or `browser` for the viewer's local zone.  It ships commented out in
-  `skin.conf`; set it in `weewx.conf` beside the options above rather
-  than uncommenting it there, because an upgrade overwrites the skin.
+  or `browser` for the viewer's local zone.  It ships commented out
+  above — and unlike the others, the line there is an **example, not a
+  default**: this option's default is having no value at all, which is
+  what makes the zone auto-detect.  Uncomment and edit it to override.
 - `lang`: the page's language — see [Translations](i18n.md).
 - `theme`: the page's plate — `dark` (the default), `light`, or `auto`.
   See [Dark, light and auto](#dark-light-and-auto) below.
@@ -66,6 +82,14 @@ Installing registers the report; its options live in `weewx.conf`:
   page reads, declared to weewx-loopdata — written by the installer for
   your `[Skyfield]` sets, rebuilt on every install, not for editing.  See
   [the declared fields](#the-declared-fields) below.
+
+## Upgrading an existing station
+
+Nothing you have set is rewritten: WeeWX fills in only what is absent from
+`weewx.conf`.  So your stanza will not come to look like the one above —
+a station installed before this release keeps `refresh_rate` and
+`expiration_time` live and has no `lang`, `theme` or `time_zone` lines,
+which is fine; copy from above if you want them.
 
 ## Where the loop-data file should live
 

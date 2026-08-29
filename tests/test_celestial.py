@@ -7814,8 +7814,11 @@ class TestInstallerLoopDataFile:
             {'StdReport': {'CelestialReport': deepcopy(
                 self._installer()['config']['StdReport']['CelestialReport'])}})
         assert self._derived(config) == '../loopdata/loop-data.txt'
+        # The rest of the stanza still lands.  page_update_pwd rather
+        # than refresh_rate: the latter is written commented out, so it
+        # is absent from the stanza by design and would prove nothing.
         assert config['StdReport']['CelestialReport']['Extras'][
-            'refresh_rate'] == 2        # the rest of the stanza still lands
+            'page_update_pwd'] == 'foobar'
 
 
 
@@ -8374,27 +8377,47 @@ class TestManualInStepWithCode:
     # does not write.
 
     def _installer_config_pairs(self):
-        """install.py's config dict, flattened to leaf key/value pairs.
-        Parsed with ast rather than imported: install.py imports weecfg
-        at module scope, which a bare test run may not have."""
-        import ast
-        with open(os.path.join(REPO_ROOT, 'install.py'), encoding='utf-8') as f:
-            tree = ast.parse(f.read())
-        found = [node.value for node in ast.walk(tree)
-                 if isinstance(node, ast.keyword) and node.arg == 'config']
-        assert len(found) == 1, 'expected one config= in install.py, found %d' % len(found)
-        config = ast.literal_eval(found[0])
+        """The LIVE settings install.py writes, flattened to leaf
+        key/value pairs.  Read through the installer object rather than
+        by parsing the source, so the extractor does not care whether the
+        stanza is a dict or a ConfigObj built from CONFIG."""
+        config = load_installer().CelestialInstaller()['config']
 
         pairs = {}
-        def flatten(d):
-            for key, value in d.items():
-                if isinstance(value, dict):
+        def flatten(section):
+            for key, value in section.items():
+                if hasattr(value, 'items'):
                     flatten(value)
                 else:
                     assert key not in pairs, 'duplicate leaf key %r' % key
                     pairs[key] = value
         flatten(config)
         return pairs
+
+    def _installer_commented_pairs(self):
+        """The options install.py writes COMMENTED OUT, as key -> value.
+
+        These are absent from the parsed object by definition -- that is
+        the whole point of them -- so they are read from the CONFIG text.
+        An option is commented out when the value that governs is the
+        skin's, so that a later release changing that default reaches
+        every existing install instead of only fresh ones; the commented
+        assignment states the default once, for the reader."""
+        module = load_installer()
+        found = re.findall(r'^\s*#(\w+)\s*=\s*(.+?)\s*$',
+                           module.CONFIG, re.M)
+        assert found, 'no commented-out options found in CONFIG'
+        # One match per name.  dict() keeps the LAST, so a prose line that
+        # happens to read `#word = something` after a real assignment
+        # would silently replace the value the governs-test compares --
+        # the one failure this test family exists to catch.
+        names = [name for name, _ in found]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        assert dupes == [], (
+            'CONFIG has more than one commented `#%s = ...` line; if one of '
+            'them is prose, reword it -- it is shadowing the assignment the '
+            'guard tests read' % ', '.join(dupes))
+        return dict(found)
 
     def _documented_stanza_pairs(self):
         """Every key = value in the Configuration page's sample stanza,
@@ -8404,23 +8427,37 @@ class TestManualInStepWithCode:
                                    'HTML_ROOT = celestial')
         pairs = {}
         for line in sample.splitlines():
-            m = re.match(r'^\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$', line)
+            m = re.match(r'^\s+(#?)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$',
+                         line)
             if m:
-                pairs[m.group(1)] = m.group(2).strip('\'"')
+                pairs[m.group(2)] = (m.group(3).strip('\'"'), bool(m.group(1)))
         return pairs
 
     def test_installer_stanza_extractors_find_what_they_claim(self):
         shipped = self._installer_config_pairs()
+        commented = self._installer_commented_pairs()
         documented = self._documented_stanza_pairs()
-        assert len(shipped) >= 7, 'install.py parsed to %d leaf pairs' % len(shipped)
-        for landmark in ('HTML_ROOT', 'skin', 'loop_data_file', 'refresh_rate'):
+        assert len(shipped) >= 5, 'install.py parsed to %d leaf pairs' % len(shipped)
+        for landmark in ('HTML_ROOT', 'skin', 'loop_data_file'):
             assert landmark in shipped, landmark
             assert landmark in documented, landmark
+        for landmark in ('refresh_rate', 'expiration_time', 'lang', 'theme'):
+            assert landmark in commented, landmark
+            assert landmark in documented, landmark
+            assert landmark not in shipped, (
+                '%s is written live again; if that is intended, its value '
+                'no longer follows skin.conf and this test should say so'
+                % landmark)
 
     def test_manual_prints_the_stanza_the_installer_writes(self):
         """Every key/value a fresh install writes appears verbatim in the
         Configuration page's sample, and the sample invents nothing."""
-        shipped = self._installer_config_pairs()
+        # key -> (value, is_commented_out), the two halves of the stanza
+        # a fresh install writes.
+        shipped = {k: (str(v), False)
+                   for k, v in self._installer_config_pairs().items()}
+        shipped.update({k: (str(v), True)
+                        for k, v in self._installer_commented_pairs().items()})
         documented = self._documented_stanza_pairs()
 
         missing = {k: v for k, v in shipped.items() if k not in documented}
@@ -8428,11 +8465,11 @@ class TestManualInStepWithCode:
             'the installer writes these, and the manual\'s sample stanza '
             'does not show them: %s' % missing)
 
-        wrong = {k: (documented[k], str(v)) for k, v in shipped.items()
-                 if k in documented and documented[k] != str(v)}
+        wrong = {k: (documented[k], v) for k, v in shipped.items()
+                 if k in documented and documented[k] != v}
         assert wrong == {}, (
-            'sample stanza disagrees with what the installer writes '
-            '(documented, installed): %s' % wrong)
+            'sample stanza disagrees with what the installer writes -- value '
+            'or commented-out-ness (documented, installed): %s' % wrong)
 
         # The two groups configure() writes are not in the config dict
         # (they follow the station's [Skyfield] sets), and the stanza
@@ -8462,12 +8499,138 @@ class TestManualInStepWithCode:
                                      file_error=True)['Extras']
         shipped = self._installer_config_pairs()
         shared = [name for name in extras if name in shipped]
-        assert 'loop_data_file' in shared and len(shared) >= 4, shared
+        assert 'loop_data_file' in shared and len(shared) >= 2, shared
         wrong = {name: (extras[name], str(shipped[name])) for name in shared
                  if str(extras[name]) != str(shipped[name])}
         assert wrong == {}, (
             'skin.conf and install.py disagree (skin.conf, install.py): %s'
             % wrong)
+
+    def test_commented_out_options_match_the_value_that_governs(self):
+        """An option the installer writes commented out is answered by
+        skins/Celestial/skin.conf, so the two MUST be identical.  If the
+        installer shows `#refresh_rate = 2` while skin.conf says 10, then
+        commenting it out silently changed every fresh install's behavior
+        and the stanza tells the reader a value that is not in force --
+        the one way this scheme can do real harm.  (John, 2026-08-28.)
+
+        Which side moves when this fails is a JUDGEMENT, not a rule, and
+        the mechanical instinct is the wrong one.  Editing the commented
+        assignment down to skin.conf's number makes the test pass and
+        silently changes what every new station gets, because the live
+        value the installer used to write is what fresh installs have
+        actually been running -- weewx.conf is merged over skin.conf, so
+        the installer's number won.  Preserving that behavior usually
+        means moving SKIN.CONF to match the assignment.  Moving the
+        assignment instead is a deliberate change of the default and
+        belongs in changes.txt.  (Existing stations are unaffected
+        either way: their weewx.conf already carries the live value.)
+        weewx-purple hit exactly this on 2026-08-28 -- a shipped
+        `timeout = 15` against a code fallback of 10 -- and John moved
+        the code to 15.  weewx-loopdata had the same class of drift on
+        loop_data_file six days earlier."""
+        import configobj
+        skin = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),
+                                   encoding='utf-8', file_error=True)
+        # An option is either the report's own (lang, theme) or one of
+        # the page's ([Extras]); skin.conf answers both.
+        governs = dict(skin['Extras'])
+        governs.update({k: skin[k] for k in skin.scalars})
+
+        # An option skin.conf ITSELF ships commented out has no value to
+        # compare against, because its default is absence -- time_zone
+        # means "auto-detect the station's zone" when nothing sets it.
+        # Its assignment in CONFIG is an example, so it is exempt, but
+        # the exemption is verified rather than assumed: skin.conf must
+        # really ship it commented, or it is an option we simply failed
+        # to keep in step.
+        with open(os.path.join(SKIN_DIR, 'skin.conf'), encoding='utf-8') as f:
+            commented_in_skin = set(re.findall(r'^\s*#\s*(\w+)\s*=', f.read(),
+                                               re.M))
+
+        commented = self._installer_commented_pairs()
+        by_example = {name for name in commented if name not in governs}
+        assert by_example <= commented_in_skin, (
+            'the installer comments these out, so nothing but skin.conf can '
+            'answer them -- and skin.conf neither sets them nor ships them '
+            'commented: %s' % sorted(by_example - commented_in_skin))
+
+        wrong = {name: (str(governs[name]), value)
+                 for name, value in commented.items()
+                 if name in governs and str(governs[name]) != value}
+        assert wrong == {}, (
+            'a commented-out default disagrees with the skin.conf value that '
+            'actually governs (skin.conf, install.py): %s' % wrong)
+        # And the exemption must stay narrow.
+        assert by_example == {'time_zone'}, (
+            'a new option is commented out with no value backing it: %s'
+            % sorted(by_example))
+
+    def test_merged_stanza_keeps_comments_in_their_own_section(self):
+        """A commented-out option must be followed by a live key in its
+        OWN section.  ConfigObj attaches a comment block to the next key,
+        so one left last in its section attaches to whatever section
+        follows and is written at the PARENT's indent -- where it reads
+        as an option of the parent, silently documenting the wrong
+        section.  Nothing about the source text shows this; it only
+        appears after the merge, which is what this drives.
+
+        Known limit: a comment block placed above a SUBSECTION header
+        legitimately lands at the parent's indent, and this would flag
+        it.  CONFIG has none today; if one is ever wanted, widen the rule
+        deliberately rather than narrowing this back to assignments.
+
+        Note the target is built from parsed TEXT: a bare ConfigObj()
+        has indent_type '' and writes everything flush left, which would
+        fail this assertion on a perfectly correct stanza.  (The trap
+        cost weewx-purple a false failure, 2026-08-28.)"""
+        # Both merge paths.  A virgin weewx.conf takes the whole-section-
+        # is-new branch; a real fresh install does NOT -- configure() runs
+        # first and creates [[[LoopData]]] [[[[fields]]]] and [[[Extras]]]
+        # loop_data_file, so the merge goes key by key into sections that
+        # already exist.  That is the path where a comment block can lose
+        # its section, so it is the one that must be driven.
+        for target_text in (
+                '[Station]\n    location = home\n',
+                '[Station]\n    location = home\n'
+                '[StdReport]\n    [[CelestialReport]]\n'
+                '        [[[LoopData]]]\n            [[[[fields]]]]\n'
+                '        [[[Extras]]]\n'
+                '            loop_data_file = ../loopdata/loop-data.txt\n'):
+            self._assert_comments_stay_in_their_section(target_text)
+
+    def _assert_comments_stay_in_their_section(self, target_text):
+        import io
+        import configobj
+        import weeutil.config
+        target = configobj.ConfigObj(io.StringIO(target_text))
+        weeutil.config.conditional_merge(
+            target, load_installer().CelestialInstaller()['config'])
+        buf = io.BytesIO()
+        target.write(buf)
+
+        depth = 0
+        misplaced = []
+        for line in buf.getvalue().decode('utf-8').splitlines():
+            header = re.match(r'^\s*(\[+)[^\]]+\]+\s*$', line)
+            if header:
+                depth = len(header.group(1))
+                continue
+            # EVERY comment line, not just the commented-out
+            # assignments: the trap does not care what a comment says,
+            # and CONFIG is mostly prose, so matching only `#key = value`
+            # checked a small minority of the lines at risk.  A prose
+            # block appended after the last live key of a section would
+            # have passed the narrower test and still landed under the
+            # following section at the wrong indent.
+            comment = re.match(r'^(\s*)#', line)
+            if comment and len(comment.group(1)) != 4 * depth:
+                misplaced.append((line.strip()[:40], len(comment.group(1)),
+                                  4 * depth))
+        assert misplaced == [], (
+            'these comment lines were written outside the section they '
+            'document -- put a live key after them (line, indent found, '
+            'indent wanted): %s' % misplaced)
 
     # ── absolute links to the published site ─────────────────────────
     # GitHub Pages serves what jekyll BUILDS: `installation.html`, not

@@ -1,6 +1,35 @@
 weewx-celestial change history
 ------------------------------
 
+8.x (in progress)
+-----------------
+- The stanza a fresh install writes into weewx.conf now explains itself:
+  every option arrives with a comment saying what it does, and an option
+  that merely picks a default arrives COMMENTED OUT, with the default
+  shown -- refresh_rate and expiration_time of those already in the
+  stanza, plus the three added below.  The value that governs is then
+  the skin's, which every upgrade replaces, so a better default chosen
+  in a later release reaches your station instead of only new ones.
+  Uncomment one to pin your own value; what you set in weewx.conf still
+  wins over the skin.
+- Existing installations are untouched.  WeeWX fills in only what is
+  absent from weewx.conf and never rewrites what is there, so nothing
+  you have set changes, and the settings a previous install wrote stay
+  exactly as they are.  Nothing to do on upgrade.
+- Three options the stanza never mentioned now appear in it, commented
+  out: lang and theme (the page's language and its dark/light plate) and
+  time_zone.  They were discoverable only by reading the skin or the
+  manual.  time_zone is the one exception to the rule above: its default
+  is having NO value, which is what makes the page auto-detect your
+  station's zone, so the line shown is an example rather than a default
+  and the comment says so.
+- loop_data_file and page_update_pwd stay live: neither is a default.
+  The first is worked out for your station at install time, the second
+  is a placeholder you are meant to replace.
+- Documentation: the Configuration page prints the stanza as it is now
+  written and says what the commented-out form means.  The password
+  comment named the wrong URL parameter -- it is ?pageUpdate=<password>.
+
 8.5 2026/08/26
 --------------
 - ACTION REQUIRED: weewx-loopdata 7.0 or later.  Upgrade it BEFORE
