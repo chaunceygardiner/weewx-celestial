@@ -2,7 +2,7 @@
    COPIED from weewx-skyfield skins/Skyfield/sky.js (v2.0) -- that repo
    is the source of truth; re-copy this file when upgrading, never fork.
    Here the .skytip rule lives at the end of celestial.css, and
-   realtime_updater.inc hides an open chip on every fragment swap (a
+   celestial.js hides an open chip on every fragment swap (a
    chip does not follow its mark, and this page's marks move).
    Tap tooltips for the Sky page's SVG panels.  Every mark already
    carries a native SVG <title> -- the browser shows it on hover, but

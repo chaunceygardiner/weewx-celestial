@@ -1,8 +1,238 @@
 weewx-celestial change history
 ------------------------------
 
-8.x (in progress)
------------------
+9.0 2026/08/30
+--------------
+- ACTION ON UPGRADE: the sky dome's ten fragment templates
+  (dome-svg.txt.tmpl and dome-svg-1..9.txt.tmpl), their shared
+  dome-svg-frag.inc and pass-chart.txt.tmpl -- twelve files -- and the
+  page's javascript include, realtime_updater.inc, are gone from the
+  skin.  The files the templates wrote -- dome-svg.txt, dome-svg-1..9.txt
+  and pass-chart.txt, exactly as before, so a page open across the
+  upgrade keeps refetching successfully -- are now written by a
+  generator, user.celestial_page.FragmentGenerator, listed in the skin's
+  generator_list; the javascript is one static file, celestial.js (see
+  below).  weectl only overlays files on an upgrade, so the old files
+  stay in skins/Celestial on an upgraded station; nothing lists them any
+  more, so they are inert -- but a later `weectl extension uninstall
+  celestial` removes only the files it installed and leaves a directory
+  it did not empty in place, so skins/Celestial would outlive the
+  uninstall holding nothing but them.  Delete them once:
+      rm /home/weewx/skins/Celestial/dome-svg*.txt.tmpl \
+         /home/weewx/skins/Celestial/dome-svg-frag.inc \
+         /home/weewx/skins/Celestial/pass-chart.txt.tmpl \
+         /home/weewx/skins/Celestial/realtime_updater.inc
+  (your SKIN_ROOT may differ).  An edit you made to one of them no
+  longer applies.
+- The page's panels start becoming something another skin can drop in,
+  the way weewx-skyfield's $sky_page panels are.  This release's first
+  step is the fragments: a new module, user.celestial_page, serves the
+  page's $celestial search list (and $sky_page beside it, exactly as
+  the celestial_sky shim does -- the shim stays for any skin that names
+  it) and the FragmentGenerator, which writes the dome backdrops and
+  the pass-chart fragment into the report's HTML_ROOT each cycle from
+  the report's own almanac, theme and language.  A skin lists
+  user.celestial_page.CelestialPanels among its search_list_extensions
+  and user.celestial_page.FragmentGenerator in its generator_list and
+  gets both; the bundled skin does exactly that and nothing more.
+- The page's javascript is one static file, celestial.js, shipped
+  beside sky.js and version-tagged in the page's URL like it, publishing
+  one global (`celestial`) with one method, celestial.start(config).
+  Everything it needs per report -- the [Extras] options, the station's
+  latitude, the generation instant, the report's distance unit,
+  language, body names, compass cardinals, [Texts] strings, satellites,
+  comets, report name and loop-data file -- arrives in a config block
+  the page generates ($celestial.config_script($almanac)) and nothing
+  else in the script is per report.  Through 8.5 the whole script was a
+  Cheetah include that baked those values into itself, which is why no
+  other skin could run it; the page's behavior is unchanged, and the
+  config's keys are a contract that only grows inside a major version.
+  Two side effects worth knowing: the script no longer runs at window
+  scope, so its names can no longer collide with the browser's
+  (`history` once cost hours), and a name a report gives -- a report
+  name or password containing `</script>` -- can no longer close the
+  block early.
+- The countdown row and the Geocentric panel -- the dial and its roster
+  -- are the next two panels to become drop-in: the page renders them
+  with $celestial.countdown_html($almanac) and
+  $celestial.geocentric_html($almanac), and the three hundred lines of
+  template that built them are gone.  What the page shows is unchanged
+  (the markup is the same, indented differently) with one improvement:
+  a comet added with --add-comet and no --name, and not named by the
+  lang file, now reads in the roster as it does on the dial and its
+  perihelion chip -- "Tsuchinshan Atlas", not "Tsuchinshan_atlas" --
+  and every first
+  paint (a chip's countdown, a body's distance and altitude, the
+  install hint without an extended almanac) is still its own guarded
+  read, so a lesser almanac costs that chip or that row, never the
+  page.  New: a panel whose render fails outright is logged with its
+  traceback and left out of the page, which the javascript then leaves
+  alone; the rest of the page, and the rest of the live layer, carry
+  on.  And a [Texts] translation that misspells a {placeholder} now
+  paints it literally at generation, exactly as the javascript paints
+  it live, so the first packet no longer changes what the page first
+  showed (through 8.5 the cell rendered empty at generation and the
+  placeholder appeared with the first packet).
+- The sky dome, the Next Visible Pass chart, their two satellite
+  rosters and the footer's credit are drop-in too: the page renders
+  them with $celestial.dome_html($almanac), dome_roster_html,
+  pass_html, pass_roster_html and footer_html, the page's plate comes
+  from $celestial.theme_class, and the template is chrome plus calls
+  -- the section headings, the two grids that put a chart beside its
+  roster, the header.  The rosters are their own calls so another page
+  can place them where it likes; pass_panel_hidden says whether the
+  pass panel has anything to show at all (no chart and no roster row),
+  which is when this page hides the section around it.  What the page
+  shows is unchanged.  Every fragment -- the dome's wrapper on the page
+  and each refetched one, and the pass chart, now wrapped the same way
+  -- carries the report's theme beside its own set's plate, and the
+  javascript judges the theme = auto flip by that -- against the theme
+  the page was generated on, which the config block now carries --
+  rather than by the fragment's plate, so a fragment set on a plate
+  other than the page's (a night dome in a light page) is never
+  mistaken for a flip and the flip itself is never missed -- not even
+  by a page whose only fragment is the pass chart while no pass is in
+  window: the empty chart now arrives in its wrapper too (a page still
+  open from 8.x reads that as junk and keeps its chart, which a reload
+  puts right).  A scalar written straight under [CelestialFragments] is
+  refused, naming it, rather than ignored.  The panels beside the dome
+  (the rosters, the Next Visible Pass) ask $sky_page.can_draw() --
+  weewx-skyfield 2.3.4 or later -- whether the sky can be drawn at all;
+  an older weewx-skyfield is asked the way the page always asked, by
+  drawing the dome.  A registered almanac whose drawing still comes
+  back empty gets its own line in the dome's place ("could not be
+  drawn -- see the weewxd log") rather than the install hint.  If you
+  are installing weewx-skyfield today, take 2.3.5: it adds nothing this
+  page uses, but its install says what it is downloading while it
+  downloads and leaves alone orbital elements the station already has
+  and that are still current.  A weewx-skyfield
+  whose dome_svg or pass_chart_html raises (its own methods are guarded
+  and return empty, so this is an older one hitting a WeeWX
+  incompatibility) still degrades the dome to its install hint and the
+  chart to its hidden area, now with the traceback in the log.
+- A page in another skin names the panels it embeds and the installer
+  declares the satellite and comet fields for it: the report's stanza
+  in weewx.conf carries `celestial_panels = countdown, geocentric,
+  dome, pass` (those four are the panels), and the installer and the
+  --add-/--remove-satellite/-comet verbs then keep that report's
+  satellites and comets groups exactly as they keep the Celestial
+  report's -- one writer -- and only the groups its panels read
+  (satellites for the dome and the pass panel, comets for the
+  Geocentric, both for the countdown row's pass and perihelion chips).
+  On any report carrying the key those two group names are this
+  extension's, replaced or removed wholesale on every run -- a group of
+  your own belongs under another name -- and a group removed because no
+  named panel reads it is reported as exactly that.  A key naming
+  something that is not a panel costs that report its declaration and
+  nobody else's: the installer and the verbs name it every run, and the
+  key belongs on a report, never under [[Defaults]] or at [StdReport]'s
+  top level (WeeWX merges both into every report), which is refused
+  once, as the station's fault, in the installer's output and on every
+  page whose report carries no key of its own.  Each panel also
+  asks the installer's own question of the same weewx.conf when the
+  page is generated, and a panel whose fields are not declared (the
+  named panels between them read every group it reads, or they do not)
+  carries a line before its root saying so, with a line in the weewxd
+  log -- such a panel would otherwise first-paint and then never move,
+  with nothing to say why; a panel named but not yet written (the key
+  added and weewxd restarted without re-running weectl extension
+  install, a satellite added to [Skyfield] by hand) carries a line
+  saying what to run and to restart weewxd -- the installer's own dry
+  run is what the page asks, against the configuration weewxd loaded
+  at startup -- and the bundled Celestial page says the same when its
+  own declaration is out of date (an 8.5 station whose [Skyfield] sets
+  were edited by hand, or re-filled by a weewx-skyfield upgrade after
+  --remove-satellite, will now be told); the log says it once per
+  fault per cycle; the dome and the chart carry their panel's line,
+  their rosters never do.  A key naming nothing is a
+  statement (the report is a consumer whose page embeds no panel, and
+  both groups go); a [[[celestial_panels]]] section where the line
+  belongs is refused saying what a line looks like; a key under
+  [[Defaults]] or at [StdReport]'s top level is refused on every report
+  of another skin that carries none of its own, in the installer's
+  output and on that report's page alike.  The fields that never change
+  are a paste from the Celestial skin's own skin.conf into the
+  consumer's.  A fragment set may declare a `directory` under
+  HTML_ROOT, and a page may sit anywhere under HTML_ROOT: the page
+  passes WeeWX's own $filename (its path under HTML_ROOT) to
+  $celestial.config_script($almanac, $filename), the config block
+  carries the page's route up to HTML_ROOT, and the javascript fetches
+  every fragment from its set's directory there, wherever the page is
+  and wherever the skin keeps its assets; a page that passes no
+  $filename fetches relative to itself, as through 8.5.  A
+  directory that could leave HTML_ROOT is refused, naming the set, one
+  that cannot be made costs that set its files (named in the log) and
+  no other set its cycle, and prefixes stay unique across sets whatever
+  their directories.  A fragment fetch that comes back with an HTTP
+  error or with something that is not a fragment earns one line in the
+  browser console naming the URL asked.  Every panel's
+  root element now carries data-celestial="<version>", the marker the
+  consumer contract promises.  A minimal consumer skin lives under
+  tests/fixtures -- its page in a subdirectory, using nothing but the
+  public surface -- and is rendered through WeeWX's own report engine
+  and driven in a real browser.
+- The page names the fragment set it embeds -- dome_html($almanac,
+  set='smartphone'), the same for pass_html -- and gets that set's
+  first paint: its label scale, its plate and its file names, which the
+  panel's own markup carries (data-dome-prefix on the dome's swap
+  target, data-pass-fragment on the chart) so the javascript refetches
+  the files the generator writes for that set.  No set means the set on
+  the dome-svg prefix, which a skin declaring none has by default; a
+  set the skin does not declare -- or no set on a skin that declares
+  sets but none on the dome-svg prefix -- renders a line in the dome's
+  place saying so and logs the name once per cycle, never the default.
+  (Declaring any set replaces the default: a skin that adds one for a
+  second page and keeps this page's own dome declares that one too,
+  prefix = dome-svg.)
+  So a declared set may take the dome-svg prefix at any scale or
+  theme: the bundled page follows it.  A page with no dome or no chart
+  refetches nothing for it.  A set on a plate other than the page's
+  keeps its own label colors: the stylesheet styles a dome or chart's
+  labels by the plate the fragment itself declares, not the page's.
+- A page that embeds the panels without carrying the LIVE badge
+  (#live-label, the page's own chrome rather than a panel) no longer
+  throws once its expiration timer fires: the badge is written through
+  the same guarded path as everything else the javascript paints.  Such
+  a page simply has nowhere to report the feed's state, and stops
+  polling after expiration_time hours with a reload as the way back.
+- Display names the report controls -- a satellite's, a body's, a
+  comet's, a shower's, from the [Almanac] section or the loop feed --
+  and compass ordinals are markup-escaped where the panels and the
+  javascript drop them into markup, as weewx-skyfield's own panels
+  escape theirs.  A name carrying an ampersand or an angle bracket
+  reads as written now; through 8.5 it was injected raw.
+- One function now decides the staggered set's geometry -- how many
+  backdrops an archive interval gets and how far apart -- and both the
+  page's wrapper and the fragments read it.  Through 8.5 each carried
+  its own copy of the arithmetic, and they disagreed once (fixed in 8.4).
+- A skin can declare more than one fragment set in its skin.conf --
+  [CelestialFragments], one [[subsection]] per set with its own prefix,
+  label_scale and theme -- for two screen sizes, or a night dome inside
+  a light page.  No section means the one set the page has always had.
+  A set's theme takes dark, light or auto exactly as the report option
+  does, resolved at the page's own instant, so auto flips when the page
+  flips and never between; anything else is refused, naming the set.
+  Two sets that would write the same file are refused at the first
+  cycle, naming both, as are a label_scale that is not a positive
+  number and a prefix that is not a plain file name.  A set costs no
+  second satellite pass search: its plate is resolved from the report's
+  one sky page.
+- A fragment that fails to render is logged and its file left as it
+  was, so the page keeps the sky it has; it is never written empty and
+  never written with error text.  (The templates behaved the same way,
+  through the CheetahGenerator; the generator now says which fragment
+  failed and why.)  Without weewx-skyfield every fragment is written
+  empty, as before, so the page's "is empty" line still points there.
+- The generator's almanac is the page's: it is built by core WeeWX's
+  own almanac search list, the code that builds $almanac for the
+  template, so the two agree on every WeeWX version by construction --
+  the 5.2 floor included.
+- Tests: the 8.5 fragment templates are kept under tests/fixtures and
+  rendered live beside the generator, which must write what they wrote,
+  slot for slot, on both plates; the generator runs end to end into a
+  scratch HTML_ROOT, with and without a database; its almanac is checked
+  against the CheetahGenerator's own; and install.py's file list is
+  checked against the tree in both directions.
 - The stanza a fresh install writes into weewx.conf now explains itself:
   every option arrives with a comment saying what it does, and an option
   that merely picks a default arrives COMMENTED OUT, with the default
@@ -29,6 +259,117 @@ weewx-celestial change history
 - Documentation: the Configuration page prints the stanza as it is now
   written and says what the commented-out form means.  The password
   comment named the wrong URL parameter -- it is ?pageUpdate=<password>.
+- Every class the panels render is prefixed cel- (cel-row, cel-roster,
+  cel-caption), so embedding them in another skin cannot collide with
+  that skin's own class names.  A real host skin names .row, .roster and
+  .caption too, scoped more deeply than any selector this extension
+  could write, so scoping loses in every load order and only prefixing
+  settles it; class names are outside the published contract, and the
+  DOM ids, which are inside it, are untouched.  The classes
+  weewx-skyfield writes inside its own fragments keep its names, as does
+  .skytip and the theme-dark/theme-light pair.
+- The stylesheet is two files.  celestial.css is the PANELS, and it is
+  what a skin embedding them loads; celestial-page.css is this report's
+  own page -- the body, the header, the h1, the card a section draws,
+  the footer, the document's color-scheme -- and only the bundled skin
+  loads it.  Those rules name bare elements, so a page of another skin
+  loading them was repainted whole, its titlebar and every unrelated
+  section included.  A consumer must not load the second file.
+- The dark and light plates are keyed on a class rather than on :root,
+  so theme_class's answer can go on the container holding the panels as
+  well as on the root element: that is how a night dome sits inside a
+  light site.  theme-dark now selects something -- through 9.0 it
+  matched no rule at all, the dark plate working only because :root
+  carried it.
+- The panels carry their own box model (scoped to the contract marker)
+  rather than a bare `*` reset, and their sizes are em rather than rem,
+  so one font-size on a consumer's container scales a whole panel.
+- Documentation, from converting the first real consumer: the embed
+  guide says to give the page's clock and badge ids OF YOUR OWN rather
+  than reusing #last-update and #live-label (a skin with a #live-label
+  of its own reused it, and two pollers painted the same cell in two
+  dresses, two seconds apart); that a suite finding its fields by
+  scanning script literals sees celestial.js's fallback key spellings,
+  which are not fields to declare; that `set=` takes an UNQUOTED Cheetah
+  variable, which is what a skin with two label scales needs and what
+  every example until now failed to show; and that the config block's
+  gen_ts is the instant the page was generated for.
+- A skin that embeds the panels declares which ones in its OWN
+  skin.conf (celestial_panels, at the top level), so installing it needs
+  no edit to weewx.conf on any machine.  Which panels a page embeds is a
+  property of its templates -- the same on every station, changing only
+  when the skin changes -- and putting it in weewx.conf made bringing a
+  consumer up a per-station chore, and a permanent one: the key was read
+  only from there, so every station needed a hand edit and a second run
+  of this extension's installer.  That is the chore weewx-loopdata 7.0
+  existed to end for the fields that never change, reintroduced for the
+  ones that follow the station's [Skyfield] sets.  A report's own stanza
+  still overrides its skin, in the order WeeWX merges in, so a station
+  can differ for one report without editing a skin it may not own; every
+  report running a skin inherits that skin's key, which is what a second
+  report on one skin wants.  Set in both places, the run says which file
+  answered and warns when the two disagree.
+- A consumer's own installer can declare its fields in one step, so
+  installing the skin and restarting weewxd is the whole of it.  Its
+  configure(engine) calls user.celestial.declare_page_fields(
+  engine.config_dict, pending=self['config']) -- `pending` because
+  weectl runs configure() BEFORE it injects the installer's config
+  stanza, so on a fresh install the report does not exist yet and there
+  would be nothing to declare under; the caller hands over the stanza it
+  is about to have injected and weectl's own merge fills the rest in
+  around it.  It is the mechanism this installer already uses for its
+  own not-yet-existing report.  Order does not matter: install celestial
+  first and the consumer's install writes the groups, install it
+  afterwards and its own installer picks the report up.
+- A consumer's groups are taken away when its skin is uninstalled.
+  weectl has no uninstall hook, so a consumer skin cannot clean up after
+  itself, and its groups would have been left for weewx-loopdata to
+  evaluate every packet for panels that no longer exist.  A report that
+  names no panels, carries those groups, and whose skin's skin.conf is
+  ABSENT loses them on the next install or verb run, which reports it.
+  Absent only: a skin.conf that merely cannot be read -- no permission,
+  a mount that is not up, a half-written file, a syntax error -- is left
+  alone and logged, because a skin that is gone is a statement while one
+  that cannot be read is a question, and pruning on a question would let
+  a permission bit look like an uninstall.
+- Two fragment sets are refused for writing the same file only if they
+  really would: the check follows `kind`, so a dome-only set no longer
+  claims the pass fragment its prefix spells, nor a pass-only set the
+  ten dome slots.  The first skin to use kind = dome / kind = pass hit
+  this on its first run -- a dome-only set on the dome-svg prefix, whose
+  pass fragment carries the legacy name pass-chart.txt, beside a
+  pass-only set whose prefix was pass-chart -- and the report then wrote
+  no fragments at all and every panel said its set was invalid.  One
+  function now answers what a set writes, read by both the check and the
+  generator, which is how the two came to disagree.  A set taking a
+  prefix another set has is still refused, now as its own rule with its
+  own message: a page that names no set finds its set by prefix.
+- A dome or pass panel naming a set declared for the OTHER panel is
+  refused, with the line a missing set gets and the reason in the log,
+  rather than pointed at a fragment nothing writes: it would otherwise
+  first-paint from the almanac and then fetch a 404 for ever, one line
+  in the browser console and nothing on the page to say why.
+- A fragment set says which fragments it writes: kind = dome, pass or
+  both (the default, so nothing declared before this changes).  A skin
+  with the dome on one page and the chart on another, at different label
+  scales, declares a set for each, and without this each wrote the
+  other's eleven files every cycle for a page that never asked.
+- expiration_time = 0 means never expire, for a page in another skin
+  that runs an expiry of its own; two regimes on one page is worse than
+  either.  Through 9.0 that value armed a zero-delay timer and expired
+  the page instantly.
+- Documentation: the manual's "In your own skin" page becomes "Panels in
+  your own skin", the embed guide -- the four things a skin arranges, the
+  calls, a complete worked page, the two ids a consumer's own chrome
+  owes the live layer, the stylesheet tokens (and the light plate's
+  override rule), the contract, and what a panel says instead of drawing.
+  The Fields reference prints which groups each panel reads;
+  Configuration documents celestial_panels and [CelestialFragments];
+  Troubleshooting gains the declaration and fragment-set faults;
+  Translations says a consumer skin's [Texts] are its own.  The manual's
+  tier table and the README name weewx-skyfield 2.3.4, which 9.0 uses
+  where it is installed but does not require.
+
 
 8.5 2026/08/26
 --------------

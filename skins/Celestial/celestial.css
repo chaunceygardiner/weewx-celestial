@@ -8,7 +8,26 @@
  * The palette and type system are ported from the weewx-skyfield "Sky"
  * page (same author), so the two pages read as one family. */
 
-:root{
+/* The panels' own box model.  The bundled page's `*` reset lives in
+ * celestial-page.css now, and a host skin setting none (or content-box)
+ * would lay these out wrong: every width and padding here was authored
+ * under border-box. */
+[data-celestial], [data-celestial] *{box-sizing:border-box}
+
+/* The night plate.  The two fragment selectors beside :root scope the
+ * same tokens to the SVG of a dome fragment or a pass chart drawn on the
+ * night plate INSIDE a light page: skyfield colors its charts inline but
+ * its labels by class only, and those classes read the tokens (the
+ * chart-label ones through --skylab/--conlab below), so without this a
+ * night dome in a light page (a fragment set on `theme = dark` in a
+ * light report) would wear the page's dark ink.  The fragment's own
+ * data-dome-palette / data-pass-palette says which plate it is.  ONLY
+ * on that mismatch: a fragment on the page's own plate takes its tokens
+ * from :root like everything else, so a consumer's `:root{--brass:...}`
+ * override reaches the charts too (the contract in the manual).  The
+ * SVG only: the pass chart's head line (.passhead, HTML beside the SVG)
+ * sits on the PAGE's surface and keeps the page's tokens. */
+:root, .theme-dark, .theme-light .domefrag[data-dome-palette="night"] svg, .theme-light .passfrag[data-pass-palette="night"] svg{
   --night:#0A0F22;   /* page background */
   --vault:#111834;   /* cards and chips */
   --ink:#E9E4D4;     /* primary text */
@@ -23,6 +42,9 @@
    * meridian cross), so the two pages still read as one family.  --line
    * stays exactly as it is for the borders and hairlines it is for. */
   --grid:#6E7DBA;
+  /* The sky charts' small labels (skyfield's sky.css values, kept in
+   * step by test -- see the .skylab rules for why they are not --muted). */
+  --skylab:#9FA5C4; --conlab:#9DABD7;
   /* Per-body identity colors (weewx-skyfield's night-plate values --
    * the traditional astronomy scheme: yellow sun, silver moon, gray
    * Mercury, pearly Venus; pluto is celestial's own addition -- the Sky
@@ -47,16 +69,17 @@
   /* The three pale bodies need no edge on the night plate: their own
    * color IS the bright mark.  On paper they do -- see the light block. */
   --e-sun:#FFD75E; --e-moon:#C9D0DA; --e-venus:#F0E3BE; --e-earth:#7FB4A2;
-  color-scheme: dark;
 }
 /* The light theme (theme = light, or auto with the sun up): the
  * paper-atlas plate, matching the 'light' palette the dome and the Next
- * Visible Pass chart are rendered with.  The template resolves the theme
- * at generation time into this class on <html> -- it must sit on the root
- * element so color-scheme (and the canvas backdrop it governs) flips with
- * it, and it CANNOT be a browser-side toggle: the embedded charts arrive
- * as skyfield SVG with their colors already inside them, and the
- * javascript refetches them every 60 s.
+ * Visible Pass chart are rendered with.  $celestial.theme_class resolves
+ * the theme at generation time into this class on <html> -- it must sit
+ * on the root element so color-scheme (and the canvas backdrop it
+ * governs) flips with it, and it CANNOT be a browser-side toggle: the
+ * embedded charts arrive as skyfield SVG with their colors already
+ * inside them, and the javascript refetches them every 60 s.  The two
+ * fragment selectors scope the same tokens to a light dome or chart
+ * inside a dark page, and only there (see the night block above).
  *
  * Every value here is weewx-skyfield's PALETTES['light'], copied in --
  * the same cross-repo rule as the night values above, and the same
@@ -72,9 +95,13 @@
  * is 2.35:1 on white, so paper takes a darker one of the same family:
  * 4.96:1 for the dot, 6.38:1 for the label.  Every OTHER body's light
  * value is skyfield's, and a test keeps it that way. */
-:root.theme-light{
+.theme-light, .theme-dark .domefrag[data-dome-palette="light"] svg, .theme-dark .passfrag[data-pass-palette="light"] svg, :root:not(.theme-light) .domefrag[data-dome-palette="light"] svg, :root:not(.theme-light) .passfrag[data-pass-palette="light"] svg{
   --night:#EFECE2; --vault:#FFFFFF; --ink:#1D2C4E; --muted:#5C6672;
   --brass:#B45309; --line:#C9CFD8; --grid:#7A899F;
+  /* The paper plate hands the ring and star labels straight back to
+   * --muted (sky.css's light rule), and the constellation names their
+   * own value. */
+  --skylab:var(--muted); --conlab:#57637B;
   --c-sun:#FACC15; --c-moon:#D6DAE0; --c-mercury:#52525B; --c-venus:#F0E4BE;
   --c-mars:#B23A24; --c-jupiter:#B06F2E; --c-saturn:#8F7524;
   --c-uranus:#20808F; --c-neptune:#3A63C4; --c-pluto:#6A5F96;
@@ -93,23 +120,14 @@
    * is not pale -- its --e- value is the darker green its center LABEL
    * takes, the dot itself being --c-earth. */
   --e-sun:#BC7800; --e-moon:#767E8A; --e-venus:#97864A; --e-earth:#1F6B54;
-  color-scheme: light;
 }
-*{box-sizing:border-box}
-body{background:var(--night); color:var(--ink);
-     font-family:Charter, Georgia, 'Times New Roman', serif;
-     margin:0; padding:32px 20px 40px; line-height:1.55}
-.page{max-width:1280px; margin:0 auto; display:flex; flex-direction:column; gap:30px}
-.mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
-
-/* Header */
-header{display:flex; justify-content:space-between; align-items:flex-start; gap:24px;
-       flex-wrap:wrap; border-bottom:1px solid var(--line); padding-bottom:22px}
-h1{font-family:Georgia,'Times New Roman',serif; font-variant-caps:small-caps;
-   letter-spacing:.16em; font-weight:400; font-size:clamp(1.6rem,4vw,2.4rem);
-   margin:0; color:var(--ink); text-wrap:balance}
-h1 .over{color:var(--brass)}
-.sub{color:var(--muted); margin-top:6px; font-size:.95rem}
+.cel-mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
+/* skyfield writes `mono` on its own chart labels inside the fragments
+ * (33 of them in a dome), so the bare class survives HERE ONLY -- scoped
+ * to the fragment, where it styles skyfield's markup and cannot collide
+ * with a host skin's own .mono. */
+.domefrag .mono, .passfrag .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
+.cel-sub{color:var(--muted); margin-top:6px; font-size:.95em}
 #live-label{color:var(--brass); font-variant-caps:small-caps; letter-spacing:.1em}
 
 /* Countdown central: the ticking event chips under the header.  The chip
@@ -118,12 +136,12 @@ h1 .over{color:var(--brass)}
  * cross-repo rule as the dome typography below.  The [hidden] rule is
  * celestial's own: display:flex would otherwise defeat the hidden
  * attribute the javascript toggles on the windowed chips. */
-.countdown{display:flex; gap:10px; flex-wrap:wrap}
-.count{border:1px solid var(--line); padding:7px 12px; display:flex; gap:8px;
+.cel-countdown{display:flex; gap:10px; flex-wrap:wrap}
+.cel-count{border:1px solid var(--line); padding:7px 12px; display:flex; gap:8px;
        align-items:baseline; background:var(--vault)}
-.count .k{color:var(--muted); font-variant-caps:small-caps; letter-spacing:.1em; font-size:.8rem}
-.count .v{font-size:.9rem}
-.count .d{color:var(--brass); font-size:.8rem}
+.cel-count .cel-k{color:var(--muted); font-variant-caps:small-caps; letter-spacing:.1em; font-size:.8em}
+.cel-count .cel-v{font-size:.9em}
+.cel-count .cel-d{color:var(--brass); font-size:.8em}
 /* Celestial's chips are two lines by design (a deliberate divergence
  * from sky.css's one-line chip): the label and the ticking value on
  * the first line, the event's clock time / date detail underneath.
@@ -134,70 +152,67 @@ h1 .over{color:var(--brass)}
  * wider LINE.  justify-content:start keeps the auto columns at their
  * natural widths when the detail line is the wider one.  An empty
  * detail must not open a blank second line. */
-.count{display:grid; grid-template-columns:auto auto; row-gap:2px;
+.cel-count{display:grid; grid-template-columns:auto auto; row-gap:2px;
        justify-content:start}
-.count .d{grid-column:1/-1}
-.count .d:empty{display:none}
-.count[hidden]{display:none}
-
-/* Cards */
-section{background:var(--vault); border:1px solid var(--line); padding:20px 22px 16px}
-.eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass); font-weight:400;
-         font-size:.85rem; margin:0 0 4px}
-.caption{color:var(--muted); font-size:.85rem; margin:10px 0 0; max-width:68ch}
-.dialcaption{text-align:center; max-width:none}
+.cel-count .cel-d{grid-column:1/-1}
+.cel-count .cel-d:empty{display:none}
+.cel-count[hidden]{display:none}
+.cel-eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass); font-weight:400;
+         font-size:.85em; margin:0 0 4px}
+.cel-caption{color:var(--muted); font-size:.85em; margin:10px 0 0; max-width:68ch}
+.cel-dialcaption{text-align:center; max-width:none}
 
 /* The Geocentric: the dial beside its roster; one column below 1000px. */
-.geo-body{display:grid; grid-template-columns:minmax(0,1fr) 430px;
+.cel-geo-body{display:grid; grid-template-columns:minmax(0,1fr) 430px;
           gap:26px; align-items:center; margin-top:8px}
 @media (max-width: 1000px){
-  .geo-body{display:flex; flex-direction:column; align-items:stretch}
+  .cel-geo-body{display:flex; flex-direction:column; align-items:stretch}
 }
 #dial{width:100%; max-width:640px; display:block; margin:0 auto}
 
 /* The roster: one row per body -- name chip, the distance odometer, then
  * rate / raw AU / altitude on the sub-line. */
-.roster{border-top:1px solid var(--line)}
-.row{display:grid; grid-template-columns:7.2rem 1fr; gap:.1rem .6rem;
-     padding:.42rem 0 .38rem; border-bottom:1px solid var(--line);
+.cel-roster{border-top:1px solid var(--line)}
+.cel-row{display:grid; grid-template-columns:7.2em 1fr; gap:.1em .6em;
+     padding:.42em 0 .38em; border-bottom:1px solid var(--line);
      align-items:baseline}
-.bname{font-variant-caps:small-caps; letter-spacing:.1em; white-space:nowrap}
-.bname .chip{display:inline-block; width:.62em; height:.62em; border-radius:50%;
+.cel-bname{font-variant-caps:small-caps; letter-spacing:.1em; white-space:nowrap}
+.cel-bname .cel-chip{display:inline-block; width:.62em; height:.62em; border-radius:50%;
              margin-right:.5em}
-.row.below .bname, .row.below .odo{opacity:.55}
-.odo{text-align:right; font-size:.9rem; letter-spacing:.02em}
-.odo .unit{color:var(--muted); font-size:.78rem}
-.rsub{grid-column:1 / -1; display:flex; justify-content:space-between; gap:.45rem;
-      color:var(--muted); font-size:.75rem; flex-wrap:wrap}
-.rsub .arr{color:var(--brass)}
+.cel-row.cel-below .cel-bname, .cel-row.cel-below .cel-odo{opacity:.55}
+.cel-odo{text-align:right; font-size:.9em; letter-spacing:.02em}
+.cel-odo .cel-unit{color:var(--muted); font-size:.8667em}
+.cel-rsub{grid-column:1 / -1; display:flex; justify-content:space-between; gap:.45em;
+      color:var(--muted); font-size:.75em; flex-wrap:wrap}
+.cel-rsub .cel-arr{color:var(--brass)}
 /* The odometer flash: freshly changed digits ease from brass to ink. */
-.chg{animation:chgflash .9s ease-out}
+.cel-chg{animation:chgflash .9s ease-out}
 @keyframes chgflash{from{color:var(--brass)}}
 @media (prefers-reduced-motion: reduce){
-  .chg{animation:none}
+  .cel-chg{animation:none}
 }
 
 /* Per-body identity classes: the roster chips and the SVG marks.  Proxima
  * wears the moon's silver, like the stars on the Sky page. */
-.chip-sun{background:var(--c-sun)} .chip-moon{background:var(--c-moon)}
-.chip-mercury{background:var(--c-mercury)} .chip-venus{background:var(--c-venus)}
-.chip-mars{background:var(--c-mars)} .chip-jupiter{background:var(--c-jupiter)}
-.chip-saturn{background:var(--c-saturn)} .chip-uranus{background:var(--c-uranus)}
-.chip-neptune{background:var(--c-neptune)} .chip-pluto{background:var(--c-pluto)}
-.chip-proxima_centauri{background:var(--c-proxima)}
-.fill-sun{fill:var(--c-sun)} .fill-moon{fill:var(--c-moon)}
-.fill-mercury{fill:var(--c-mercury)} .fill-venus{fill:var(--c-venus)}
-.fill-mars{fill:var(--c-mars)} .fill-jupiter{fill:var(--c-jupiter)}
-.fill-saturn{fill:var(--c-saturn)} .fill-uranus{fill:var(--c-uranus)}
-.fill-neptune{fill:var(--c-neptune)} .fill-pluto{fill:var(--c-pluto)}
-.fill-proxima_centauri{fill:var(--c-proxima)}
-.fill-earth{fill:var(--c-earth)}
-.stroke-sun{stroke:var(--c-sun)} .stroke-moon{stroke:var(--c-moon)}
-.stroke-mercury{stroke:var(--c-mercury)} .stroke-venus{stroke:var(--c-venus)}
-.stroke-mars{stroke:var(--c-mars)} .stroke-jupiter{stroke:var(--c-jupiter)}
-.stroke-saturn{stroke:var(--c-saturn)} .stroke-uranus{stroke:var(--c-uranus)}
-.stroke-neptune{stroke:var(--c-neptune)} .stroke-pluto{stroke:var(--c-pluto)}
-.stroke-proxima_centauri{stroke:var(--c-proxima)}
+.cel-chip-sun{background:var(--c-sun)} .cel-chip-moon{background:var(--c-moon)}
+.cel-chip-mercury{background:var(--c-mercury)} .cel-chip-venus{background:var(--c-venus)}
+.cel-chip-mars{background:var(--c-mars)} .cel-chip-jupiter{background:var(--c-jupiter)}
+.cel-chip-saturn{background:var(--c-saturn)} .cel-chip-uranus{background:var(--c-uranus)}
+.cel-chip-neptune{background:var(--c-neptune)} .cel-chip-pluto{background:var(--c-pluto)}
+.cel-chip-proxima_centauri{background:var(--c-proxima)}
+.cel-fill-sun{fill:var(--c-sun)} .cel-fill-moon{fill:var(--c-moon)}
+.cel-fill-mercury{fill:var(--c-mercury)} .cel-fill-venus{fill:var(--c-venus)}
+.cel-fill-mars{fill:var(--c-mars)} .cel-fill-jupiter{fill:var(--c-jupiter)}
+.cel-fill-saturn{fill:var(--c-saturn)} .cel-fill-uranus{fill:var(--c-uranus)}
+.cel-fill-neptune{fill:var(--c-neptune)} .cel-fill-pluto{fill:var(--c-pluto)}
+.cel-fill-proxima_centauri{fill:var(--c-proxima)}
+.cel-fill-earth{fill:var(--c-earth)}
+.cel-stroke-sun{stroke:var(--c-sun)} .cel-stroke-moon{stroke:var(--c-moon)}
+.cel-stroke-mercury{stroke:var(--c-mercury)} .cel-stroke-venus{stroke:var(--c-venus)}
+.cel-stroke-mars{stroke:var(--c-mars)} .cel-stroke-jupiter{stroke:var(--c-jupiter)}
+.cel-stroke-saturn{stroke:var(--c-saturn)} .cel-stroke-uranus{stroke:var(--c-uranus)}
+.cel-stroke-neptune{stroke:var(--c-neptune)} .cel-stroke-pluto{stroke:var(--c-pluto)}
+.cel-stroke-proxima_centauri{stroke:var(--c-proxima)}
 /* On paper the sun, moon and Venus cannot carry their own mark (1.53,
  * 1.40, 1.27:1 as fills on white), so every EDGE they draw switches to
  * the light plate's ring color for that body: the roster chip takes it
@@ -206,12 +221,12 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
  * outlines take it as their stroke.  The night plate needs none of
  * this, so --e-* there is just the body color and these rules are the
  * only place the two plates diverge in kind rather than in value. */
-:root.theme-light .chip-sun{box-shadow:inset 0 0 0 1.5px var(--e-sun)}
-:root.theme-light .chip-moon{box-shadow:inset 0 0 0 1.5px var(--e-moon)}
-:root.theme-light .chip-venus{box-shadow:inset 0 0 0 1.5px var(--e-venus)}
-:root.theme-light .stroke-sun{stroke:var(--e-sun)}
-:root.theme-light .stroke-moon{stroke:var(--e-moon)}
-:root.theme-light .stroke-venus{stroke:var(--e-venus)}
+.theme-light .cel-chip-sun{box-shadow:inset 0 0 0 1.5px var(--e-sun)}
+.theme-light .cel-chip-moon{box-shadow:inset 0 0 0 1.5px var(--e-moon)}
+.theme-light .cel-chip-venus{box-shadow:inset 0 0 0 1.5px var(--e-venus)}
+.theme-light .cel-stroke-sun{stroke:var(--e-sun)}
+.theme-light .cel-stroke-moon{stroke:var(--e-moon)}
+.theme-light .cel-stroke-venus{stroke:var(--e-venus)}
 
 /* The dial's static furniture.  The per-ring stroke-opacity (0.5 inside
  * 10 au, 0.4 outside) is set by the javascript, which draws them.  The
@@ -224,53 +239,53 @@ section{background:var(--vault); border:1px solid var(--line); padding:20px 22px
  * against the night plate's settled 23.4 / 18.9 / 28.8 -- the same
  * furniture at the same recessive distance, which is what the eye reads
  * here, not the WCAG ratio (dark-plate rule, 8.2). */
-.geo-ring{fill:none; stroke:var(--grid)}
-.geo-rim{fill:none; stroke:var(--grid); stroke-opacity:.62; stroke-width:1.4}
-.geo-tick{stroke:var(--grid); stroke-opacity:.4; stroke-width:1}
-.geo-tick-major{stroke-width:1.6}
-.geo-earth{stroke:var(--halo); stroke-width:1}
+.cel-geo-ring{fill:none; stroke:var(--grid)}
+.cel-geo-rim{fill:none; stroke:var(--grid); stroke-opacity:.62; stroke-width:1.4}
+.cel-geo-tick{stroke:var(--grid); stroke-opacity:.4; stroke-width:1}
+.cel-geo-tick-major{stroke-width:1.6}
+.cel-geo-earth{stroke:var(--halo); stroke-width:1}
 /* Body dots: above the horizon they wear a night-colored ring; below they
  * dim and their outline goes dashed in their own color.  That dashed
  * outline is what CARRIES a down body: it is the body's own color at full
  * strength (4.72:1 even for Mars, the darkest) where the dimmed fill
  * reaches 1.90, so the weight belongs on the outline.  1.5px, not the
  * hairline it was through 8.1. */
-.geodot.ring{stroke:var(--halo); stroke-width:1}
+.cel-geodot.cel-ring{stroke:var(--halo); stroke-width:1}
 /* The paper halo is the panel itself, so a pale body would be outlined
  * in nothing; sun and Venus take their edge instead.  (The moon's dial
  * mark is the phase disc below, not a dot, and Proxima's light silver
  * already reads at 4.10:1.) */
-:root.theme-light .geodot.ring.fill-sun{stroke:var(--e-sun)}
-:root.theme-light .geodot.ring.fill-venus{stroke:var(--e-venus)}
-.geodot.below{fill-opacity:.45; stroke-width:1.5; stroke-dasharray:2.5 2.5}
-.sunglow{filter:blur(6px); opacity:.55}
+.theme-light .cel-geodot.cel-ring.cel-fill-sun{stroke:var(--e-sun)}
+.theme-light .cel-geodot.cel-ring.cel-fill-venus{stroke:var(--e-venus)}
+.cel-geodot.cel-below{fill-opacity:.45; stroke-width:1.5; stroke-dasharray:2.5 2.5}
+.cel-sunglow{filter:blur(6px); opacity:.55}
 /* The moon's true-phase disc, silver-rimmed so a new moon never vanishes. */
-.moon-dark{fill:#1E2745}
-.moon-lit{fill:#DDD8C4}
-:root.theme-light .moon-dark{fill:#26314F}
-:root.theme-light .moon-lit{fill:#F2ECD8}
-.moon-rim{fill:none; stroke:var(--c-moon); stroke-opacity:.55; stroke-width:1}
+.cel-moon-dark{fill:#1E2745}
+.cel-moon-lit{fill:#DDD8C4}
+.theme-light .cel-moon-dark{fill:#26314F}
+.theme-light .cel-moon-lit{fill:#F2ECD8}
+.cel-moon-rim{fill:none; stroke:var(--c-moon); stroke-opacity:.55; stroke-width:1}
 /* The paper plate's moon_ring: the lit limb is nearly the page, so the
  * rim is what draws the disc at all, and it goes full strength. */
-:root.theme-light .moon-rim{stroke:#888888; stroke-opacity:1}
-.geomoon.below{opacity:.55}
-.geomoon.below .moon-rim{stroke-dasharray:2.5 2.5; stroke-opacity:.7}
+.theme-light .cel-moon-rim{stroke:#888888; stroke-opacity:1}
+.cel-geomoon.cel-below{opacity:.55}
+.cel-geomoon.cel-below .cel-moon-rim{stroke-dasharray:2.5 2.5; stroke-opacity:.7}
 /* Motion trails: per-segment opacity is set by the javascript, which ramps
  * it from a visible floor (the old ramp started from nothing: the oldest
  * segment landed at 1.02:1, ink spent where no eye can find it). */
-.trail{stroke-width:1.5; stroke-linecap:round}
+.cel-trail{stroke-width:1.5; stroke-linecap:round}
 /* Comet marks (javascript-drawn on the dial): a brass diamond with an
  * anti-sunward tail fan, solid when naked-eye bright (mag <= 6), the
  * hollow inversion when fainter or when magnitude is honestly absent --
  * the satdot/shadow convention.  One shared color: comet tags are
  * dynamic, so per-tag classes cannot exist (the satellite precedent). */
-.cometdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
-.cometdot.faint{fill:var(--halo); stroke:var(--brass); stroke-width:2}
-.cometdot.below{fill-opacity:.45; stroke-dasharray:2.5 2.5}
+.cel-cometdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
+.cel-cometdot.cel-faint{fill:var(--halo); stroke:var(--brass); stroke-width:2}
+.cel-cometdot.cel-below{fill-opacity:.45; stroke-dasharray:2.5 2.5}
 .comet-tail{stroke:var(--brass)}
-.geocomet.below .comet-tail{opacity:.5}
-.stroke-comet{stroke:var(--brass)}
-.chip-comet{background:var(--brass)}
+.cel-geocomet.cel-below .comet-tail{opacity:.5}
+.cel-stroke-comet{stroke:var(--brass)}
+.cel-chip-comet{background:var(--brass)}
 
 /* SVG typography.  cardinal/bodylab/gridlab keep the same names and values
  * as weewx-skyfield's sky.css, so the two pages read as one family. */
@@ -278,9 +293,9 @@ svg{width:100%; height:auto; display:block}
 svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .cardinal{font-size:14px; fill:var(--brass); letter-spacing:.1em}
 .bodylab{font-size:11px; fill:var(--ink); font-family:Georgia, serif}
-.bodylab.dim{opacity:.55}
+.bodylab.cel-dim{opacity:.55}
 .gridlab{font-size:10px; fill:var(--muted)}
-.earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
+.cel-earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
           letter-spacing:.12em; text-anchor:middle}
 
 /* The sky dome: weewx-skyfield's dome_svg embedded beside the satellite
@@ -289,15 +304,15 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * the dial; do not harmonize them.  NOTE: "dome-body" is taken -- it is
  * the class on the embedded SVG's per-body mark groups (skyfield 2.0's
  * data-body consumer contract), so the panel wrapper is "domepanel". */
-.domepanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
+.cel-domepanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
            gap:26px; align-items:center; margin-top:8px}
 @media (max-width: 1000px){
-  .domepanel{display:flex; flex-direction:column; align-items:stretch}
+  .cel-domepanel{display:flex; flex-direction:column; align-items:stretch}
 }
 #dome-wrap svg{max-width:640px; margin:0 auto}
-.roster .eyebrow{margin-top:2px}
-.chip-sat{background:var(--brass)}
-.satline{font-size:.8rem}
+.cel-roster .cel-eyebrow{margin-top:2px}
+.cel-chip-sat{background:var(--brass)}
+.cel-satline{font-size:.8em}
 /* Dome typography borrowed from weewx-skyfield's sky.css -- names and
  * values kept in step, same cross-repo rule as cardinal/bodylab/gridlab
  * above -- the light-theme variants included, as of 8.3.
@@ -309,54 +324,60 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * "mono gridlab skylab"; the axis labels on every other panel sit on the
  * panel surface and keep plain .gridlab.  Equal specificity, so .skylab
  * MUST stay after .gridlab above -- source order is all that makes it win.
- * The light rules are sky.css's, interleaved the same way it interleaves
- * them.  The paper plate needs no lift and hands two of the three straight
- * back to --muted (4.94:1 on that dome); only .conlab needs a value of its
- * own -- the constellation names were the worst mark on either plate
- * before 2.2, and #57637B is what clears 4.5:1 at the 0.95 opacity the
- * chart draws them with. */
-.skylab{fill:#9FA5C4}
-:root.theme-light .skylab{fill:var(--muted)}
-.starlab{font-size:10px; fill:#9FA5C4; font-family:Georgia, serif; font-style:italic}
-:root.theme-light .starlab{fill:var(--muted)}
-.conlab{font-size:10px; fill:#9DABD7; font-family:Georgia, serif; font-style:italic;
+ * The light values are sky.css's: the paper plate needs no lift and
+ * hands two of the three straight back to --muted (4.94:1 on that
+ * dome); only .conlab needs a value of its own -- the constellation
+ * names were the worst mark on either plate before 2.2, and #57637B is
+ * what clears 4.5:1 at the 0.95 opacity the chart draws them with.
+ * Both plates' values are the --skylab/--conlab tokens in the two token
+ * blocks above (sky.css writes them as literals plus a :root.theme-light
+ * rule; the test resolves both to the same values), so that a fragment
+ * on the other plate from the page -- whose SVG the token blocks scope
+ * by its own data-dome-palette / data-pass-palette -- takes its labels'
+ * colors from the same place as every other class: one rule per class,
+ * no plate variants to keep in step. */
+.skylab{fill:var(--skylab)}
+.starlab{font-size:10px; fill:var(--skylab); font-family:Georgia, serif; font-style:italic}
+.conlab{font-size:10px; fill:var(--conlab); font-family:Georgia, serif; font-style:italic;
         letter-spacing:.14em; text-transform:uppercase}
-:root.theme-light .conlab{fill:#57637B}
 .satlab{fill:var(--brass); font-family:Georgia, serif}
 .nowlab{font-size:10px; fill:var(--brass)}
 /* The live satellite layer (javascript-drawn): the marker dot and its
  * name, each with a faint variant for a satellite that is up but not
  * visible to the eye (daylight, or in Earth's shadow). */
-.satdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
+.cel-satdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
 /* In Earth's shadow: the fill/stroke inversion of weewx-skyfield's static
    dome marker (hollow ring, background fill so hover still lands). */
-.satdot.shadow{fill:var(--halo); stroke:var(--brass); stroke-width:2}
+.cel-satdot.cel-shadow{fill:var(--halo); stroke:var(--brass); stroke-width:2}
 /* In a bright sky (sun >= -6): dimmed but drawn.  Whole-element opacity so
    the hollow ring dims too (fill-opacity would leave its stroke bright). */
-.satdot.faint{opacity:.35}
-.satlab.faint{opacity:.45}
+.cel-satdot.cel-faint{opacity:.35}
+.satlab.cel-faint{opacity:.45}
 
 /* The Next Visible Pass panel (weewx-skyfield's pass_chart_html embedded beside
  * the visible-pass roster): the same two-column shape as the dome panel
  * above, chart left, roster right, one column on narrow screens.  The
  * passhead trio is borrowed from sky.css -- names and values kept in
  * step, the same cross-repo rule as the dome typography above. */
-.passpanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
+.cel-passpanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
            gap:26px; align-items:center; margin-top:8px}
 @media (max-width: 1000px){
-  .passpanel{display:flex; flex-direction:column; align-items:stretch}
+  .cel-passpanel{display:flex; flex-direction:column; align-items:stretch}
 }
 #pass-chart{max-width:640px; margin:0 auto}
-.passcaption{max-width:640px; margin-left:auto; margin-right:auto}
+.cel-passcaption{max-width:640px; margin-left:auto; margin-right:auto}
 .passhead{display:flex; justify-content:space-between; align-items:baseline;
           gap:12px; margin-bottom:10px; flex-wrap:wrap}
 .passname{font-variant-caps:small-caps; letter-spacing:.1em}
-.passwhen{font-size:.85rem; color:var(--brass)}
+.passwhen{font-size:.85em; color:var(--brass)}
 
-/* Shown in the panel when no extended almanac serves the report. */
-.skyhint{color:var(--muted); font-style:italic; text-align:center;
+/* Shown in the panel when no extended almanac serves the report.  The
+   dome's hint arrives inside the .domepanel grid (the panel renders it
+   where the dome would be), so it spans the grid's columns. */
+.cel-skyhint{color:var(--muted); font-style:italic; text-align:center;
          border:1px dashed var(--line); padding:38px 20px; margin:8px 0 6px}
-.skyhint a{color:var(--brass)}
+.cel-skyhint a{color:var(--brass)}
+.cel-domepanel > .cel-skyhint{grid-column:1 / -1}
 
 /* The dome's health line: shown only when the backdrop has stopped
    advancing and the dome has frozen.  A caption-sized line rather than
@@ -364,14 +385,9 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
    worth reading, just no longer current.  Deliberately NO display
    property: the javascript hides it with the hidden attribute, and a
    display here would defeat it (the .count lesson). */
-.stalehint{color:var(--brass); font-style:italic; text-align:center;
-           font-size:.82rem; margin:2px 0 6px}
-.stalehint a{color:inherit}
-
-footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
-       padding-top:16px; text-align:center; font-style:italic}
-footer a{color:inherit; text-underline-offset:3px; text-decoration-color:var(--brass)}
-footer a:hover{color:var(--brass)}
+.cel-stalehint{color:var(--brass); font-style:italic; text-align:center;
+           font-size:.82em; margin:2px 0 6px}
+.cel-stalehint a{color:inherit}
 
 /* The tap tooltip (sky.js): the same text as a mark's hover <title>,
    shown as a floating chip when a finger has no hover to offer. */

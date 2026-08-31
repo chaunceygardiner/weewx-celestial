@@ -1,0 +1,54 @@
+#errorCatcher Echo
+#encoding UTF-8
+## A consumer page: the Celestial panels inside another skin's chrome,
+## using nothing but the public surface -- $celestial's panel methods,
+## the config block, the copied stylesheet and scripts.  The page lives
+## in astro/ under the report's HTML_ROOT, so the assets are one level up;
+## the fragment set it names is declared with directory = astro.
+<!DOCTYPE html>
+<html lang="en" class="$celestial.theme_class($almanac)">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>$station.location</title>
+    <link rel="stylesheet" href="../celestial.css">
+    <script src="../celestial.js"></script>
+    <script src="../sky.js" defer></script>
+  </head>
+  <body>
+    $celestial.config_script($almanac, $filename)
+    <div class="cel-page">
+      <header>
+        <h1>$station.location &middot; the live sky</h1>
+        ## The page's clock and its LIVE badge: celestial.js paints
+        ## these two ids from the loop feed (chrome, not a panel; a page
+        ## without them shows no badge).
+        <div class="cel-sub cel-mono">updated <span id="last-update"></span> <span id="live-label"></span></div>
+      </header>
+      $celestial.countdown_html($almanac)
+      <section>
+        <h2 class="cel-eyebrow">Geocentric</h2>
+        $celestial.geocentric_html($almanac)
+      </section>
+      <section>
+        <h2 class="cel-eyebrow">Sky dome</h2>
+        <div class="cel-domepanel">
+          $celestial.dome_html($almanac, set='astro')
+          $celestial.dome_roster_html($almanac, set='astro')
+        </div>
+      </section>
+      #set $pass_html = $celestial.pass_html($almanac, set='astro')
+      #if $pass_html
+      #set $pass_sec_attr = ' hidden' if $celestial.pass_panel_hidden($almanac, set='astro') else ''
+      <section id="pass-sec"$pass_sec_attr>
+        <h2 class="cel-eyebrow">Next visible pass</h2>
+        <div class="cel-passpanel">
+          $pass_html
+          $celestial.pass_roster_html($almanac, set='astro')
+        </div>
+      </section>
+      #end if
+      <footer>$celestial.footer_html($almanac)</footer>
+    </div>
+  </body>
+</html>

@@ -21,6 +21,14 @@ whose almanac cannot serve it shows an install hint in its place rather
 than disappearing, and the page never fails to generate because a value is
 missing; see [the almanac tiers](configuration.md#the-almanac-tiers).
 
+A panel may also carry a line about its own **configuration** rather than
+its almanac — that its live fields are not declared, or that the
+declaration is out of date and wants the installer re-run.  A panel in
+that state first-paints correctly and then never moves, so the line is
+there to say why; each one names what to do, and
+[Troubleshooting](troubleshooting.md#a-panel-says-its-fields-are-not-declared)
+has them all.
+
 ## The header, and the badge that tells the truth
 
 The header carries the page title, the station's coordinates, and the

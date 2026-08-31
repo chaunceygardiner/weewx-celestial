@@ -28,7 +28,8 @@ here.
 ```ini
 [Texts]
 
-    # ── page prose (index.html.tmpl) ─────────────────────────────────────
+    # ── page prose (index.html.tmpl; the panels' strings render from
+    #    celestial_page.py) ───────────────────────────────────────────────
     "The live sky over {location}." = "The live sky over {location}."
     'Celestial <span class="over">over</span> {location}' = 'Celestial <span class="over">over</span> {location}'
     "updated" = "updated"
@@ -42,8 +43,8 @@ here.
     "Calculated with weewx-skyfield: Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)" = "Calculated with weewx-skyfield: Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)"
     "live via weewx-loopdata" = "live via weewx-loopdata"
 
-    # ── live strings (realtime_updater.inc; the roster's first paint in
-    #    index.html.tmpl uses the same keys) ────────────────────────────
+    # ── live strings (celestial.js, fed by the page's config block; the roster's first paint in
+    #    celestial_page.py uses the same keys) ────────────────────────────
     "alt {alt}°" = "alt {alt}°"
     "below horizon" = "below horizon"
     "{dist} au" = "{dist} au"
@@ -62,6 +63,11 @@ here.
     #    weewx-skyfield's Sky page, translations verbatim) ──────────────
     "The sky dome · live" = "The sky dome · live"
     "Install {skyfield} so the almanac can draw the live sky dome." = "Install {skyfield} so the almanac can draw the live sky dome."
+    "The page's fragment set is missing or invalid in [CelestialFragments] — see the weewxd log." = "The page's fragment set is missing or invalid in [CelestialFragments] — see the weewxd log."
+    "This page's report does not name the {panel} panel in celestial_panels, so its live fields are not declared — name it, re-run weectl extension install and restart weewxd." = "This page's report does not name the {panel} panel in celestial_panels, so its live fields are not declared — name it, re-run weectl extension install and restart weewxd."
+    "This page's report carries an invalid celestial_panels — see the weewxd log." = "This page's report carries an invalid celestial_panels — see the weewxd log."
+    "This page's report's field declaration is out of date — re-run weectl extension install (or the --add-satellite/--add-comet utility) and restart weewxd." = "This page's report's field declaration is out of date — re-run weectl extension install (or the --add-satellite/--add-comet utility) and restart weewxd."
+    "The sky dome could not be drawn — see the weewxd log." = "The sky dome could not be drawn — see the weewxd log."
     "North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon." = "North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon."
     "Hover or tap any mark for its coordinates." = "Hover or tap any mark for its coordinates."
     "Satellites · the next visible pass" = "Satellites · the next visible pass"

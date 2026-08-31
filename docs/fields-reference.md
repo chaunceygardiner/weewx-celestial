@@ -43,7 +43,11 @@ type any of it:
   and `--add-comet` on every edit, so they always track your sets.  Both
   write the two groups under *every* report running the Celestial skin,
   so a second report of your own — the page in another language, say —
-  needs nothing declared by hand.  Also printed
+  needs nothing declared by hand, and under every report of another skin
+  that names the panels it embeds — `celestial_panels`, which that skin
+  declares in its own `skin.conf` (9.0; see
+  [Panels in your own skin](own-skin.md#2-the-fields-the-panels-read)) —
+  which gets exactly the groups those panels read.  Also printed
   [below](#the-installers-stanza), for the defaults.
 
 weewx-loopdata reads the two merged, group by group: a group named in
@@ -58,11 +62,11 @@ contains a comma and needs quoting.
 
 {: .note }
 The older `[LoopData] [[Include]] fields` line in `weewx.conf` is not
-this page's business any more.  8.5 never writes it, and only reads it
-to count: the entries on it that this page now declares itself — the
-~100 that 8.1–8.4's installers appended — are evaluated **twice per loop
-packet** by weewx-loopdata 7.0 while the line stands, and the install
-says how many.  weewx-loopdata warns about the line at startup and
+this page's business any more.  Since 8.5 the installer never writes it,
+and only reads it to count: the entries on it that this page now declares
+itself — the ~100 that 8.1–8.4's installers appended — are evaluated
+**twice per loop packet** by weewx-loopdata 7.0 while the line stands,
+and the install says how many.  weewx-loopdata warns about the line at startup and
 retires it in a later release of its own; trim this page's entries from
 it sooner if no other page of yours reads them.  Do not add this page's
 fields to it.
@@ -172,6 +176,28 @@ almanac.halley.perihelion.unix_epoch.raw
 
 `mag` is what decides whether the diamond draws solid or hollow;
 `perihelion` feeds that comet's windowed countdown chip.
+
+## Which groups each panel reads
+
+The bundled page shows every panel, so it declares everything above.  A
+skin embedding a subset — see
+[Panels in your own skin](own-skin.md) — can paste a subset, and the two
+installer-written groups follow the panels its report names in
+`celestial_panels`:
+
+| Panel | Groups pasted from the skin's declaration | Written by the installer |
+|---|---|---|
+| The countdown row | `clock`, `sunset`, `darkness`, `season`, `perihelion`, `meteor_shower`, `supermoon`, `eclipse` | `satellites` (the pass chip), `comets` (the perihelion chips) |
+| The Geocentric | `clock`, the eleven body groups (`sun` … `proxima_centauri`) | `comets` |
+| The sky dome | `clock`, the eleven body groups — the marks it nudges between backdrops are the sun, the moon and the planets | `satellites` |
+| The Next Visible Pass | `clock` | `satellites` |
+
+`clock` is not optional anywhere: `current.dateTime.raw` is the page's
+whole notion of time, and a record without it is dropped.  Pasting all
+the static groups whatever you show is the simple choice — an unread
+group costs one evaluation per packet and nothing else — but a group a
+panel does read has to be there, or that panel first-paints and never
+moves.
 
 ## What a missing field does
 

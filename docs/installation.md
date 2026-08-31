@@ -2,7 +2,7 @@
 title: Installation
 layout: default
 nav_order: 2
-description: Installing weewx-celestial 8.x — the extension, how the page declares the loop-data fields it reads, wiring weewx-loopdata's output to where the page looks, and verifying the live feed.
+description: Installing weewx-celestial — the extension, how the page declares the loop-data fields it reads, wiring weewx-loopdata's output to where the page looks, and verifying the live feed.
 ---
 
 # Installation
@@ -20,7 +20,7 @@ separately.
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    7.0 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.3.2 or later, both per their instructions, in that order.
+   2.3.5 or later, both per their instructions, in that order.
    weewx-loopdata **must** come first: this extension's installer refuses
    to run beside an older weewx-loopdata, or none, because the page's
    live values reach it only through 7.0's per-report field declaration
@@ -52,8 +52,10 @@ separately.
    ```
 
    Those two groups are the installer's, rebuilt on every install to
-   track your sets (under every report running the Celestial skin, so a
-   second one in another language needs nothing by hand); no fields
+   track your sets — under every report running the Celestial skin, so a
+   second one in another language needs nothing by hand, and under any
+   report of another skin that names the panels it embeds (see
+   [Panels in your own skin](own-skin.md)); no fields
    line of yours is edited — in particular, an
    old `[LoopData] [[Include]] fields` line from an earlier
    weewx-loopdata is left exactly as it is (the install counts the

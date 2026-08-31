@@ -179,7 +179,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "8.5",
+            version = "9.0",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
@@ -198,24 +198,14 @@ class CelestialInstaller(ExtensionInstaller):
             files = [
                 ('bin/user', [
                     'bin/user/celestial.py',
+                    'bin/user/celestial_page.py',
                     'bin/user/celestial_sky.py',
                     ]),
                 ('skins/Celestial', [
                     'skins/Celestial/celestial.css',
-                    'skins/Celestial/dome-svg.txt.tmpl',
-                    'skins/Celestial/dome-svg-1.txt.tmpl',
-                    'skins/Celestial/dome-svg-2.txt.tmpl',
-                    'skins/Celestial/dome-svg-3.txt.tmpl',
-                    'skins/Celestial/dome-svg-4.txt.tmpl',
-                    'skins/Celestial/dome-svg-5.txt.tmpl',
-                    'skins/Celestial/dome-svg-6.txt.tmpl',
-                    'skins/Celestial/dome-svg-7.txt.tmpl',
-                    'skins/Celestial/dome-svg-8.txt.tmpl',
-                    'skins/Celestial/dome-svg-9.txt.tmpl',
-                    'skins/Celestial/dome-svg-frag.inc',
+                    'skins/Celestial/celestial-page.css',
+                    'skins/Celestial/celestial.js',
                     'skins/Celestial/index.html.tmpl',
-                    'skins/Celestial/pass-chart.txt.tmpl',
-                    'skins/Celestial/realtime_updater.inc',
                     'skins/Celestial/skin.conf',
                     'skins/Celestial/sky.js',
                     ]),
@@ -297,7 +287,8 @@ class CelestialInstaller(ExtensionInstaller):
         # and the line is other pages' as well, so the user decides.
         twice = celestial.legacy_entries_declared(
             config, report['satellites'], report['comets'], report['reports'])
-        if not report['changes'] and not twice:
+        if not report['changes'] and not twice and not report['refused'] \
+                and not report['misplaced']:
             return False
         for section, groups in report['changes'].items():
             for group, (old, new) in groups.items():
@@ -315,19 +306,40 @@ class CelestialInstaller(ExtensionInstaller):
                         '%s %d %s fields (%s) under %s%s.'
                         % (verb, len(new), group[:-1], ', '.join(tags), where,
                            ' (dry run)' if dry_run else ''))
+                    if report['%s_defaulted' % group]:
+                        # Only under a DECLARED set: the defaults govern
+                        # exactly when there is no section to follow, which
+                        # is also the only way a declared set is non-empty
+                        # without one.  A group removed because no panel of
+                        # a consumer's page reads it has nothing to do with
+                        # the station's [Skyfield] sets, and the receipt
+                        # below it gives the real reason.
+                        engine.printer.out(
+                            "    (weewx-skyfield's installer defaults: the "
+                            'configuration has no [Skyfield] [[%s]] to follow.  '
+                            'Re-install weewx-celestial after configuring your '
+                            'own, or use --add-%s.)'
+                            % (group.capitalize(), group[:-1]))
+                elif group in report['unread'].get(section, {}):
+                    # Removed because no panel of the report reads it:
+                    # the receipt below says so, in celestial.py's words.
+                    engine.printer.out('%s %s%s.' % (verb, where,
+                                                      ' (dry run)' if dry_run else ''))
                 else:
                     engine.printer.out(
                         '%s %s: [Skyfield] [[%s]] is empty, so the page '
                         'reads no %s fields%s.'
                         % (verb, where, group.capitalize(), group[:-1],
                            ' (dry run)' if dry_run else ''))
-                if report['%s_defaulted' % group]:
-                    engine.printer.out(
-                        "    (weewx-skyfield's installer defaults: the "
-                        'configuration has no [Skyfield] [[%s]] to follow.  '
-                        'Re-install weewx-celestial after configuring your '
-                        'own, or use --add-%s.)'
-                        % (group.capitalize(), group[:-1]))
+        # The receipts celestial.py owns, in the same words the verbs
+        # print them, after the lines they explain: the station's
+        # misplaced key, if any; each report skipped for a fault of its
+        # own (a celestial_panels naming something that is not a panel,
+        # or written as a section), costing that report's declaration
+        # and nobody else's, named every run until it is fixed; and each
+        # group removed because no panel of its report reads it.
+        for line in celestial.receipts(report):
+            engine.printer.out(line)
         if report['changes'] and not dry_run:
             engine.printer.out('Restart weewxd so weewx-loopdata reads the '
                                'declaration.')

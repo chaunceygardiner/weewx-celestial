@@ -6,51 +6,40 @@
 ## Every English string is a $gettext key (the key IS the English text, so
 ## a missing [Texts] entry falls back to it); the report's lang file
 ## translates the page.  tests/test_celestial.py reads these keys from
-## this file and the include and enforces that lang/en.conf ships exactly
-## the keys that render.
-## weewx.almanac feeds the footer's identity check (see there).
-#import weewx.almanac
-#import logging
+## this file and from celestial_page.py (the strings the javascript
+## composes) and enforces that lang/en.conf ships exactly the keys that
+## render.
+## time and datetime dress the header's "updated" stamp (see there).
 #import time
-## datetime.date differences the pass rows' whole-day countdowns (see
-## the satellite roster below): calendar days, never elapsed seconds.
 #import datetime
-## The page's plate.  The report's `theme` option (dark | light | auto,
-## default dark) is read by weewx-skyfield's SkyPage straight out of THIS
-## report's skin dict -- celestial_sky hands it over -- so the option is
-## spelled and valued exactly as skyfield's own Sky page spells it, and
-## `auto` (light while the sun is up at generation time) is skyfield's
-## sunrise logic, not a second copy of it.  Resolved HERE, at generation:
-## the dome and the Next Visible Pass chart arrive as skyfield SVG with
-## their colors already inside them and the javascript refetches them
-## every 60 s, so a browser-side toggle could not move them and the next
-## refetch would undo it anyway.  Dark without a capable $sky_page: the
-## light plate is the paper the charts are drawn on, and there are no
-## charts on that tier.  Guarded, like every other skyfield call here --
-## a page that does not generate is the worse failure (7.2's lesson).
-## ONE guarded lookup serves both the class and the charts' palette.
-## skyfield RAISES on an unknown theme (SkyPageUsageError passes through
-## its panel guard by design), so asking it a second time for the palette
-## would put that raise inside the dome's own #try and cost a typo the
-## whole dome and pass panel -- the plate is what a typo may cost.
-## theme() raises ONLY on a value that is not dark, light or auto, so a
-## raise here is a misconfigured report and gets a log line -- otherwise
-## a typo is invisible: the page just renders dark for ever.  The
-## hasattr guard keeps the older-skyfield case quiet, where there is no
-## theme() and no way to know whether anyone asked for one.  This is the
-## only site that logs; the fragment templates resolve the same way and
-## stay silent, or one typo would print eleven lines a cycle.
-#set $theme = 'dark'
-#if $sky_page and hasattr($sky_page, 'theme')
-#try
-#set $theme = str($sky_page.theme($almanac))
-#except
-#silent logging.getLogger('user.celestial').warning("The Celestial report has an unusable theme option; rendering the dark plate.  Valid values are dark, light and auto.")
-#end try
+## $panels is $celestial, the page's panels (celestial_page.py's
+## CelestialPage), resolved ONCE here and tested at every call below:
+## a weewx.conf stanza overriding search_list_extensions with the
+## pre-9.0 shim leaves $celestial unbound while $sky_page still
+## resolves, and under #errorCatcher Echo a bare placeholder would
+## then ECHO its own text into the page; $getVar's default makes it
+## a page without the panels, which is what upgrading.md says that
+## override costs.  Render-time failures need no guard here: every
+## panel method wears celestial_page's _panel_guard and renders
+## blank, logged, on its own.
+#set $panels = $getVar('celestial', None)
+## The page's plate: the report's `theme` option (dark | light | auto,
+## default dark), resolved at generation by $celestial.theme_class --
+## through weewx-skyfield's SkyPage, so the option is spelled and valued
+## exactly as skyfield's own Sky page spells it and `auto` is skyfield's
+## sunrise logic, not a second copy.  Resolved at generation because the
+## dome and the Next Visible Pass chart arrive as skyfield SVG with
+## their colors inside them and the javascript refetches them every
+## 60 s, so a browser-side toggle could not move them and the next
+## refetch would undo it anyway; the dome and pass panels resolve their
+## own plate from the same site, so the two cannot disagree.  Dark
+## without $panels.
+#set $theme_class = 'theme-dark'
+#if $panels
+#set $theme_class = $panels.theme_class($almanac)
 #end if
-#set $palette = 'light' if $theme == 'light' else 'night'
 <!DOCTYPE html>
-<html lang="$lang" class="theme-$theme">
+<html lang="$lang" class="$theme_class">
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -61,51 +50,52 @@
     #end if
     <meta name="description" content="$gettext('The live sky over {location}.').format(location=$station.location)">
     ## All styling lives in celestial.css: Cheetah owns '#', so hex colors
-    ## must never appear in this template or the javascript include.  The
-    ## skin version tags the URL so browsers refetch the stylesheet after
-    ## an upgrade (CopyGenerator re-copies copy_once files on every report
-    ## first-run, but a browser would happily keep serving its cached copy
-    ## of an unversioned URL).
-    #set $css_href = 'celestial.css'
+    ## must never appear in this template (celestial.js carries none
+    ## either: the stylesheet owns every color, as a token set a consumer
+    ## can restyle).  The skin version tags the three URLs so browsers
+    ## refetch the files after an upgrade (CopyGenerator re-copies
+    ## copy_once files on every report first-run, but a browser would
+    ## happily keep serving its cached copy of an unversioned URL).
+    #set $vtag = ''
     #if $Extras.has_key('version')
-    #set $css_href = 'celestial.css?v=' + str($Extras.version)
+    #set $vtag = '?v=' + str($Extras.version)
     #end if
-    <link rel="stylesheet" href="$css_href">
+    ## Two sheets since 9.0: celestial.css is the PANELS, which a skin
+    ## embedding them loads on its own page, and celestial-page.css is
+    ## this report's own surfaces and chrome -- the body, header, h1,
+    ## section card and footer.  A consumer must not load the second:
+    ## those rules name bare elements and would repaint its whole site.
+    <link rel="stylesheet" href="celestial.css$vtag">
+    <link rel="stylesheet" href="celestial-page.css$vtag">
+    ## The page's javascript, celestial.js: one static file (CopyGenerator
+    ## copy_once, like sky.js), started by the config block at the top of
+    ## <body>.  Deliberately NOT deferred: start() arms the loop poll, and
+    ## it must be armed before the panels below parse so a first packet
+    ## can land while the page is still streaming in -- deferred, it would
+    ## run only after parsing, and the parse-time paths the javascript
+    ## keeps for that case (a packet or a backdrop refetch owed while the
+    ## document is still loading) would never run.
+    <script src="celestial.js$vtag"></script>
     ## Tap tooltips (sky.js, copied verbatim from weewx-skyfield): SVG
     ## <title> tooltips are hover-only, dead on touch; a tap shows the
-    ## same text as a floating chip.  Version-tagged like the css, and
-    ## for the same reason.
-    #set $js_href = 'sky.js'
-    #if $Extras.has_key('version')
-    #set $js_href = 'sky.js?v=' + str($Extras.version)
-    #end if
-    <script src="$js_href" defer></script>
+    ## same text as a floating chip.
+    <script src="sky.js$vtag" defer></script>
   </head>
   <body>
-    #include "realtime_updater.inc"
-    ## The page is one live panel: the Geocentric.  The roster's distance,
-    ## AU and altitude cells are dual-source -- first-painted here from
-    ## whatever capable report almanac is installed (weewx-skyfield for
-    ## full fidelity including Proxima Centauri, or PyEphem), then kept
-    ## live from loop data by the javascript above.  The dial, the trails
-    ## and the rate readouts are javascript-only: the dial draws on the
-    ## first loop-data fetch, and the rates and trails need two loop
-    ## packets to derive motion.  Without an extended almanac the roster
-    ## first-paints empty and the javascript fills it, as always.
-    #set $extras = $almanac.hasExtras
-    ## Earth-to-body distances are raw astronomical units; convert to the
-    ## report's distance unit.
-    #set $distance_label = str($unit.label.windrun)
-    ## Kilometers/miles per IAU astronomical unit; a test ties these to the
-    ## javascript include's copies.  (windrun stands in for group_distance --
-    ## this extension registers no observation types.)
-    #if $unit.unit_type.windrun == 'km'
-      #set $per_au = 1.4959787e8    ## kilometers per astronomical unit
-    #else
-      #set $per_au = 9.2955807e7    ## miles per astronomical unit
+    ## The live layer starts here, before any panel has parsed: the
+    ## config block $celestial builds from this report -- its [Extras],
+    ## the station, this almanac's instant and names, the report's units,
+    ## [Texts], satellites and comets -- and the celestial.start call.
+    ## Everything the javascript needs per report is in that block; the
+    ## script itself is static.  $filename is core's: this page's own
+    ## path under HTML_ROOT, from which the block carries the route up
+    ## to HTML_ROOT, where the fragments are written.  (Through 8.5 this was
+    ## `#include "realtime_updater.inc"`, the whole script with those
+    ## values baked in.)
+    #if $panels
+    $panels.config_script($almanac, $filename)
     #end if
-    ## Station coordinates, hemisphere-lettered for the header; the
-    ## latitude also feeds the javascript moon disc (lit-side flip).  The
+    ## Station coordinates, hemisphere-lettered for the header.  The
     ## letters are $station.latitude/longitude[2]: core WeeWX computes
     ## them from the report's [Labels] hemispheres (lang-file aware).
     ## There is NO $Labels tag in the core search list -- 7.2 referenced
@@ -114,38 +104,7 @@
     #set $lon_f = $station.stn_info.longitude_f
     #set $lat_letter = $station.latitude[2]
     #set $lon_letter = $station.longitude[2]
-    ## The roster bodies, nearest-tier first: moon and sun, the planets in
-    ## orbital order, Proxima Centauri last.  Every cell of every row is
-    ## individually guarded: an almanac that cannot serve one body (PyEphem
-    ## has no Proxima; the built-in almanac has no extras at all) leaves
-    ## that row's cells empty for the javascript, never breaks the page.
-    #set $geo_bodies = ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri')
-    ## The comets follow [Skyfield] [[Comets]] through skyfield 2.1's
-    ## public $sky_page.comet_names() (guarded: an older skyfield has no
-    ## method and no comets).  Each configured comet gets a roster row in
-    ## the Geocentric panel and a windowed perihelion countdown chip; the
-    ## include feeds the javascript the same list, so rows, dial marks
-    ## and chips always agree.
-    #set $comet_names = []
-    #try
-    #for $n in $sky_page.comet_names()
-    #silent $comet_names.append(str($n))
-    #end for
-    #except
-    #pass
-    #end try
-    ## The satellite set, enumerated here as well as in the dome section
-    ## below: the pass chip first-paints the soonest visible pass, and
-    ## the countdown row renders before the dome.
-    #set $sat_names = []
-    #try
-    #for $n in $sky_page.satellite_names()
-    #silent $sat_names.append(str($n))
-    #end for
-    #except
-    #pass
-    #end try
-    <div class="page">
+    <div class="cel-page">
       <header>
         <div>
           <h1>
@@ -155,11 +114,11 @@
               $gettext('Celestial <span class="over">over</span> {location}').format(location=$station.location)
             #end if
           </h1>
-          <div class="sub mono">
+          <div class="cel-sub cel-mono">
             $("%.2f&deg; %s &middot; %.2f&deg; %s" % (abs($lat_f), $lat_letter, abs($lon_f), $lon_letter))
             ## The "updated" stamp first-paints the generation instant -- the
-            ## page's clock until the first loop packet (GEN_TS in the
-            ## include) -- in the shape fmtHMS repaints it in: %H:%M:%S.
+            ## page's clock until the first loop packet (the config block's
+            ## gen_ts) -- in the shape fmtHMS repaints it in: %H:%M:%S.
             ## And in the ZONE fmtHMS repaints it in, which is the report's
             ## own time_zone Extras setting where it names one, NOT simply
             ## weewxd's: a station displaying another zone would otherwise
@@ -190,665 +149,71 @@
         </div>
       </header>
 
-      ## Countdown central: a row of countdown chips the javascript
-      ## renders on every loop packet -- the page's clock is the packet's
-      ## own stamp, so the chips move at loop cadence (see serverNow in
-      ## the include) -- each pure client arithmetic against an
-      ## event-tier loopdata field, computed once by the engine, cached
-      ## until the event, zero cost at that cadence.  The chip family
-      ## (.countdown/.count) is weewx-skyfield's, kept in step.  A
-      ## countdown's precision follows its horizon (fmtDHMS in the
-      ## include owns the shape; these first paints mirror it, and are
-      ## exactly what it renders for the generation instant, which is
-      ## the page's clock until the first packet): a day or more out it
-      ## reads days-hours-minutes, inside the final day the hh:mm:ss
-      ## clock.  Dual-source like the roster:
-      ## the always-on chips first-paint the COUNTDOWN ITSELF -- the
-      ## remaining time at generation -- with the event's clock time or
-      ## date as the small detail (a countdown chip whose only number
-      ## is a wall-clock time reads as remaining time and lies).
-      ## Guarded: a lesser almanac first-paints the
-      ## chip hidden and the javascript unhides it when the loop feed
-      ## serves it.  The pass chip and the windowed guests (supermoon,
-      ## eclipse, perihelion within ~30 days) first-paint hidden always.
-      ## The pass chip first-paints the soonest visible pass across the
-      ## configured satellites -- the same pick the live layer makes --
-      ## so all the row's chips stand from the first byte (a chip that
-      ## pops in on the first loop packet is a jump like any other).
-      ## The rise and set instants bake so a feed without the pass keys
-      ## still has a target to count from and roll into "overhead now".
-      #set $pass_k = ''
-      #set $pass_v = ''
-      #set $pass_d = ''
-      #set $pass_data = ''
-      #set $pass_attr = ' hidden'
-      #try
-      #set $best_rise = None
-      #set $best_set = None
-      #set $best_label = ''
-      #for $sn in $sat_names
-      #try
-      #set $so = getattr($almanac, $sn)
-      #set $sp = $so.next_visible_pass
-      #set $sr = $sp.rise.raw
-      #if $sr is not None and ($best_rise is None or $sr < $best_rise)
-      #set $best_rise = $sr
-      #set $best_set = $sp.set.raw
-      #set $best_label = str($so.label)
+      ## Countdown central: the row of countdown chips, first-painted
+      ## from this almanac and re-rendered by celestial.js on every loop
+      ## packet -- $celestial.countdown_html owns the row, the chip
+      ## rulings and their first paints.
+      #if $panels
+      $panels.countdown_html($almanac)
       #end if
-      #except
-      #pass
-      #end try
-      #end for
-      #if $best_rise is not None
-      #set $pass_attr = ''
-      #set $pass_k = $best_label
-      #set $pass_data = ' data-ts="%d"' % int($best_rise)
-      #if $best_set is not None
-      #set $pass_data = $pass_data + ' data-set="%d"' % int($best_set)
-      #end if
-      #if $best_set is not None and $best_rise <= $almanac.time_ts and $almanac.time_ts < $best_set
-      #set $pass_d = $gettext('overhead now')
-      #else
-      #set $pass_d = $gettext('appears in')
-      #set $pass_rem = max(0, int($best_rise - $almanac.time_ts))
-      #set $pass_hms = '%02d:%02d:%02d' % ($pass_rem % 86400 // 3600, $pass_rem % 3600 // 60, $pass_rem % 60)
-      #set $pass_v = $gettext('{d}d {h}h {m}m').format(d=$pass_rem // 86400, h=$pass_rem % 86400 // 3600, m=$pass_rem % 3600 // 60) if $pass_rem >= 86400 else $pass_hms
-      #end if
-      #end if
-      #except
-      #pass
-      #end try
-      #set $sun_k = ''
-      #set $sun_v = ''
-      #set $sun_d = ''
-      #set $sun_data = ''
-      #try
-      #set $next_set = $almanac.sun.next_setting.raw
-      #set $next_rise = $almanac.sun.next_rising.raw
-      #set $sun_ts = None
-      #if $next_set is not None and ($next_rise is None or $next_set <= $next_rise)
-      #set $sun_k = $gettext('sunset')
-      #set $sun_ts = $next_set
-      #else if $next_rise is not None
-      #set $sun_k = $gettext('sunrise')
-      #set $sun_ts = $next_rise
-      #end if
-      #if $sun_ts is not None
-      #set $sun_rem = max(0, int($sun_ts - $almanac.time_ts))
-      #set $sun_hms = '%02d:%02d:%02d' % ($sun_rem % 86400 // 3600, $sun_rem % 3600 // 60, $sun_rem % 60)
-      #set $sun_v = $gettext('{d}d {h}h {m}m').format(d=$sun_rem // 86400, h=$sun_rem % 86400 // 3600, m=$sun_rem % 3600 // 60) if $sun_rem >= 86400 else $sun_hms
-      #set $sun_d = time.strftime('%H:%M', time.localtime($sun_ts))
-      #set $sun_data = ' data-ts="%d"' % int($sun_ts)
-      #end if
-      #except
-      #pass
-      #end try
-      ## Astronomical darkness, symmetric with the sun chip: darkness
-      ## begins at the -18 sunset, ends at the -18 sunrise -- stargazers
-      ## care about both ends of the window.  A high-latitude summer
-      ## where -18 never comes serves nulls and the chip stays hidden.
-      #set $dark_k = ''
-      #set $dark_v = ''
-      #set $dark_d = ''
-      #set $dark_data = ''
-      #try
-      #set $d_set = $almanac(horizon=-18).sun.next_setting.raw
-      #set $d_rise = $almanac(horizon=-18).sun.next_rising.raw
-      #set $dark_ts = None
-      #if $d_set is not None and ($d_rise is None or $d_set <= $d_rise)
-      #set $dark_k = $gettext('darkness begins')
-      #set $dark_ts = $d_set
-      #else if $d_rise is not None
-      #set $dark_k = $gettext('darkness ends')
-      #set $dark_ts = $d_rise
-      #end if
-      #if $dark_ts is not None
-      #set $dark_rem = max(0, int($dark_ts - $almanac.time_ts))
-      #set $dark_hms = '%02d:%02d:%02d' % ($dark_rem % 86400 // 3600, $dark_rem % 3600 // 60, $dark_rem % 60)
-      #set $dark_v = $gettext('{d}d {h}h {m}m').format(d=$dark_rem // 86400, h=$dark_rem % 86400 // 3600, m=$dark_rem % 3600 // 60) if $dark_rem >= 86400 else $dark_hms
-      #set $dark_d = time.strftime('%H:%M', time.localtime($dark_ts))
-      #set $dark_data = ' data-ts="%d"' % int($dark_ts)
-      #end if
-      #except
-      #pass
-      #end try
-      ## The season chip (a windowed guest): equinox or solstice,
-      ## whichever next, named by the season it begins -- the one event
-      ## whose count-to-zero is exact to the second.  The label and
-      ## target bake even outside the window (the javascript unhides
-      ## the chip when the window opens); the countdown and date paint
-      ## only when the chip first-paints visible.
-      #set $season_k = ''
-      #set $season_v = ''
-      #set $season_d = ''
-      #set $season_data = ''
-      #set $season_attr = ' hidden'
-      #try
-      #set $eq_ts = $almanac.next_equinox.raw
-      #set $sol_ts = $almanac.next_solstice.raw
-      #set $season_ts = None
-      #if $eq_ts is not None and ($sol_ts is None or $eq_ts <= $sol_ts)
-      #set $season_ts = $eq_ts
-      #else if $sol_ts is not None
-      #set $season_ts = $sol_ts
-      #end if
-      #if $season_ts is not None
-      #set $season_data = ' data-ts="%d"' % int($season_ts)
-      #set $season_mo = int(time.strftime('%m', time.localtime($season_ts)))
-      #set $season_north = $lat_f >= 0
-      #if $season_mo >= 2 and $season_mo <= 4
-      #set $season_k = $gettext('spring begins') if $season_north else $gettext('autumn begins')
-      #else if $season_mo >= 5 and $season_mo <= 7
-      #set $season_k = $gettext('summer begins') if $season_north else $gettext('winter begins')
-      #else if $season_mo >= 8 and $season_mo <= 10
-      #set $season_k = $gettext('autumn begins') if $season_north else $gettext('spring begins')
-      #else
-      #set $season_k = $gettext('winter begins') if $season_north else $gettext('summer begins')
-      #end if
-      #set $season_rem = int($season_ts - $almanac.time_ts)
-      #if $season_rem >= 0 and $season_rem <= 30 * 86400
-      #set $season_attr = ''
-      #set $season_hms = '%02d:%02d:%02d' % ($season_rem % 86400 // 3600, $season_rem % 3600 // 60, $season_rem % 60)
-      #set $season_v = $gettext('{d}d {h}h {m}m').format(d=$season_rem // 86400, h=$season_rem % 86400 // 3600, m=$season_rem % 3600 // 60) if $season_rem >= 86400 else $season_hms
-      #set $season_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($season_ts))
-      #end if
-      #end if
-      #except
-      #pass
-      #end try
-      ## Earth's apsis chip (a windowed guest, the season chip's twin):
-      ## perihelion or aphelion, whichever next -- early January and
-      ## early July, minute-class extremum instants (weewx-skyfield
-      ## 2.1's next_perihelion/next_aphelion, built on this page's
-      ## ask).
-      #set $apsis_k = ''
-      #set $apsis_v = ''
-      #set $apsis_d = ''
-      #set $apsis_data = ''
-      #set $apsis_attr = ' hidden'
-      #try
-      #set $peri_ts = $almanac.next_perihelion.raw
-      #set $aph_ts = $almanac.next_aphelion.raw
-      #set $apsis_ts = None
-      #if $peri_ts is not None and ($aph_ts is None or $peri_ts <= $aph_ts)
-      #set $apsis_ts = $peri_ts
-      #set $apsis_k = $gettext('Earth perihelion')
-      #else if $aph_ts is not None
-      #set $apsis_ts = $aph_ts
-      #set $apsis_k = $gettext('Earth aphelion')
-      #end if
-      #if $apsis_ts is not None
-      #set $apsis_data = ' data-ts="%d"' % int($apsis_ts)
-      #set $apsis_rem = int($apsis_ts - $almanac.time_ts)
-      #if $apsis_rem >= 0 and $apsis_rem <= 30 * 86400
-      #set $apsis_attr = ''
-      #set $apsis_hms = '%02d:%02d:%02d' % ($apsis_rem % 86400 // 3600, $apsis_rem % 3600 // 60, $apsis_rem % 60)
-      #set $apsis_v = $gettext('{d}d {h}h {m}m').format(d=$apsis_rem // 86400, h=$apsis_rem % 86400 // 3600, m=$apsis_rem % 3600 // 60) if $apsis_rem >= 86400 else $apsis_hms
-      #set $apsis_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($apsis_ts))
-      #end if
-      #end if
-      #except
-      #pass
-      #end try
-      ## The shower chip's detail line is generation-time static: the
-      ## peak's date and the moon's illumination AT the peak (the almanac
-      ## time-traveled), the one fact that decides whether a shower year
-      ## is worth an alarm.  The javascript clears it if the live label
-      ## rolls to a different shower before the next report cycle.
-      #set $shower_label = ''
-      #set $shower_v = ''
-      #set $shower_note = ''
-      #set $shower_data = ''
-      #try
-      #set $shower_peak = $almanac.next_meteor_shower.peak.raw
-      #if $shower_peak is not None
-      #set $shower_label = str($almanac.next_meteor_shower.label)
-      #set $shower_rem = max(0, int($shower_peak - $almanac.time_ts))
-      #set $shower_hms = '%02d:%02d:%02d' % ($shower_rem % 86400 // 3600, $shower_rem % 3600 // 60, $shower_rem % 60)
-      #set $shower_v = $gettext('{d}d {h}h {m}m').format(d=$shower_rem // 86400, h=$shower_rem % 86400 // 3600, m=$shower_rem % 3600 // 60) if $shower_rem >= 86400 else $shower_hms
-      #set $shower_data = ' data-ts="%d"' % int($shower_peak)
-      #set $shower_pct = int(round($almanac(almanac_time=int($shower_peak)).moon.phase))
-      #set $shower_note = time.strftime($gettext('%b %-d'), time.localtime($shower_peak)) + ' &middot; ' + $gettext('moon {pct}%').format(pct=$shower_pct)
-      #end if
-      #except
-      #pass
-      #end try
-      ## The remaining windowed guests bake their targets and labels
-      ## the same way (NO chip on this row may pop in on the first loop
-      ## packet): supermoon, eclipse (kind names the chip, type is
-      ## decoration), and one perihelion chip per configured comet.
-      ## Guest date details are generation-painted and never rewritten
-      ## live, so first paint and live never differ in dress.
-      #set $super_v = ''
-      #set $super_d = ''
-      #set $super_data = ''
-      #set $super_attr = ' hidden'
-      #try
-      #set $sm_ts = $almanac.next_supermoon.raw
-      #if $sm_ts is not None
-      #set $super_data = ' data-ts="%d"' % int($sm_ts)
-      #set $sm_rem = int($sm_ts - $almanac.time_ts)
-      #if $sm_rem >= 0 and $sm_rem <= 30 * 86400
-      #set $super_attr = ''
-      #set $sm_hms = '%02d:%02d:%02d' % ($sm_rem % 86400 // 3600, $sm_rem % 3600 // 60, $sm_rem % 60)
-      #set $super_v = $gettext('{d}d {h}h {m}m').format(d=$sm_rem // 86400, h=$sm_rem % 86400 // 3600, m=$sm_rem % 3600 // 60) if $sm_rem >= 86400 else $sm_hms
-      #set $super_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($sm_ts))
-      #end if
-      #end if
-      #except
-      #pass
-      #end try
-      #set $ecl_k = ''
-      #set $ecl_v = ''
-      #set $ecl_d = ''
-      #set $ecl_data = ''
-      #set $ecl_attr = ' hidden'
-      #try
-      #set $ecl_ts = $almanac.next_eclipse.raw
-      #set $ecl_kind = str($almanac.next_eclipse_kind)
-      #if $ecl_ts is not None and $ecl_kind in ('lunar', 'solar')
-      #set $ecl_k = $gettext('lunar eclipse') if $ecl_kind == 'lunar' else $gettext('solar eclipse')
-      #set $ecl_data = ' data-ts="%d"' % int($ecl_ts)
-      #set $ecl_rem = int($ecl_ts - $almanac.time_ts)
-      #if $ecl_rem >= 0 and $ecl_rem <= 30 * 86400
-      #set $ecl_attr = ''
-      #set $ecl_hms = '%02d:%02d:%02d' % ($ecl_rem % 86400 // 3600, $ecl_rem % 3600 // 60, $ecl_rem % 60)
-      #set $ecl_v = $gettext('{d}d {h}h {m}m').format(d=$ecl_rem // 86400, h=$ecl_rem % 86400 // 3600, m=$ecl_rem % 3600 // 60) if $ecl_rem >= 86400 else $ecl_hms
-      #set $ecl_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($ecl_ts))
-      #try
-      #set $ecl_type = str($almanac.next_eclipse_type)
-      #set $ecl_type_t = {'penumbral': $gettext('penumbral'), 'partial': $gettext('partial'), 'total': $gettext('total'), 'annular': $gettext('annular')}.get($ecl_type, $ecl_type)
-      #set $ecl_d = $ecl_type_t + ' &middot; ' + $ecl_d
-      #except
-      #pass
-      #end try
-      #end if
-      #end if
-      #except
-      #pass
-      #end try
-      #set $sun_attr = '' if $sun_k else ' hidden'
-      #set $shower_attr = '' if $shower_label else ' hidden'
-      #set $dark_attr = '' if $dark_k else ' hidden'
-      <div class="countdown mono" id="countdown">
-        <div class="count" id="chip-pass"$pass_data$pass_attr><span class="k" id="chip-pass-k">$pass_k</span><span class="v" id="chip-pass-v">$pass_v</span><span class="d" id="chip-pass-d">$pass_d</span></div>
-        <div class="count" id="chip-sun"$sun_data$sun_attr><span class="k" id="chip-sun-k">$sun_k</span><span class="v" id="chip-sun-v">$sun_v</span><span class="d" id="chip-sun-d">$sun_d</span></div>
-        <div class="count" id="chip-shower" data-shower-label="$shower_label"$shower_data$shower_attr><span class="k" id="chip-shower-k">$shower_label</span><span class="v" id="chip-shower-v">$shower_v</span><span class="d" id="chip-shower-d">$shower_note</span></div>
-        <div class="count" id="chip-dark"$dark_data$dark_attr><span class="k" id="chip-dark-k">$dark_k</span><span class="v" id="chip-dark-v">$dark_v</span><span class="d" id="chip-dark-d">$dark_d</span></div>
-        <div class="count" id="chip-season"$season_data$season_attr><span class="k" id="chip-season-k">$season_k</span><span class="v" id="chip-season-v">$season_v</span><span class="d" id="chip-season-d">$season_d</span></div>
-        <div class="count" id="chip-apsis"$apsis_data$apsis_attr><span class="k" id="chip-apsis-k">$apsis_k</span><span class="v" id="chip-apsis-v">$apsis_v</span><span class="d" id="chip-apsis-d">$apsis_d</span></div>
-        <div class="count" id="chip-super"$super_data$super_attr><span class="k" id="chip-super-k">$gettext('supermoon')</span><span class="v" id="chip-super-v">$super_v</span><span class="d" id="chip-super-d">$super_d</span></div>
-        <div class="count" id="chip-eclipse"$ecl_data$ecl_attr><span class="k" id="chip-eclipse-k">$ecl_k</span><span class="v" id="chip-eclipse-v">$ecl_v</span><span class="d" id="chip-eclipse-d">$ecl_d</span></div>
-        #for $comet_name in $comet_names
-        #set $cp_k = ''
-        #set $cp_v = ''
-        #set $cp_d = ''
-        #set $cp_data = ''
-        #set $cp_attr = ' hidden'
-        #try
-        #set $cp_obj = getattr($almanac, $comet_name)
-        #set $cp_ts = $cp_obj.perihelion.raw
-        #if $cp_ts is not None
-        #set $cp_data = ' data-ts="%d"' % int($cp_ts)
-        #set $cp_rem = int($cp_ts - $almanac.time_ts)
-        #if $cp_rem >= 0 and $cp_rem <= 30 * 86400
-        #set $cp_attr = ''
-        #set $cp_k = $gettext('{name} perihelion').format(name=str($cp_obj.label))
-        #set $cp_hms = '%02d:%02d:%02d' % ($cp_rem % 86400 // 3600, $cp_rem % 3600 // 60, $cp_rem % 60)
-        #set $cp_v = $gettext('{d}d {h}h {m}m').format(d=$cp_rem // 86400, h=$cp_rem % 86400 // 3600, m=$cp_rem % 3600 // 60) if $cp_rem >= 86400 else $cp_hms
-        #set $cp_d = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($cp_ts))
-        #end if
-        #end if
-        #except
-        #pass
-        #end try
-        <div class="count" id="chip-peri-$comet_name"$cp_data$cp_attr><span class="k" id="chip-peri-${comet_name}-k">$cp_k</span><span class="v" id="chip-peri-${comet_name}-v">$cp_v</span><span class="d" id="chip-peri-${comet_name}-d">$cp_d</span></div>
-        #end for
-      </div>
 
       <section>
-        <h2 class="eyebrow">$gettext("The geocentric · live")</h2>
-        #if not $extras
-        <p class="skyhint">$gettext("Install {skyfield} (strongly recommended, and required for Proxima Centauri) or PyEphem so the almanac can serve this panel's positions and distances.").format(skyfield='<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>')</p>
+        <h2 class="cel-eyebrow">$gettext("The geocentric · live")</h2>
+        ## The Geocentric: the dial (javascript-built on the first loop
+        ## packet) and the roster, first-painted from this almanac and
+        ## kept live by celestial.js -- $celestial.geocentric_html, which
+        ## carries the panel's install hint when no extended almanac
+        ## serves it.
+        #if $panels
+        $panels.geocentric_html($almanac)
         #end if
-        <div class="geo-body">
-          <div>
-            <svg id="dial" viewBox="0 0 660 660" role="img"
-                 aria-label="$gettext('Geocentric chart: bodies placed by compass azimuth and log distance from Earth')"></svg>
-            <p class="caption dialcaption">$gettext("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion") · $gettext("Hover or tap any mark for its coordinates.")</p>
-          </div>
-          <div class="roster mono">
-            ## Display names come from the report's [Almanac] section (the
-            ## same source as $almanac.<body>.label), falling back to the
-            ## capitalized tag name; Proxima Centauri uses the short
-            ## [Texts] label so the row never overflows.  The value cells
-            ## share their [Texts] keys with the javascript, so first
-            ## paint and live updates always agree.  The configured
-            ## comets join the roster between Pluto and Proxima -- the
-            ## roster reads nearest-tier outward, and a comet at tens
-            ## of au belongs among the planets, not past the stellar
-            ## rim -- same row anatomy, the shared brass comet chip
-            ## (comet tags are dynamic, so per-tag color classes cannot
-            ## exist): the guarded cells leave an elementless comet's
-            ## row honestly empty (MPC drops faded comets; absence,
-            ## never the string "None").
-            ##
-            ## Read the [Almanac] names out of the almanac's __dict__, never
-            ## as $almanac.texts: WeeWX only grew the texts attribute in 5.3
-            ## and this extension supports 5.2.  On 5.2 the plain attribute
-            ## lookup does NOT fail cleanly -- Almanac.__getattr__ walks the
-            ## registered almanacs and PyEphem's catch-all hands back an
-            ## AlmanacBinder for a "heavenly body" named texts, so the access
-            ## succeeds, returns something truthy, and the page then dies on
-            ## .get with "cannot find 'get'".  A getattr() default can never
-            ## fire; __dict__ is the only lookup that tells the truth.  On
-            ## 5.2 the roster falls back to capitalized English tag names.
-            #set $almanac_texts = $almanac.__dict__.get('texts', {})
-            #for $body_name in ($geo_bodies[:-1] + tuple($comet_names) + $geo_bodies[-1:])
-            #set $chip_cls = 'chip-comet' if $body_name in $comet_names else 'chip-' + $body_name
-            #set $display_name = $gettext('Proxima') if $body_name == 'proxima_centauri' else str($almanac_texts.get($body_name, $body_name.capitalize()))
-            #set $dist_html = ''
-            #set $au_html = ''
-            #set $alt_html = ''
-            #set $below_cls = ''
-            #if $extras
-            #try
-            #set $body_obj = getattr($almanac, $body_name)
-            #set $au_val = $body_obj.earth_distance
-            #set $alt_val = $body_obj.alt
-            #set $dist_html = "{:,.0f}".format($au_val * $per_au)
-            #set $au_str = ("%.1f" % $au_val) if $au_val >= 1000 else ("%.6f" % $au_val)
-            #set $au_html = $gettext('{dist} au').format(dist=$au_str)
-            #set $alt_html = $gettext('below horizon') if $alt_val < 0 else $gettext('alt {alt}°').format(alt=("%.1f" % $alt_val))
-            #set $below_cls = ' below' if $alt_val < 0 else ''
-            #except
-            #pass
-            #end try
-            #end if
-            <div class="row$below_cls" id="geo-row-$body_name">
-              <span class="bname"><span class="chip $chip_cls"></span>$display_name</span>
-              <span class="odo"><span id="almanac.${body_name}.earth_distance">$dist_html</span><span class="unit">$distance_label</span></span>
-              <span class="rsub"><span id="geo-rate-$body_name"></span><span id="geo-au-$body_name">$au_html</span><span id="geo-alt-$body_name">$alt_html</span></span>
-            </div>
-            #end for
-          </div>
-        </div>
       </section>
 
       <section>
-        <h2 class="eyebrow">$gettext("The sky dome · live")</h2>
-        ## The dome is weewx-skyfield's dome_svg, embedded per report cycle
-        ## through the guarded $sky_page (celestial_sky.CelestialSkyPage:
-        ## the real SkyPage when skyfield is installed, else None -- and
-        ## dome_svg's own guard returns '' when the skyfield almanac is not
-        ## actually registered, so one emptiness test covers both).  It is
-        ## sky-chart orientation -- north top, EAST LEFT, agreeing with
-        ## skyfield's own Sky page and deliberately opposite the dial's
-        ## map-convention plan view; do not harmonize them.  The javascript
-        ## refetches the dome fragment (dome-svg.txt, written by its own
-        ## template each report cycle) and nudges the sun/moon/planet marks
-        ## at loop rates between refreshes through their data-body hooks
-        ## (skyfield 2.0's consumer contract); satellites are the genuinely
-        ## live layer.
-        #set $dome_html = ''
-        #if $sky_page
-        #try
-        #set $dome_html = str($sky_page.dome_svg($almanac, palette=$palette))
-        #except
-        #pass
-        #end try
-        #end if
-        #if $dome_html
-        <div class="domepanel">
-          <div id="dome-wrap">
-            ## The inner div is the javascript's swap target: the dome
-            ## fragment refetch replaces exactly this element's contents.
-            ## The wrapper self-describes like the staggered fragments
-            ## (dome-svg-frag.inc owns the math -- keep this block in
-            ## step), so the javascript can pick the right slot from the
-            ## very first refetch.
-            ## SECONDS, explicitly -- see dome-svg-frag.inc: a report
-            ## carrying group_interval = hour reports five minutes as
-            ## 0.0833, int() makes that 0, and every fragment renders
-            ## empty (Jacques Terrettaz, issue #4).
-            #set $frag_interval = 300
-            #try
-            ## round(), not int(): the unit conversion is floating point, so an
-            ## hour-based interval comes back as 299.99988 and truncation would
-            ## quietly cost the set a slot.
-            #set $frag_interval = int(round($current.interval.second.raw))
-            #except
-            #pass
-            #end try
-            #if not $frag_interval or $frag_interval <= 0
-            #set $frag_interval = 300
-            #end if
-            #set $frag_step = max(60, $frag_interval // 10)
-            ## Ceil, exactly as dome-svg-frag.inc computes it -- the two
-            ## wrappers describe the same set of fragments and must agree
-            ## on how many there are.  See the note there.
-            #set $frag_count = min(10, max(1, -(-$frag_interval // $frag_step)))
-            #set $frag_ts = int($almanac.time_ts)
-            <div id="dome-svg"><div class="domefrag" data-dome-ts="$frag_ts" data-dome-step="$frag_step" data-dome-count="$frag_count" data-dome-interval="$frag_interval">$dome_html</div></div>
-            <p class="caption dialcaption">$gettext("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon.") $gettext("Hover or tap any mark for its coordinates.")</p>
-            ## The backdrop's health line, written by the javascript
-            ## (updateDomeStale) and hidden until the fragment refetches
-            ## stop landing -- at which point the dome freezes rather
-            ## than flying live marks over a motionless star field, and
-            ## this says so, naming the fault.  ALWAYS hidden at first
-            ## paint: a page carries a backdrop of its own generation
-            ## instant, which is by definition current.  The link is the
-            ## one place on the page that sends a reader to the manual,
-            ## because this is the one condition the page cannot fix by
-            ## itself.
-            <p class="stalehint" id="dome-stale" hidden><span id="dome-stale-msg"></span> · <a href="https://chaunceygardiner.github.io/weewx-celestial/troubleshooting.html#the-star-field-is-frozen">$gettext("what to check")</a></p>
-          </div>
-          ## The satellite rosters: one row per CONFIGURED satellite --
-          ## [Skyfield] [[Satellites]], enumerated through skyfield 2.0's
-          ## public $sky_page.satellite_names() (guarded: an older
-          ## skyfield has no method and no satellites, so no rows) -- a
-          ## satellite whose tags error is simply skipped, so a lesser
-          ## almanac costs rows, never the page.  Two tables, split by
-          ## panel: the dome (which draws any overhead satellite, dimmed
-          ## when not visible) gets the next pass of ANY kind, each row
-          ## tagged visible/not visible from next_pass.visible; the Next
-          ## Pass panel below gets the next VISIBLE pass, the chart's own
-          ## story.  Rows first-paint here
-          ## and go live from loop data; the include feeds the javascript
-          ## the same list, so rows and live layer always agree.  The
-          ## pass line, the honest no-pass and no-elements rows all reuse
-          ## weewx-skyfield's Sky page wording, so the translations are
-          ## shared verbatim; the any-pass strings are celestial's own.
-          #set $sat_names = []
-          #try
-          #for $n in $sky_page.satellite_names()
-          #silent $sat_names.append(str($n))
-          #end for
-          #except
-          #pass
-          #end try
-          #set $sat_rows = []
-          #for $sat_name in $sat_names
-          #try
-          #set $sat_obj = getattr($almanac, $sat_name)
-          #set $sat_label = str($sat_obj.label)
-          #set $sat_pass = $sat_obj.next_visible_pass
-          #set $sat_line = ''
-          #set $sat_sub = ''
-          ## The head line is composed, never str($sat_pass.rise): the
-          ## bare ValueHelper renders ephem_day (time-of-day only), and a
-          ## next pass can be days out -- a dated line is the truthful
-          ## first paint.  Same date + HM + countdown idiom as skyfield's
-          ## satellite chips and this page's own live layer (fmtDayHM +
-          ## satWhen), so the live replacement changes dress, not meaning.
-          #if $sat_pass.rise.raw is not None
-          #set $sat_delta = $sat_pass.rise.raw - $almanac.time_ts
-          #if $sat_pass.set.raw is not None and $sat_pass.rise.raw <= $almanac.time_ts and $almanac.time_ts < $sat_pass.set.raw
-          #set $sat_when = $gettext('overhead now')
-          #else if $sat_delta < 3600
-          #set $sat_when = $gettext('in {m} min').format(m=max(1, int($sat_delta // 60)))
-          #else if $sat_delta < 86400
-          #set $sat_when = $gettext('in {h} h').format(h=int(round($sat_delta / 3600)))
-          #else
-          ## Whole days is a CALENDAR-day difference, not elapsed seconds
-          ## divided down: the count stands on the same line as the pass's
-          ## own date, and a count reckoned any other way contradicts the
-          ## date beside it twice a day -- rounding up calls a pass later
-          ## this evening "in 1 day" (Jacques Terrettaz's report against
-          ## weewx-skyfield's chips, the 2026-08-12 partial solar eclipse,
-          ## issue #6), rounding down calls one just past midnight
-          ## "today".  Differencing the two local dates is DST-correct
-          ## for free; the floor at 1 is the fall-back Sunday's belt and
-          ## braces, where 24 elapsed hours can land back on today.  The
-          ## live layer's satWhen reckons identically.
-          #set $sat_days = max(1, (datetime.date.fromtimestamp($sat_pass.rise.raw) - datetime.date.fromtimestamp($almanac.time_ts)).days)
-          #set $sat_when = $gettext('in {n} day').format(n=1) if $sat_days == 1 else $gettext('in {n} days').format(n=$sat_days)
-          #end if
-          #set $sat_line = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($sat_pass.rise.raw)) + ' · ' + $sat_when
-          #set $sat_sub = $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min').format(rise=str($sat_pass.rise_azimuth.ordinal_compass), alt='%.0f' % $sat_pass.max_altitude.raw, culm=str($sat_pass.culmination_azimuth.ordinal_compass), set=str($sat_pass.set_azimuth.ordinal_compass), m='%d' % round($sat_pass.duration.raw / 60))
-          #else if $sat_obj.sunlit is not None
-          #set $sat_line = $gettext('no visible pass in the coming week')
-          #else
-          #set $sat_line = $gettext('no usable orbital elements — see the weewxd log')
-          #end if
-          #set $any_pass = $sat_obj.next_pass
-          #set $any_line = ''
-          #set $any_sub = ''
-          #if $any_pass.rise.raw is not None
-          #set $any_delta = $any_pass.rise.raw - $almanac.time_ts
-          #if $any_pass.set.raw is not None and $any_pass.rise.raw <= $almanac.time_ts and $almanac.time_ts < $any_pass.set.raw
-          #set $any_when = $gettext('overhead now')
-          #else if $any_delta < 3600
-          #set $any_when = $gettext('in {m} min').format(m=max(1, int($any_delta // 60)))
-          #else if $any_delta < 86400
-          #set $any_when = $gettext('in {h} h').format(h=int(round($any_delta / 3600)))
-          #else
-          ## Calendar days, exactly as the visible-pass row above.
-          #set $any_days = max(1, (datetime.date.fromtimestamp($any_pass.rise.raw) - datetime.date.fromtimestamp($almanac.time_ts)).days)
-          #set $any_when = $gettext('in {n} day').format(n=1) if $any_days == 1 else $gettext('in {n} days').format(n=$any_days)
-          #end if
-          #set $any_line = time.strftime($gettext('%b %-d') + ' %H:%M', time.localtime($any_pass.rise.raw)) + ' · ' + $any_when
-          #set $any_sub = $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min').format(rise=str($any_pass.rise_azimuth.ordinal_compass), alt='%.0f' % $any_pass.max_altitude.raw, culm=str($any_pass.culmination_azimuth.ordinal_compass), set=str($any_pass.set_azimuth.ordinal_compass), m='%d' % round($any_pass.duration.raw / 60))
-          #if $any_pass.visible is True
-          #set $any_sub = $any_sub + ' · ' + $gettext('visible')
-          #else if $any_pass.visible is False
-          #set $any_sub = $any_sub + ' · ' + $gettext('not visible')
-          #end if
-          #else if $sat_obj.sunlit is not None
-          #set $any_line = $gettext('no pass in the coming week')
-          #else
-          #set $any_line = $gettext('no usable orbital elements — see the weewxd log')
-          #end if
-          #silent $sat_rows.append((str($sat_name), $sat_label, $sat_line, $sat_sub, $any_line, $any_sub))
-          #except
-          #pass
-          #end try
-          #end for
-          #if $sat_rows
-          <div class="roster mono">
-            <h3 class="eyebrow">$gettext("Satellites · the next pass overhead")</h3>
-            #for $sat_name, $sat_label, $sat_line, $sat_sub, $any_line, $any_sub in $sat_rows
-            <div class="row" id="sat-any-row-$sat_name">
-              <span class="bname"><span class="chip chip-sat"></span>$sat_label</span>
-              <span class="odo satline" id="sat-any-line-$sat_name">$any_line</span>
-              <span class="rsub"><span id="sat-any-pass-$sat_name">$any_sub</span></span>
-            </div>
-            #end for
-          </div>
-          #end if
+        <h2 class="cel-eyebrow">$gettext("The sky dome · live")</h2>
+        ## The dome -- weewx-skyfield's dome_svg for the page's fragment
+        ## set (the default: no [CelestialFragments] section, so
+        ## dome-svg*.txt at scale 1.0 on the report's theme) with its
+        ## self-describing wrapper, caption and health line, or the
+        ## install hint when the almanac cannot draw it -- and beside it
+        ## the any-pass satellite roster.  The grid that puts the two side
+        ## by side is this page's chrome; the panels are $celestial's.
+        #if $panels
+        <div class="cel-domepanel">
+          $panels.dome_html($almanac)
+          $panels.dome_roster_html($almanac)
         </div>
-        #else
-        <p class="skyhint">$gettext("Install {skyfield} so the almanac can draw the live sky dome.").format(skyfield='<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>')</p>
         #end if
       </section>
 
-      ## The Next Visible Pass panel: skyfield 2.0's pass_chart_html -- the whole
-      ## sky as it will stand at the culmination of the soonest upcoming
-      ## visible pass among the configured satellites, the pass's arc
-      ## dashed across it under a dated head line (the dome stopped
-      ## drawing the arc in 2.0: an undated future track on the now-sky
-      ## crossed stars it will never cross) -- beside the visible-pass
-      ## roster, the chart's own story.  The chart is empty when no
-      ## configured satellite has a visible pass in its elements'
-      ## validity window: the roster's honest rows then tell that story
-      ## with the chart area hidden, and the whole section hides only
-      ## when there are no satellite rows either.  The javascript's
-      ## fragment refetch (pass-chart.txt) unhides the chart when a pass
-      ## enters the window.  During an in-progress pass the chart's
-      ## epoch is within minutes of now, so the javascript sweeps the
-      ## featured satellite's data-body marker along the drawn arc; the
-      ## chart's sun, moon, planets and stars belong to the culmination
-      ## instant and are never nudged.
-      #set $passchart = ''
-      #if $sky_page
-      #try
-      #set $passchart = str($sky_page.pass_chart_html($almanac, palette=$palette))
-      #except
-      #pass
-      #end try
-      #end if
-      #if $dome_html
-      #set $pass_sec_attr = '' if ($passchart or $sat_rows) else ' hidden'
-      #set $pass_wrap_attr = '' if $passchart else ' hidden'
+      ## The Next Visible Pass panel: the chart (skyfield's
+      ## pass_chart_html for the page's set) beside the visible-pass
+      ## roster, the chart's own story.  The chart area hides itself when
+      ## no configured satellite has a visible pass in its elements'
+      ## validity window; this section hides too when the roster is empty
+      ## as well -- pass_panel_hidden is the same chart and rows -- and
+      ## the javascript unhides it (by this id) when a pass enters the
+      ## window.  No panel at all without a sky page: nothing to refetch.
+      #if $panels
+      #set $pass_html = $panels.pass_html($almanac)
+      #if $pass_html
+      #set $pass_sec_attr = ' hidden' if $panels.pass_panel_hidden($almanac) else ''
       <section id="pass-sec"$pass_sec_attr>
-        <h2 class="eyebrow">$gettext("The Next Visible Pass · the sky at its peak")</h2>
-        <div class="passpanel">
-          <div id="pass-wrap"$pass_wrap_attr>
-            <div id="pass-chart">$passchart</div>
-            <p class="caption passcaption">$gettext("The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.")</p>
-          </div>
-          #if $sat_rows
-          <div class="roster mono">
-            <h3 class="eyebrow">$gettext("Satellites · the next visible pass")</h3>
-            #for $sat_name, $sat_label, $sat_line, $sat_sub, $any_line, $any_sub in $sat_rows
-            <div class="row" id="sat-row-$sat_name">
-              <span class="bname"><span class="chip chip-sat"></span>$sat_label</span>
-              <span class="odo satline" id="sat-line-$sat_name">$sat_line</span>
-              <span class="rsub"><span id="sat-pass-$sat_name">$sat_sub</span></span>
-            </div>
-            #end for
-          </div>
-          #end if
+        <h2 class="cel-eyebrow">$gettext("The Next Visible Pass · the sky at its peak")</h2>
+        <div class="cel-passpanel">
+          $pass_html
+          $panels.pass_roster_html($almanac)
         </div>
       </section>
+      #end if
       #end if
 
       <footer>
-        ## The credit must be true for whatever almanac actually serves the
-        ## page, probed by capability: Proxima Centauri needs a Skyfield
-        ## almanac with a star catalog (the full credit); any other extended
-        ## almanac gets the generic credit; the built-in almanac serves no
-        ## live fields at all.  On top of the capability probe, an IDENTITY
-        ## check -- the same class-name-plus-module match weewx-skyfield's
-        ## own register_almanac uses -- decides whether the credit may name
-        ## weewx-skyfield and link its manual: the independent
-        ## weewx-skyfield-almanac extension also names its class
-        ## SkyfieldAlmanacType and could pass the Proxima probe, and must
-        ## not be credited as ours.
-        #set $wxsf = any([type(a).__name__ == 'SkyfieldAlmanacType' and type(a).__module__.split('.')[-1] == 'wxskyfield' for a in getattr(weewx.almanac, 'almanacs', [])])
-        #set $footer_credit = $gettext("Calculated with WeeWX's built-in almanac")
-        #if $extras
-        #set $footer_credit = $gettext("Calculated with the station's extended almanac (weewx-skyfield or PyEphem)")
-        #try
-        #silent $almanac.proxima_centauri.earth_distance
-        #if $wxsf
-        #set $footer_credit = $gettext("Calculated with weewx-skyfield: Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)")
-        #else
-        #set $footer_credit = $gettext("Calculated with Skyfield, JPL's DE421 ephemeris and the Hipparcos star catalog (Credit: ESA)")
+        ## The credit, true for whatever almanac actually serves the page
+        ## ($celestial.footer_html probes it), closed by the loopdata one.
+        #if $panels
+        $panels.footer_html($almanac)
         #end if
-        #except
-        #pass
-        #end try
-        #end if
-        ## The name becomes a project-page link only when the check above
-        ## proved it is truly this extension serving the page; substituted
-        ## after translation, so it survives any language that keeps the
-        ## proper noun verbatim.
-        #if $wxsf
-        #set $footer_credit = $footer_credit.replace('weewx-skyfield', '<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>')
-        #end if
-        $footer_credit &middot; $gettext("live via weewx-loopdata").
       </footer>
     </div>
   </body>

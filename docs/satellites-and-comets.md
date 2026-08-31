@@ -21,7 +21,9 @@ one takes the same **three separate edits**:
 2. its declared fields, which put it in the live feed — nineteen for a
    satellite, six for a comet, in the `satellites` or `comets` group of
    `[StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]]` (see
-   the [Fields reference](fields-reference.md)),
+   the [Fields reference](fields-reference.md)), and in the same group of
+   any other report that names the panels it embeds (see
+   [Panels in your own skin](own-skin.md)),
 3. a display name under `[StdReport] [[Defaults]] [[[Almanac]]]`, so
    every report *and* the loop feed call it the same thing.  (Display
    names reach the page on WeeWX 5.3 and later; on 5.2 the tag name

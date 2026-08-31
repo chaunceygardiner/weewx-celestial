@@ -80,6 +80,17 @@ viewer's operating system.  See
 
 ![The Celestial page on the light plate](CelestialSampleReport-light.png)
 
+**Panels in your own skin** — as of 9.0 every panel above is a Cheetah
+call another skin can make: `$celestial.countdown_html($almanac)`,
+`geocentric_html`, `dome_html`, `pass_html` and the two satellite
+rosters, plus a stylesheet, one static script and a generator for the sky
+dome's fragments.  Your skin says which panels it embeds in its own
+`skin.conf`, so installing it and restarting WeeWX is the whole
+procedure — nothing is typed into `weewx.conf` on any machine.  The
+bundled page is the first consumer of that interface — its template is
+chrome around the same calls — and the whole recipe is
+[Panels in your own skin](https://chaunceygardiner.github.io/weewx-celestial/own-skin.html).
+
 The live values are **weewx-loopdata almanac fields**: report almanac tags
 (computed by the registered almanac, ideally weewx-skyfield's) that
 weewx-loopdata evaluates on every loop packet and publishes in
@@ -97,18 +108,18 @@ weewx-skyfield is the atlas; weewx-celestial is the live instrument.
 **This extension requires Python 3.9 or later, WeeWX 5.2 or later,
 [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 7.0 or
 later, and (strongly recommended)
-[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.3.2
-or later for the Next Visible Pass chart's dot to leave the chart when the
-pass ends; 2.1 or later for the comets, the meteor showers and the full
-countdown row; 2.0 serves the sky dome's satellites and the pass chart
-itself; 1.15 or later for the light plate, which is the paper those charts
-are drawn on.**
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.3.4
+or later, which this release is built against; 2.3.2 or later for the Next
+Visible Pass chart's dot to leave the chart when the pass ends; 2.1 or
+later for the comets, the meteor showers and the full countdown row; 2.0
+serves the sky dome's satellites and the pass chart itself; 1.15 or later
+for the light plate, which is the paper those charts are drawn on.**
 
 ## Installing
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    7.0+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.3.2+, per their instructions.  (The installer refuses to run beside
+   2.3.5+, per their instructions.  (The installer refuses to run beside
    an older weewx-loopdata: the page's live values reach it only through
    7.0's per-report field declaration.)
 
@@ -156,7 +167,7 @@ all of it, with a sidebar and full-text search:
 | Can I watch other satellites or comets? | [Satellites and comets](https://chaunceygardiner.github.io/weewx-celestial/satellites-and-comets.html) |
 | Which loop-data fields does it read? | [Fields reference](https://chaunceygardiner.github.io/weewx-celestial/fields-reference.html) |
 | Can I have it in my language? | [Translations](https://chaunceygardiner.github.io/weewx-celestial/i18n.html) |
-| Can I build my own live page? | [In your own skin](https://chaunceygardiner.github.io/weewx-celestial/own-skin.html) |
+| Can I put these panels in my own skin? | [Panels in your own skin](https://chaunceygardiner.github.io/weewx-celestial/own-skin.html) |
 | Something is wrong | [Troubleshooting](https://chaunceygardiner.github.io/weewx-celestial/troubleshooting.html) |
 
 German, French, Danish, Dutch, Spanish, Italian, Norwegian (Bokmål) and
@@ -178,7 +189,11 @@ set, lints the javascript's top-level names against hazardous window
 globals, cross-checks every declared entry against the weewx-loopdata
 almanac-field parser and reads the whole declaration back through
 weewx-loopdata's own declaration reader (when a weewx-loopdata checkout is
-available), and audits the manual against the code — the fields reference
+available), generates two consumer skins through WeeWX's own report
+engine — one exercising the panels as another skin embeds them, one
+embedding a panel inside a host page's own header, nav and footer and
+asserting that loading the panel stylesheet leaves every one of those
+surfaces untouched — and audits the manual against the code — the fields reference
 against the shipped declaration, the translation dictionary against the
 skin's `lang/en.conf`, the report's options across skin.conf, the templates
 and the manual, every link and anchor between manual pages, and that every

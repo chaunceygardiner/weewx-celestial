@@ -2,7 +2,7 @@
 title: Upgrading
 layout: default
 nav_order: 3
-description: Upgrading weewx-celestial within 8.x, or from 7.x, 6.x or 5.x and earlier — what each path needs, the weewx-loopdata 7.0 declaration that 8.5 moves to, and the three 6.0 field changes with no 1:1 equivalent.
+description: Upgrading weewx-celestial to 9.0, within 8.x, or from 7.x, 6.x or 5.x and earlier — what each path needs, the files 9.0 leaves behind in the skin directory, the weewx-loopdata 7.0 declaration that 8.5 moves to, and the three 6.0 field changes with no 1:1 equivalent.
 ---
 
 # Upgrading
@@ -15,6 +15,82 @@ Find your current version below.  Every path ends the same way: the page
 reads the entries listed in the [Fields reference](fields-reference.md),
 and as of 8.5 it declares them to weewx-loopdata itself — the skin ships
 the fixed ones, the installer writes the satellite and comet ones.
+
+## Upgrading from 8.x to 9.0
+
+Install over the top and restart WeeWX, as within 8.x.  Then delete the
+sky dome's old fragment templates and the old javascript include from
+the skin directory — 9.0 writes the same fragment files from a generator
+instead, and its javascript is one static file (`celestial.js`) started
+by a block the page generates; the install leaves the old files in
+place, inert, because it only overlays files:
+
+```
+rm /home/weewx/skins/Celestial/dome-svg*.txt.tmpl \
+   /home/weewx/skins/Celestial/dome-svg-frag.inc \
+   /home/weewx/skins/Celestial/pass-chart.txt.tmpl \
+   /home/weewx/skins/Celestial/realtime_updater.inc
+```
+
+(Your `SKIN_ROOT` may differ.)  Reload any browser page you left open
+across the upgrade: the old page's script reads 9.0's pass-chart fragment
+as junk and keeps whatever chart it had until a reload.  Nothing breaks
+while the old files sit there; the reason to delete them is that a later
+`weectl extension uninstall
+celestial` removes only the files it installed and leaves a directory it
+did not empty in place, so `skins/Celestial` would outlive the uninstall
+holding nothing but them.  If you had edited one of those files, the
+edit no longer applies — see the 9.0 entry in `changes.txt`.
+
+Two more things to check, only if you ever pinned them.  A
+`search_list_extensions` line under `[[CelestialReport]]
+[[[CheetahGenerator]]]` in `weewx.conf` overrides the skin's, and the
+skin's is now `user.celestial_page.CelestialPanels`.  An override still
+naming `user.celestial_sky.CelestialSkyPage` leaves the page's
+`$celestial` tag unbound: the page still generates (the shim still
+ships), but the block that starts its javascript and every panel — the
+countdown row, the Geocentric, the sky dome, the Next Visible Pass, the
+footer's credit — are written by that tag, so the page comes out as its
+header and empty section headings, on the dark plate whatever `theme`
+says, and never goes live — its "updated" stamp stands and nothing
+moves.  Name the new search list there too.  Likewise a `copy_once`
+line under `[[[CopyGenerator]]]` overrides the skin's list wholesale,
+and the skin's now includes `celestial.js`: an override listing only
+`celestial.css, sky.js` never copies the script into `HTML_ROOT`, and
+the page — static, with `celestial is not defined` in the browser
+console and nothing in the WeeWX log — never goes live either.  Add
+`celestial.js` to it, or drop the line.
+
+Upgrade **weewx-skyfield to 2.3.5** while you are here, if you run it.
+Neither release is required.  From **2.3.4** the panels beside the sky
+dome — the two satellite rosters and the Next Visible Pass — can ask
+whether there is a sky to draw without drawing one; 9.0 asks an older
+weewx-skyfield the way it always has, by drawing the dome.  **2.3.5**
+adds nothing this page uses, but it is a better install: it says what it
+is downloading while it downloads, and it leaves alone any orbital
+elements your station already has and that are still current, so an
+upgrade over a running station usually makes no network request at all.
+
+Two things you may see on the page after the upgrade, both of them the
+page reporting configuration rather than anything broken:
+
+- **"This page's report's field declaration is out of date."**  9.0 asks
+  the installer's own question at generation time: are the `satellites`
+  and `comets` groups in `weewx.conf` what the installer would write for
+  your `[Skyfield]` sets now?  A station whose sets were edited by hand
+  — or re-filled by a weewx-skyfield upgrade after a
+  `--remove-satellite` — has been carrying an undeclared satellite or
+  comet with no live layer, silently, until now.  Re-run `weectl
+  extension install` and restart weewxd; that is the whole fix.
+- **A satellite, comet or body name that reads differently.**  Names the
+  report controls are now escaped where they are dropped into markup, so
+  one carrying an ampersand or an angle bracket reads as written instead
+  of as markup.
+
+And one thing 9.0 makes possible that no earlier version did: the panels
+can be embedded in a skin of your own — see
+[Panels in your own skin](own-skin.md).  Nothing about the bundled report
+changes if you do not.
 
 ## Upgrading within 8.x
 
@@ -147,10 +223,12 @@ chips and the comets (8.1) included — the fixed ones from the skin, the
 satellite and comet ones written by the installer for your `[Skyfield]`
 sets.  Your old fields line is neither needed nor touched.
 
-Run weewx-skyfield 2.3.2 — 2.1 brought the comets and the
+Run weewx-skyfield 2.3.5 — 2.1 brought the comets and the
 shower/supermoon chips, 2.3.2 the pass chart's own rise and set that
-lets its dot leave the chart when the pass ends; 2.0 still serves the
-satellites, and the sunset, darkness and pass chips count on any of them.
+lets its dot leave the chart when the pass ends, and 2.3.4 the
+`can_draw()` answer the panels beside the dome now stand on; 2.0 still
+serves the satellites, and the sunset, darkness and pass chips count on
+any of them.
 An almanac that cannot serve a field omits it, and the page simply hides
 that layer or chip.
 
@@ -182,9 +260,9 @@ Upgrading replaces the bundled skin (`skins/Celestial/`, including its
    own under `[[[LoopData]]]`, included.  Keep a copy to put back.)
 
 1. Restart WeeWX.  (The restart also refreshes the deployed
-   `celestial.css` and `sky.js` — CopyGenerator re-copies `copy_once`
-   files on every report first-run — and the page version-tags both
-   URLs, so browsers refetch them too.)
+   `celestial.css`, `celestial.js` and `sky.js` — CopyGenerator
+   re-copies `copy_once` files on every report first-run — and the page
+   version-tags all three URLs, so browsers refetch them too.)
 
 Your existing fields line is no longer read by this page at all: 8.5
 declares what it reads itself (see the
@@ -211,7 +289,7 @@ that through 8.4; it is gone).  The sequence:
 
 1. **Upgrade weewx-loopdata to 7.0 or later** (and install
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.3.2+ if you have not already).  This extension's installer refuses
+   2.3.5+ if you have not already).  This extension's installer refuses
    to run beside an older weewx-loopdata, so do it first — before the
    uninstall below leaves you without a page.
 

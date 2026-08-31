@@ -28,14 +28,14 @@ import os
 import re
 import sys
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import weewx
 
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '8.5'
+CELESTIAL_VERSION = '9.0'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -221,6 +221,27 @@ SKIN_NAME = 'Celestial'
 SATELLITES_GROUP = 'satellites'
 COMETS_GROUP = 'comets'
 
+# The panels another skin can drop in ($celestial's countdown_html,
+# geocentric_html, dome_html with dome_roster_html, pass_html with
+# pass_roster_html) and the per-configuration groups each one reads
+# live: the countdown's pass chip and perihelion chips, the dial's comet
+# layer, the dome's satellite marks and any-pass roster, the chart's
+# sweep and visible-pass roster.  A consumer report names the panels its
+# page embeds in its own [StdReport] stanza (`celestial_panels =
+# countdown, geocentric, dome, pass`) and declare_page_fields maintains
+# exactly the groups those panels read under it, as it maintains both
+# under a Celestial report -- the two group names are this extension's
+# on every report carrying the key, replaced or removed wholesale on
+# every run, so a group of the owner's own belongs under another name.
+# The footer reads nothing live and is not a panel here.
+PANELS_KEY = 'celestial_panels'
+PANEL_GROUPS: Dict[str, Tuple[str, ...]] = {
+    'countdown': (SATELLITES_GROUP, COMETS_GROUP),
+    'geocentric': (COMETS_GROUP,),
+    'dome': (SATELLITES_GROUP,),
+    'pass': (SATELLITES_GROUP,),
+}
+
 
 def satellite_fields(tag: str) -> List[str]:
     """The nineteen fields the sample page reads per satellite: the
@@ -315,41 +336,305 @@ def _configured_comets(config: Any) -> Optional[List[str]]:
 # verbs on every edit.  The skin's own skin.conf is never written.
 # ===============================================================================
 
-def celestial_reports(config: Any, ensure_default: bool = False) -> List[str]:
-    """The [StdReport] sections the page's per-configuration fields are
-    declared under: every report running the Celestial skin, in
-    configuration order.  One skin can be listed under two reports (two
-    languages, say), and weewx-loopdata serves each under its own name,
-    so each needs its own declaration.  With ensure_default -- the
-    INSTALLER's case, and only its -- REPORT_NAME leads the list whether
-    or not the configuration has it yet: weectl's conditional merge is
-    about to fill in that report's skin and HTML_ROOT around the groups.
-    Nothing else may add it: a [[CelestialReport]] holding only a
-    [[[LoopData]]] section has no skin, and reportengine dies on it
-    (KeyError 'skin') every archive cycle.  Even then the skin decides:
-    a [[CelestialReport]] already there under ANOTHER skin (the name
-    reused after an uninstall, or repurposed) is somebody else's report,
-    and declaring this page's fields under it would have weewx-loopdata
-    evaluate fifty almanac fields per packet for a page that is not
-    there.  A section without a skin at all is ours -- that is the
-    fresh install, whose skin weectl merges in right after."""
-    reports: List[str] = []
+class Declarations(NamedTuple):
+    """What declare_page_fields declares, report by report: `groups`,
+    the reports declared under, in configuration order, each with the
+    groups this extension owns there; `refused`, the reports nothing
+    is declared under and why -- a celestial_panels naming something
+    that is not a panel, or a section where the line belongs -- each
+    fault costing exactly that report, never another; and `misplaced`,
+    the one station-level fault: a key sitting where WeeWX merges it
+    into every report (misplaced_panels_key), reported once."""
+    groups: Dict[str, Tuple[str, ...]]
+    refused: Dict[str, str]
+    misplaced: Optional[str]
+
+
+def _report_section(config: Any, report: str) -> Any:
+    """A report's [StdReport] section, or None."""
+    try:
+        return config['StdReport'][report]
+    except (KeyError, TypeError):
+        return None
+
+
+def celestial_skin_report(config: Any, report: str, ensure_default: bool = False) -> bool:
+    """Whether a report is the Celestial skin's own -- its page reads
+    every panel and declares the whole static set.  Its skin says so;
+    and with ensure_default -- the INSTALLER's case, and only its --
+    [[CelestialReport]] is ours before it has a skin, or exists at all:
+    weectl's conditional merge is about to fill in that report's skin
+    and HTML_ROOT around the groups.  Nothing else may claim it: a
+    [[CelestialReport]] holding only a [[[LoopData]]] section has no
+    skin, and reportengine dies on it (KeyError 'skin') every archive
+    cycle.  Even then the skin decides: a [[CelestialReport]] already
+    there under ANOTHER skin (the name reused after an uninstall, or
+    repurposed) is somebody else's report, and declaring this page's
+    fields under it would have weewx-loopdata evaluate fifty almanac
+    fields per packet for a page that is not there."""
+    section = _report_section(config, report)
+    if not isinstance(section, dict) or section.get('skin') is None:
+        return ensure_default and report == REPORT_NAME
+    return str(section['skin']) == SKIN_NAME
+
+
+def skin_conf_path(config: Any, report: str) -> Optional[str]:
+    """Where a report's skin.conf is, or None when the report names no
+    skin.  Resolved the way WeeWX resolves it and deliberately from the
+    GLOBAL [StdReport] SKIN_ROOT: WeeWX ignores a SKIN_ROOT set on an
+    individual report (weewx.reportengine builds the path from
+    config_dict['StdReport']['SKIN_ROOT'] and that report's skin), so
+    honouring a per-report one here would have this extension reading a
+    different file than WeeWX does, and the two would disagree in
+    silence about where a report's options come from."""
+    section = _report_section(config, report)
+    if not isinstance(section, dict):
+        return None
+    skin = str(section.get('skin', '') or '').strip()
+    if not skin:
+        return None
+    try:
+        std = config['StdReport']
+        root = str(config.get('WEEWX_ROOT', '') or '')
+        skin_root = str(std.get('SKIN_ROOT', 'skins') or 'skins')
+    except (KeyError, TypeError):
+        return None
+    if not root:
+        # weewxd and weectl put WEEWX_ROOT into the config they hand us,
+        # but the --add-/--remove- verbs read weewx.conf straight off disk
+        # with ConfigObj, where it is simply not a key -- and a relative
+        # SKIN_ROOT would then resolve against the caller's working
+        # directory and quietly find no skin.conf at all.  The file's own
+        # location is what weecfg derives the root from, so use it.
+        filename = getattr(config, 'filename', None)
+        if filename:
+            root = os.path.dirname(os.path.abspath(str(filename)))
+    return os.path.join(root, skin_root, skin, 'skin.conf')
+
+
+def skin_conf_panels(config: Any, report: str) -> Tuple[Any, str]:
+    """A report's `celestial_panels` as its SKIN declares it, and the
+    state of that skin.conf: (value, 'found' | 'nokey' | 'absent' |
+    'unreadable').  The value is None unless the state is 'found'.
+
+    Which panels a page embeds is a property of the skin's templates --
+    identical on every station, changing only when the skin changes --
+    so it belongs in a file that deploys with the skin.  Reading it here
+    is what spares every consumer a hand edit of weewx.conf per station.
+
+    The state matters as much as the value: 'absent' (ENOENT) is a
+    statement that the skin is gone, while 'unreadable' -- no permission,
+    a mount that is not up, a half-written file, a syntax error -- is a
+    question nobody can answer, and the caller must not treat the two
+    alike."""
+    path = skin_conf_path(config, report)
+    if path is None:
+        return None, 'absent'
+    if not os.path.exists(path):
+        # A missing skin.conf says the skin is gone -- but only if we are
+        # looking in the right place.  A SKIN_ROOT that does not exist
+        # (mistyped, or a config read from somewhere the skins are not)
+        # makes EVERY report's skin look uninstalled, and would prune
+        # every consumer's groups at once from one typo.  That is a
+        # question, not a statement, and the rule is not to act on a
+        # question: no skin tree, no answer.
+        if not os.path.isdir(os.path.dirname(os.path.dirname(path))):
+            return None, 'unreadable'
+        return None, 'absent'
+    import configobj
+    try:
+        skin_dict = configobj.ConfigObj(path, encoding='utf-8', file_error=True)
+    except (OSError, UnicodeDecodeError, configobj.ConfigObjError):
+        # The conditions the ruling calls UNKNOWN: no permission, a mount
+        # that is not up, EIO, a half-written file, a syntax error.  NOT
+        # a bare except: anything else here is a fault in this code, and
+        # disguising it as 'unreadable' would have it quietly mean "leave
+        # the groups alone for ever" -- which is how a missing import for
+        # configobj first passed as a well-behaved unreadable file.
+        return None, 'unreadable'
+    if PANELS_KEY in skin_dict:
+        return skin_dict[PANELS_KEY], 'found'
+    return None, 'nokey'
+
+
+def panels_source(config: Any, report: str) -> Optional[str]:
+    """Which file answered for a report's celestial_panels: 'stanza',
+    'skin', or None when neither carries one.  For the log lines: when
+    the two disagree it will be because someone forgot an override
+    existed, and a message that does not say which file it read sends
+    them to the one that already looks right."""
+    section = _report_section(config, report)
+    if isinstance(section, dict) and PANELS_KEY in section:
+        return 'stanza'
+    return 'skin' if skin_conf_panels(config, report)[1] == 'found' else None
+
+
+def panels_value(config: Any, report: str) -> Any:
+    """A report's `celestial_panels` as written, or None when neither its
+    stanza nor its skin declares one.  The ONE reader of the key, for the
+    installer, the verbs and the page alike -- both sides ask through
+    here, so a key in a place one of them cannot see is impossible.
+
+    Two places, and the report's own stanza wins, which is the order
+    WeeWX itself merges in (skin.conf, then [[Defaults]], then the
+    report's stanza) -- so a station keeps a per-report override in the
+    file it already looks in, without editing a skin it may not own."""
+    section = _report_section(config, report)
+    if isinstance(section, dict) and PANELS_KEY in section:
+        return section[PANELS_KEY]
+    return skin_conf_panels(config, report)[0]
+
+
+def misplaced_panels_key(config: Any) -> Optional[str]:
+    """The station's one misplaced `celestial_panels`, as a message
+    saying where it sits and where it belongs, or None: under
+    [[Defaults]], at [StdReport]'s top level, or as a [[celestial_panels]]
+    SECTION there -- the places WeeWX merges into every report's skin
+    dict (so a key there would have the fields evaluated under every
+    enabled report, which is why the installer declares from the stanza
+    alone).  A station-level fault, asked once by the installer and
+    once by each page whose report carries no key of its own."""
     try:
         std_report = config['StdReport']
-    except KeyError:
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(std_report, dict):
+        return None
+    belongs = ('belongs on each report whose page embeds the panels, as a line of its own '
+               'stanza (%s = %s); WeeWX merges %%s into every report, so the fields would be '
+               'evaluated under every one of them' % (PANELS_KEY, ', '.join(PANEL_GROUPS)))
+    defaults = std_report.get('Defaults')
+    if isinstance(defaults, dict) and PANELS_KEY in defaults:
+        return '[StdReport] [[Defaults]] carries %s, which %s' % (PANELS_KEY, belongs % '[[Defaults]]')
+    if PANELS_KEY in std_report:
+        if isinstance(std_report[PANELS_KEY], dict):
+            return ('[StdReport] carries a [[%s]] section, which %s'
+                    % (PANELS_KEY, belongs % "the top level's sections"))
+        return ('[StdReport] carries %s at its top level, which %s'
+                % (PANELS_KEY, belongs % "the top level's scalars"))
+    return None
+
+
+def _panel_names(value: Any) -> List[str]:
+    """A `celestial_panels` value as the names it carries.  ConfigObj
+    hands back a list for `dome, pass` and a bare string for `dome`,
+    which is what _group_fields reads -- but a FIELD may not be split on
+    its commas (loopdata reads one field per entry) and a panel name
+    never contains one, so a value that reaches here as a single string
+    with commas in it -- the key written as `"dome, pass"`, quoted by
+    hand or by any tool that writes it as one string -- is those two
+    names, not one impossible name.  Splitting keeps the refusal
+    honest: it can only ever name something its reader can find in the
+    line."""
+    names: List[str] = []
+    for entry in _group_fields(value):
+        names.extend(part.strip() for part in entry.split(',') if part.strip())
+    return names
+
+
+def panels_as_written(value: Any) -> str:
+    """A `celestial_panels` value in the spelling its stanza carries
+    ('dome, pass'), whatever shape ConfigObj handed it back -- so the
+    installer's receipts and the page's log line say the key the way
+    its owner wrote it, and never a Python list's repr.  One formatter,
+    as the receipts are one formatter."""
+    return ', '.join(_panel_names(value))
+
+
+def parse_panels(value: Any, where: str) -> List[str]:
+    """A `celestial_panels` value as ConfigObj hands it back -- a list for
+    `dome, pass`, a bare string for `dome`, a single string carrying the
+    commas itself when the line was quoted (_panel_names), '' or [] for
+    a key naming nothing -- as the panel names, in order, lower-cased
+    and de-duplicated; [] for none.  A name that is not a panel, or a
+    [[[celestial_panels]]] SECTION where the line belongs, is a
+    ValueError naming `where` (the stanza) and what a line looks like:
+    a misspelled panel would otherwise declare nothing, silently, for a
+    page that then reads BAD DATA."""
+    if isinstance(value, dict):
+        raise ValueError('%s %s is a section; the key is a line: %s = %s'
+                         % (where, PANELS_KEY, PANELS_KEY, ', '.join(PANEL_GROUPS)))
+    panels: List[str] = []
+    for entry in _panel_names(value):
+        name = entry.lower()
+        if name not in PANEL_GROUPS:
+            raise ValueError('%s %s names %r, which is not a panel; the panels are %s'
+                             % (where, PANELS_KEY, entry, ', '.join(PANEL_GROUPS)))
+        if name not in panels:
+            panels.append(name)
+    return panels
+
+
+def report_groups(config: Any, report: str,
+                  ensure_default: bool = False) -> Tuple[Optional[Tuple[str, ...]], Optional[str]]:
+    """The groups declare_page_fields owns under a report, and why not:
+    (groups, refusal).  Both groups for a Celestial report
+    (celestial_skin_report) -- a valid celestial_panels on it changes
+    nothing, its page reads every panel.  For any other report the key
+    decides: absent, the report is not ours (None); present, the report
+    is ours and owns the union of what the named panels read, in the
+    declaration's own order (satellites, then comets), whatever order
+    the panels were named in -- () for a key naming nothing, which
+    then has both groups removed, as the owner asked.  A key naming
+    something that is not a panel, or a section where the line belongs,
+    is ((), the message): nothing is declared under that report -- and
+    nothing removed -- and the message names it.  A key sitting where
+    WeeWX merges it into every report is not this report's fault but
+    the station's (misplaced_panels_key), asked separately."""
+    value = panels_value(config, report)
+    where = '[StdReport] [[%s]]' % report
+    try:
+        panels = parse_panels(value, where)
+    except ValueError as e:
+        return (), str(e)
+    if celestial_skin_report(config, report, ensure_default):
+        return (SATELLITES_GROUP, COMETS_GROUP), None
+    if value is None:
+        return None, None
+    wanted = {g for panel in panels for g in PANEL_GROUPS[panel]}
+    return tuple(g for g in (SATELLITES_GROUP, COMETS_GROUP) if g in wanted), None
+
+
+def celestial_reports(config: Any, ensure_default: bool = False) -> Declarations:
+    """The [StdReport] sections the page's per-configuration fields are
+    declared under, with the groups each owns, in configuration order:
+    every report running the Celestial skin (one skin can be listed
+    under two reports -- two languages, say -- and weewx-loopdata serves
+    each under its own name, so each needs its own declaration) and
+    every report of another skin whose stanza names the panels its page
+    embeds (celestial_panels).  With ensure_default -- the installer's
+    case -- [[CelestialReport]] leads the list whether or not the
+    configuration has it yet (celestial_skin_report says when).
+    [[Defaults]] is never a report, nor is a section named after the
+    key: WeeWX merges the one into every report's skin dict and the
+    other is the key written as a section.  A key in either place, or
+    at [StdReport]'s top level, is the station's one misplacement
+    (misplaced_panels_key), reported once (Declarations.misplaced); a
+    report whose own key is invalid is refused by name
+    (Declarations.refused)."""
+    groups: Dict[str, Tuple[str, ...]] = {}
+    refused: Dict[str, str] = {}
+    try:
+        std_report = config['StdReport']
+    except (KeyError, TypeError):
         std_report = {}
+
+    def admit(name: str) -> None:
+        owned, why = report_groups(config, name, ensure_default)
+        if why is not None:
+            refused[name] = why
+        elif owned is not None:
+            groups[name] = owned
+
     if ensure_default:
-        section = std_report.get(REPORT_NAME)
-        if (not isinstance(section, dict)
-                or str(section.get('skin', SKIN_NAME)) == SKIN_NAME):
-            reports.append(REPORT_NAME)
+        admit(REPORT_NAME)
     for name in std_report:
         section = std_report[name]
-        if name in reports or not isinstance(section, dict):
+        if (name in groups or name in refused or name in ('Defaults', PANELS_KEY)
+                or not isinstance(section, dict)):
             continue
-        if str(section.get('skin', '')) == SKIN_NAME:
-            reports.append(name)
-    return reports
+        admit(name)
+    return Declarations(groups, refused, misplaced_panels_key(config))
 
 
 def _fields_groups(config: Any, report: str) -> Any:
@@ -391,9 +676,30 @@ def _group_fields(value: Any) -> List[str]:
     return [str(entry).strip() for entry in value if str(entry).strip()]
 
 
+def _with_pending_reports(config: Any, pending: Any) -> Any:
+    """`config` with any [StdReport] sections of `pending` that it does
+    not yet have, so a report about to be injected is visible to the
+    walk.  Only the report's own keys are borrowed -- enough to know it
+    exists, which skin it runs and what it already declares -- and the
+    caller's config is the one written to, so the groups land where
+    weectl's merge will keep them."""
+    try:
+        reports = pending['StdReport']
+    except (KeyError, TypeError):
+        return config
+    std = config.setdefault('StdReport', {})
+    for name in reports:
+        section = reports[name]
+        if isinstance(section, dict) and name not in std:
+            std[name] = {k: section[k] for k in section
+                         if not isinstance(section[k], dict)}
+    return config
+
+
 def declare_page_fields(config: Any, apply: bool = True,
-                        ensure_default: bool = False) -> Dict[str, Any]:
-    """Converge every Celestial report's [[[LoopData]]] [[[[fields]]]]
+                        ensure_default: bool = False,
+                        pending: Any = None) -> Dict[str, Any]:
+    """Converge every declaring report's [[[LoopData]]] [[[[fields]]]]
     satellites and comets groups (see celestial_reports; ensure_default
     is the installer's, adding REPORT_NAME before it exists) to the
     fields the page reads for the configured [Skyfield] [[Satellites]]
@@ -404,15 +710,48 @@ def declare_page_fields(config: Any, apply: bool = True,
     group already right is left untouched, and no section is created
     for nothing.  Other groups in the section are never touched.  With
     apply=False the changes are computed and reported but not written.
-    Raises ValueError for a report whose [[[LoopData]]] carries a flat
+    A consumer report (one naming panels with celestial_panels) gets
+    only the groups its panels read; a group no panel of its reads (the
+    panels renamed, or a group of the owner's own under one of the two
+    reserved names) is removed like an emptied set, and reported as
+    such.  A section whose celestial_panels is invalid is skipped, not
+    written and not emptied, and reported (Declarations.refused): the
+    fault costs that section's declaration and nobody else's.  Raises
+    ValueError for a report whose [[[LoopData]]] carries a flat
     `fields =` line where the [[[[fields]]]] section of groups belongs
-    (the shape weewx-loopdata 7.0 itself refuses), or is not a section
-    at all, naming the report -- every report is checked before any is
-    written, so a bad one leaves the others untouched.  Returns a report dict: 'satellites'/'comets'
-    (the tag lists), 'satellites_defaulted'/'comets_defaulted' (True when
-    the installer defaults stood in for a missing section), 'reports'
-    (the sections declared under) and 'changes', mapping each report
-    whose groups changed to {group: (old_fields, new_fields)}."""
+    (the shape weewx-loopdata 7.0 itself refuses to start on), or is not
+    a section at all, naming the report -- every report is checked
+    before any is written, so a bad one leaves the others untouched.
+    Returns a report dict: 'satellites'/'comets' (the tag lists),
+    'satellites_defaulted'/'comets_defaulted' (True when the installer
+    defaults stood in for a missing section), 'reports' (the sections
+    declared under), 'groups' (per report, the groups owned there),
+    'refused' (per skipped report, why), 'misplaced' (the station's
+    one misplaced key, or None), 'unread' (per report, the groups
+    removed because no panel of its reads them, each with the key's
+    value as written), 'applied' (whether anything was written -- the
+    receipts' tense) and 'changes', mapping each report whose groups
+    changed to {group: (old_fields, new_fields)}."""
+    if pending is not None:
+        # A consumer's installer calls this from its own configure(engine),
+        # and weectl runs configure() BEFORE it injects the installer's
+        # config stanza (weecfg/extension.py: _install_files 197,
+        # configure 228, _inject_config 232).  So on a FRESH install the
+        # consumer's report does not exist yet, and without this the walk
+        # below would find no report using that skin and correctly write
+        # nothing -- leaving a station needing a second run, which is the
+        # whole defect this parameter exists to remove.  It works on an
+        # upgrade, where the stanza is already there, which is why it
+        # would pass every test that did not install from scratch.
+        #
+        # The caller hands over the stanza it is about to have injected;
+        # the report name and its skin come from that, and the groups are
+        # written under it.  weectl's own conditional merge then fills in
+        # skin, HTML_ROOT and the rest AROUND them, because it only fills
+        # what is absent.  This is the mechanism ensure_default already
+        # uses for [[CelestialReport]], which does not exist yet either
+        # when celestial's own configure() runs.
+        config = _with_pending_reports(config, pending)
     sat_tags = _configured_satellites(config)
     comet_tags = _configured_comets(config)
     wanted = {
@@ -423,18 +762,90 @@ def declare_page_fields(config: Any, apply: bool = True,
                                      if comet_tags is None else comet_tags)
                        for f in comet_fields(tag)],
     }
-    reports = celestial_reports(config, ensure_default)
+    declarations = celestial_reports(config, ensure_default)
+    reports = list(declarations.groups)
+    # Tear-down.  weectl has no uninstall hook, so a consumer skin cannot
+    # clean up after itself: uninstalling it deletes its skin.conf --
+    # taking the key with it -- and prunes only what its own installer
+    # config declared, leaving these two groups behind for weewx-loopdata
+    # to evaluate every packet for panels that no longer exist.  A report
+    # that is not ours, carries one of our groups, and whose skin.conf is
+    # ABSENT is such a report, and its groups go.
+    #
+    # Absent, never merely unreadable.  Absence is a statement someone
+    # made; no permission, a mount that is not up, a half-written file or
+    # a syntax error is a question nobody can answer, and pruning on a
+    # question would let a permission bit look like an uninstall.  Those
+    # keep their groups and say so in the log, which is the status quo
+    # and costs nothing but a stale declaration.
+    # Which file answered, for every report that carries the key in both
+    # places.  The stanza wins, so a stale one silently overrides a skin
+    # that has since changed which panels it embeds -- and the panel's
+    # own message then sends the reader to the skin.conf, which already
+    # names the panel correctly.  Said once per run, per report.
+    for name in declarations.groups:
+        section = _report_section(config, name)
+        if not isinstance(section, dict) or PANELS_KEY not in section:
+            continue
+        skin_value, state = skin_conf_panels(config, name)
+        if state != 'found':
+            continue
+        stanza_written = panels_as_written(section[PANELS_KEY])
+        skin_written = panels_as_written(skin_value)
+        if stanza_written == skin_written:
+            log.info('[StdReport] [[%s]] and its skin both set %s (%s); the report wins.  '
+                     'Delete the one in weewx.conf and the skin alone decides.',
+                     name, PANELS_KEY, stanza_written)
+        else:
+            log.warning('[StdReport] [[%s]] sets %s = %s and its skin sets %s; the REPORT wins, '
+                        'so the skin is being overridden.  Delete the one in weewx.conf unless '
+                        'the override is deliberate.',
+                        name, PANELS_KEY, stanza_written, skin_written)
+
+    orphaned: List[str] = []
+    try:
+        std_report = config['StdReport']
+    except (KeyError, TypeError):
+        std_report = {}
+    for name in std_report:
+        if name in declarations.groups or name in declarations.refused:
+            continue                      # already ours, or refused by name
+        if name in ('Defaults', PANELS_KEY) or not isinstance(_report_section(config, name), dict):
+            continue
+        if panels_value(config, name) is not None:
+            continue                      # names panels: ours, handled above
+        if not any(g in _fields_groups(config, name)
+                   for g in (SATELLITES_GROUP, COMETS_GROUP)):
+            continue                      # nothing of ours to take away
+        state = skin_conf_panels(config, name)[1]
+        if state == 'absent':
+            orphaned.append(name)
+            reports.append(name)
+            declarations.groups[name] = ()
+        elif state == 'unreadable':
+            log.info("[StdReport] [[%s]] carries this extension's groups and names no panels, "
+                     "but its skin.conf could not be read; leaving them alone.  A skin that is "
+                     "gone has its groups taken away; one that cannot be read is a question, "
+                     "not an answer.", name)
     # Every report's shape checked before any report is written: a
     # ValueError from the second report must not leave the first one
     # half-declared in a configuration the caller then saves.
     declared_groups = {report: _fields_groups(config, report) for report in reports}
     changes: Dict[str, Dict[str, Tuple[List[str], List[str]]]] = {}
+    unread: Dict[str, Dict[str, str]] = {}
     for report in reports:
         groups = declared_groups[report]
-        for group, new in wanted.items():
+        for group, fields in wanted.items():
+            new = fields if group in declarations.groups[report] else []
             old = _group_fields(groups.get(group))
             if old == new:
                 continue
+            if not new and group not in declarations.groups[report]:
+                # Removed because no panel of this report reads it -- the
+                # reason the writers must name, whatever the configured
+                # set holds.
+                unread.setdefault(report, {})[group] = panels_as_written(
+                    panels_value(config, report))
             changes.setdefault(report, {})[group] = (old, list(new))
             if not apply:
                 continue
@@ -450,7 +861,48 @@ def declare_page_fields(config: Any, apply: bool = True,
             'satellites_defaulted': sat_tags is None,
             'comets_defaulted': comet_tags is None,
             'reports': reports,
+            'groups': dict(declarations.groups),
+            'refused': dict(declarations.refused),
+            'misplaced': declarations.misplaced,
+            'unread': unread,
+            'applied': apply,
             'changes': changes}
+
+
+def pending_groups(config: Any, report: str) -> Tuple[str, ...]:
+    """The groups the installer's next run would change under a report
+    -- what its page asks to learn whether its declaration is out of
+    date (a key added and weewxd restarted without a re-run; a
+    satellite added by hand to [Skyfield]): the writer's own dry run,
+    so there is no second reading of what a report should carry.  ()
+    when nothing is pending, or when the dry run refuses the station
+    outright (a flat fields line, which loopdata itself will not start
+    on -- not a fault a page can name)."""
+    try:
+        return tuple(declare_page_fields(config, apply=False)['changes'].get(report, {}))
+    except ValueError:
+        return ()
+
+
+def receipts(report: Dict[str, Any]) -> List[str]:
+    """What declare_page_fields did that its writers -- the installer and
+    the four verbs -- must say in the same words: the station's
+    misplaced key, if any; each report skipped for a fault of its own;
+    and each group removed because no panel of its report reads it --
+    in the tense of what happened ('was removed', or 'would be removed'
+    on a dry run).  One voice, printed verbatim by both, AFTER the
+    lines that say what was written."""
+    lines = []
+    if report['misplaced']:
+        lines.append('Nothing declared for it: %s.' % report['misplaced'])
+    lines.extend('Nothing declared: %s.' % why for why in report['refused'].values())
+    removed = 'was removed' if report['applied'] else 'would be removed'
+    for name, removed_groups in report['unread'].items():
+        for group_name, value in removed_groups.items():
+            lines.append('No panel of [StdReport] [[%s]] reads %s fields (%s = %s), so its '
+                         '%s group %s.'
+                         % (name, group_name[:-1], PANELS_KEY, value, group_name, removed))
+    return lines
 
 
 # The legacy [LoopData] [[Include]] fields line -- weewx-loopdata's
@@ -497,7 +949,14 @@ def legacy_entries_declared(config: Any, satellites: List[str],
     enabled reports, and renders the legacy line through target_report
     whatever its enable says.  A disabled target declares nothing, so
     there is nothing for the line to share with, and its entries are
-    evaluated a second time after all.
+    evaluated a second time after all.  A consumer report (9.0, one
+    naming its panels with celestial_panels) in `reports` counts as
+    sharing too: loopdata shares a legacy entry with any declaring
+    report whose rendering matches, and a consumer declares the
+    satellite and comet groups here and, with the manual's paste, the
+    static set in its skin.conf -- one without the paste shares less
+    than this assumes, which errs toward silence, the accepted
+    direction.
 
     This test is a deliberate APPROXIMATION of loopdata's, and errs one
     way only.  loopdata also requires the two contexts to agree on their
@@ -623,12 +1082,16 @@ def _other_family_tags(config: Any, section: str,
     return tags
 
 
-def _group_diff(declared: Dict[str, Any], group: str) -> Tuple[List[str], List[str]]:
-    """(added, removed) for one group, unioned over the reports declared
-    under, in order."""
+def _group_diff(declared: Dict[str, Any], group: str,
+                reports: Optional[List[str]] = None) -> Tuple[List[str], List[str]]:
+    """(added, removed) for one group, unioned over the given reports
+    (default: every report declared under), in order.  A verb's receipt
+    unions over the reports that OWN its group: a consumer's removal of
+    a group it does not own is the unread receipt's story, and would
+    otherwise be printed as the owning report's."""
     added: List[str] = []
     removed: List[str] = []
-    for report in declared['reports']:
+    for report in declared['reports'] if reports is None else reports:
         old, new = declared['changes'].get(report, {}).get(group, ([], []))
         added.extend(f for f in new if f not in old and f not in added)
         removed.extend(f for f in old if f not in new and f not in removed)
@@ -650,12 +1113,16 @@ def _tags_in(entries: List[str]) -> List[str]:
 def _declare_for_verb(config: Any, group: str,
                       hints: List[str]) -> Tuple[List[str], List[str], List[str]]:
     """The declaration step the four verbs share: declare_page_fields
-    over the reports running the Celestial skin (never adding
-    REPORT_NAME -- that is the installer's), then (added, removed,
-    reports): the entries the named group gained and lost, unioned over
-    those reports in order, and the reports declared under.  With no
-    such report there is nothing to declare, and the hint says when it
-    happens.
+    over every declaring report (never adding REPORT_NAME -- that is
+    the installer's), then (added, removed, reports): the entries the
+    named group gained and lost, unioned over those reports in order,
+    and the reports that OWN this verb's group -- what "under ..." and
+    "already declared" are true of; a consumer report owning only the
+    other family's group is not among them.  With no report owning this
+    verb's group and none refused, there is no report to declare for,
+    and the hint says so -- beside the station's misplaced-key receipt,
+    if any (both are true there); never beside a refused report's,
+    which already says there is a report and what is wrong with it.
 
     One declaration covers BOTH families -- there is one writer, so the
     verbs and the installer cannot disagree about what a station's
@@ -665,9 +1132,11 @@ def _declare_for_verb(config: Any, group: str,
     as the next install would declare them.  Unannounced that would be
     four edits where the manual promises three, so the hint says it."""
     declared = declare_page_fields(config)
-    added, removed = _group_diff(declared, group)
+    owning = [r for r in declared['reports'] if group in declared['groups'][r]]
+    added, removed = _group_diff(declared, group, owning)
     other = COMETS_GROUP if group == SATELLITES_GROUP else SATELLITES_GROUP
-    other_added, other_removed = _group_diff(declared, other)
+    other_added, other_removed = _group_diff(
+        declared, other, [r for r in declared['reports'] if other in declared['groups'][r]])
     for entries, verb in ((other_added, 'declared'), (other_removed, 'undeclared')):
         if not entries:
             continue
@@ -687,11 +1156,13 @@ def _declare_for_verb(config: Any, group: str,
                      'line per field) and the page hides that layer.'
                      % (other.capitalize(), 'add', other[:-1]))
         hints.append(note)
-    if not declared['reports']:
-        hints.append('No report runs the Celestial skin yet, so no fields '
-                     'were declared; weewx-celestial\'s installer declares '
-                     'them when it is installed.')
-    return added, removed, declared['reports']
+    hints.extend(receipts(declared))
+    if not owning and not declared['refused']:
+        hints.append('No report runs the Celestial skin or names a panel reading %s '
+                     'fields with celestial_panels yet, so none were declared; '
+                     'weewx-celestial\'s installer declares them when it is installed.'
+                     % group[:-1])
+    return added, removed, owning
 
 
 def _stranded_legacy_hint(config: Any, tag: str, hints: List[str]) -> None:
@@ -718,11 +1189,14 @@ def _set_display_name(config: Any, tag: str, name: Optional[str],
     existing_name = defaults.get('Almanac', {}).get(tag)
     if name is None:
         if existing_name is None:
+            # weewx-skyfield's own fallback label: the tag title-cased
+            # with its underscores as spaces, which is what every panel
+            # of the page shows for an unnamed tag.
             hints.append("Until a report names it, %s renders its tag "
                          "title-cased ('%s').  Re-run with --name, or add "
                          "under [StdReport] [[Defaults]] [[[Almanac]]]: "
                          "%s = <display name>."
-                         % (tag, tag.title(), tag))
+                         % (tag, tag.replace('_', ' ').title(), tag))
         return 'not given'
     if existing_name == name:
         return 'unchanged'
@@ -1081,6 +1555,7 @@ if __name__ == '__main__':
                            'TAG = NORAD under [Skyfield] [[Satellites]], declares the nineteen '
                            'fields the sample page reads per satellite (the satellites group '
                            'of [StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]], '
+                           'and of every report whose celestial_panels reads satellites, '
                            'rebuilt for the configured set), and (with --name) writes the '
                            'display name under [StdReport] [[Defaults]] [[[Almanac]]].  Every '
                            'edit is idempotent: pieces already present are kept, and '
@@ -1103,6 +1578,7 @@ if __name__ == '__main__':
                            '-- quote one with a space) under [Skyfield] [[Comets]], declares '
                            'the six fields the sample page reads per comet (the comets group '
                            'of [StdReport] [[CelestialReport]] [[[LoopData]]] [[[[fields]]]], '
+                           'and of every report whose celestial_panels reads comets, '
                            'rebuilt for the configured set), and (with --name) writes the '
                            'display name under [StdReport] [[Defaults]] [[[Almanac]]].  Every edit is '
                            'idempotent: pieces already present are kept, and re-running '

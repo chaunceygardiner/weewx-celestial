@@ -1,0 +1,54 @@
+/* Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
+ * Distributed under the terms of the GNU Public License (GPLv3)
+ *
+ * The Celestial REPORT's own page: the surfaces and chrome of the
+ * bundled skin -- the body, the header, the h1, the card a section
+ * draws, the footer.  A skin embedding the panels supplies its own
+ * page and must NOT load this file; celestial.css carries the panels
+ * and nothing that reaches past them.  Split out in 9.0, when the
+ * panels became something another skin can drop in: these rules name
+ * bare elements, so loading them in a host page repaints the whole
+ * site.
+ * The tokens these rules read are declared in celestial.css, which
+ * every page loading this one also loads. */
+
+*{box-sizing:border-box}
+
+body{background:var(--night); color:var(--ink);
+     font-family:Charter, Georgia, 'Times New Roman', serif;
+     margin:0; padding:32px 20px 40px; line-height:1.55}
+
+.cel-page{max-width:1280px; margin:0 auto; display:flex; flex-direction:column; gap:30px}
+
+
+/* Header */
+header{display:flex; justify-content:space-between; align-items:flex-start; gap:24px;
+       flex-wrap:wrap; border-bottom:1px solid var(--line); padding-bottom:22px}
+
+h1{font-family:Georgia,'Times New Roman',serif; font-variant-caps:small-caps;
+   letter-spacing:.16em; font-weight:400; font-size:clamp(1.6rem,4vw,2.4rem);
+   margin:0; color:var(--ink); text-wrap:balance}
+
+h1 .over{color:var(--brass)}
+
+
+/* Cards */
+section{background:var(--vault); border:1px solid var(--line); padding:20px 22px 16px}
+
+
+footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
+       padding-top:16px; text-align:center; font-style:italic}
+
+footer a{color:inherit; text-underline-offset:3px; text-decoration-color:var(--brass)}
+
+footer a:hover{color:var(--brass)}
+
+/* The document's color scheme, which is the PAGE's to declare and not
+ * the panels'.  It lived in celestial.css's token blocks until 9.0 and
+ * leaked: a consumer loading the panel sheet had its whole document
+ * flipped -- canvas, default text color, form controls, scrollbars --
+ * because color-scheme on :root governs the document, not a subtree.
+ * A host page whose footer inherited black came out white.  Found by
+ * the host-chrome test the moment it was made sensitive to leakage. */
+:root{color-scheme:dark}
+:root.theme-light{color-scheme:light}

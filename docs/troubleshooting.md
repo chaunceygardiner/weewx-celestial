@@ -151,7 +151,7 @@ The reason is the last refetch's outcome, and it says where to look:
 
 | The line says | What it means | What to check |
 |---|---|---|
-| `no newer backdrop has arrived` | The fetches are succeeding; the file they return is old | The station: is the report still running each archive interval?  Are `dome-svg*.txt` mtimes moving?  Is a fragment template failing? (see below) |
+| `no newer backdrop has arrived` | The fetches are succeeding; the file they return is old | The station: is the report still running each archive interval?  Are `dome-svg*.txt` mtimes moving?  Is the fragment generator failing? (see below) |
 | `dome-svg-3.txt returns HTTP 404` (or another status, and whichever fragment was asked for) | That fragment is not being served next to the page | Whether the files exist in `HTML_ROOT`, and whether whatever publishes your site (rsync, FTP) carries `.txt` as well as `.html`.  The named file is the one that failed — a deploy that dropped only the numbered fragments leaves `dome-svg.txt` itself serving perfectly |
 | `dome-svg-3.txt is not a sky fragment` | Something answers, but it is not SVG | A web server returning an error page with status 200 |
 | `dome-svg.txt is empty` | The file is there and has nothing in it | If it names a numbered slot, the page is asking for a slot beyond the current archive interval — harmless, and it corrects itself on the next cycle.  If it names `dome-svg.txt` itself, the station is writing no backdrop at all: check that weewx-skyfield is serving the report (the dome would show an install hint), and that a report cycle has run since the last restart.  **Before 8.3.2 a station with a non-default `group_interval` emptied every fragment** — upgrade if you are on anything earlier |
@@ -177,10 +177,10 @@ On the station:
 # cycle apart -- the timestamps should move.
 ls -l <HTML_ROOT>/celestial/dome-svg*.txt
 
-# Did a fragment template fail?  They deliberately carry no error
-# catcher, so a failure is logged and the PREVIOUS file is left in
-# place -- which looks exactly like a frozen sky.
-sudo journalctl -u weewx | grep -i dome
+# Did a fragment fail to render?  The generator logs which one and
+# why, and leaves the PREVIOUS file in place -- which looks exactly
+# like a frozen sky.
+sudo journalctl -u weewx | grep -iE 'celestial_page|dome|pass-chart'
 ```
 
 **If you set `report_timing` on this report, this is the line you will
@@ -240,11 +240,38 @@ degrades on purpose rather than failing:
 | The dome draws, but no satellites | weewx-skyfield is older than 2.0, or no `[Skyfield] [[Satellites]]` are configured |
 | No comets on the dial | weewx-skyfield is older than 2.1, or no `[[Comets]]` are configured |
 | The Proxima Centauri row is empty | PyEphem is serving the page; its star catalog lacks Proxima |
+| The dome says *could not be drawn — see the weewxd log* | Different from the hint above: weewx-skyfield **is** registered, and its drawing came back empty anyway.  The log says why — that is the only place the reason exists |
 
 The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers).  The page's
 footer always names the almanac that actually computed it, which is the
 quickest way to confirm which tier you are on.
+
+## A panel says its fields are not declared
+
+Four lines a panel can carry in place of, or above, what it draws.  They
+are about **configuration**, not about the almanac, and each one names
+its own fix; the weewxd log carries the same fault once per report cycle,
+with the detail.  A panel in this state first-paints correctly from the
+report and then never moves, which is the failure these lines exist to
+explain.
+
+| The panel says | What happened | What to do |
+|---|---|---|
+| *This page's report does not name the … panel in `celestial_panels`* | `celestial_panels` names the panels a page embeds — normally in that skin's own `skin.conf`, or in the report's stanza where a station overrides it — and this one is not among them, so nothing declared its live fields | Add the panel to `celestial_panels` (in whichever of the two the report is reading; the weewxd log names it), re-run `weectl extension install`, restart weewxd |
+| *This page's report carries an invalid `celestial_panels`* | The key names something that is not a panel (the four are `countdown`, `geocentric`, `dome`, `pass`), or it sits under `[[Defaults]]` or at `[StdReport]`'s top level, where WeeWX would merge it into every report | Fix or move the key — the log names it — then re-run the installer and restart weewxd |
+| *This page's report's field declaration is out of date* | The panels are named, but the `satellites`/`comets` groups in `weewx.conf` are not what the installer would write now — a satellite edited into `[Skyfield]` by hand, or one re-added by a weewx-skyfield upgrade after `--remove-satellite` | Re-run `weectl extension install` (or the `--add-satellite`/`--add-comet` utility), restart weewxd |
+| *The page's fragment set is missing or invalid in `[CelestialFragments]`* | The dome or pass call names a set the skin does not declare, or the skin declares sets but none on the `dome-svg` prefix and the call named none.  Never answered with the default set, deliberately | Declare the set, or correct the `set=` name in the page — the log names it |
+
+The bundled Celestial page can show the third of these: an 8.5 station
+whose `[Skyfield]` sets were edited by hand has a declaration the
+installer would now write differently.  Re-running the install and
+restarting weewxd is the whole fix, and it is worth doing — the
+undeclared satellite or comet has no live layer until you do.
+
+The first, second and fourth belong to a page in
+[a skin of your own](own-skin.md); the bundled page names all four
+panels itself and declares its own fragment set.
 
 ## A countdown chip never appears
 
@@ -321,12 +348,18 @@ rendering the dark plate.  Valid values are dark, light and auto.
 
 ## The page looks unstyled — the dial is solid black discs
 
-`celestial.css` did not reach the browser.  The stylesheet is deployed by
-WeeWX's CopyGenerator, which re-copies it on the report's first run after
-a restart, and the page version-tags the URL so browsers refetch it.  So:
-restart weewxd, then reload the page.  If it persists, confirm
-`celestial.css` exists in the report's HTML_ROOT and is served (a 404 on
-it produces exactly this look).
+A stylesheet did not reach the browser.  The page loads two:
+`celestial.css`, which carries the panels, and `celestial-page.css`,
+which carries the page's own surfaces — its background, header, section
+cards and footer.  Solid black discs where the dial should be is the
+first one missing; panels that look right on a page that has lost its
+background and card borders is the second.
+
+Both are deployed by WeeWX's CopyGenerator, which re-copies them on the
+report's first run after a restart, and the page version-tags their URLs
+so browsers refetch them.  So: restart weewxd, then reload the page.  If
+it persists, confirm both files exist in the report's HTML_ROOT and are
+served (a 404 on either produces exactly its own half of this).
 
 ## weewxd will not start after upgrading
 

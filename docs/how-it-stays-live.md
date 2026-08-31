@@ -107,8 +107,10 @@ page: the clock they count on is the packet's (see
 ## The two fetched fragments
 
 The dome and the Next Visible Pass chart are drawn by weewx-skyfield at
-report time, but the open page keeps them current by refetching small
-fragments:
+report time — written into the report's own directory by a generator this
+extension adds to the report, `user.celestial_page.FragmentGenerator`,
+which is the name to grep for in the weewxd log if they stop arriving —
+but the open page keeps them current by refetching small fragments:
 
 - **Dome backdrops.**  Each report cycle renders a staggered set of them,
   spaced `max(60 s, interval/10)` across the archive interval, and the
@@ -163,16 +165,18 @@ Both fragments arrive as SVG with their colors already inside them, which
 is why the page's plate — dark or light — is settled when the report is
 generated rather than in the browser (see
 [Dark, light and auto](configuration.md#dark-light-and-auto)).  Each
-fragment is rendered on the palette the page around it was rendered with,
-resolved from the report's own generation instant, so a refetch can never
-land a night dome in a light page.
+fragment carries the theme the report was on when it wrote it, resolved
+from the report's own generation instant, so a page never finds its own
+plate switched under it by a refetch.
 
 On `theme = auto` a report cycle eventually crosses sunrise, and an open
 page cannot restyle itself — its plate was baked in when it was
-generated.  So each backdrop declares which plate it was drawn on, and a
-page that finds itself wearing the other one reloads — once per flip, and
-never again if it comes back still disagreeing, which would mean a cached
-copy rather than a flip.  The change reaches a page left open overnight
+generated.  So each fragment declares the theme the report was on when it
+wrote it, and a page that finds a fragment from the other one reloads —
+once per flip, and never again if it comes back still disagreeing, which
+would mean a cached copy rather than a flip.  (A fragment set declared
+on a plate of its own is drawn on that plate whatever the page's, and is
+never mistaken for a flip.)  The change reaches a page left open overnight
 within a minute of the report cycle that makes it, rather than waiting
 for someone to press reload.
 

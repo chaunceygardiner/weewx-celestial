@@ -24,7 +24,9 @@ available.
 """
 
 import contextlib
+import importlib
 import inspect
+import io
 import json
 import logging
 import os
@@ -49,6 +51,7 @@ import weewx.almanac
 import weewx.units
 
 import celestial
+import celestial_page
 
 LATITUDE    = 37.4419
 LONGITUDE   = -122.143
@@ -96,6 +99,39 @@ LOOPDATA_DIRS = [
 ]
 
 SKIN_DIR = os.path.join(REPO_ROOT, 'skins', 'Celestial')
+# The page's javascript (one static file since 9.0) and the module whose
+# config block starts it: the two places the 8.5 include split into.
+JS_PATH = os.path.join(SKIN_DIR, 'celestial.js')
+PAGE_PY = os.path.join(REPO_ROOT, 'bin', 'user', 'celestial_page.py')
+
+
+def unwrapped_js():
+    """celestial.js with its function wrapper removed -- a debug build for
+    the browser tests that probe the script's internals (latestTs,
+    appliedDomeFrag, passBase, ...) through page.evaluate, which the
+    shipped file's one scope deliberately hides.  Everything between the
+    wrapper's first and last lines is the shipped code verbatim, and
+    `celestial.start` still exists; only the scope differs.  The wrapper
+    itself is proven by test_no_window_global_collisions (its shape,
+    which this relies on) and
+    test_celestial_js_publishes_one_global_in_a_real_browser."""
+    js = open(JS_PATH, encoding='utf-8').read()
+    head, body = js.split('var celestial = (function () {\n', 1)
+    body, tail = body.rsplit('  return {start: start};\n})();\n', 1)
+    assert tail == '', 'the wrapper is not the last thing in the file'
+    return head + body + 'var celestial = {start: start};\n'
+
+
+def write_assets(tmp_path, unwrapped=False):
+    """The page's three static files beside a rendered index.html, for a
+    browser test: the stylesheet, sky.js and celestial.js -- the shipped
+    file, or the unwrapped debug build for a test that reads internals."""
+    for asset in ('celestial.css', 'celestial-page.css', 'sky.js'):
+        (tmp_path / asset).write_bytes(open(os.path.join(SKIN_DIR, asset), 'rb').read())
+    if unwrapped:
+        (tmp_path / 'celestial.js').write_text(unwrapped_js(), encoding='utf-8')
+    else:
+        (tmp_path / 'celestial.js').write_bytes(open(JS_PATH, 'rb').read())
 
 # The report name the render harness generates the page under, and the
 # key every served loop-data file carries: weewx-loopdata 7.0 writes each
@@ -106,10 +142,11 @@ SKIN_DIR = os.path.join(REPO_ROOT, 'skins', 'Celestial')
 REPORT_NAME = 'CelestialReport'
 
 
-def loop_file(record):
+def loop_file(record, report=REPORT_NAME):
     """loop-data.txt as weewx-loopdata 7.0 writes it for this page: the
-    flat record under the report's name."""
-    return json.dumps({REPORT_NAME: record})
+    flat record under the report's name (the harness's, or a consumer
+    report's own -- the page unwraps exactly its own entry)."""
+    return json.dumps({report: record})
 
 
 def load_wxskyfield():
@@ -125,6 +162,53 @@ def load_wxskyfield():
             import wxskyfield
             return wxskyfield, d
     pytest.skip('the weewx-skyfield extension is not available')
+
+
+def sat_feed_packets(wall, report=REPORT_NAME, satellites=True):
+    """Three loop-data files, 2 s apart, as weewx-loopdata writes them for
+    a page (under `report`'s name) with the ISS and Tiangong configured: every body's
+    az/alt/distance, the moon's phase keys and the nineteen satellite
+    keys per satellite (Tiangong's pass fields serialize as honest JSON
+    nulls), computed by whatever almanac is REGISTERED -- the caller's
+    satellites-configured weewx-skyfield -- for the fixture instants,
+    stamped with the browser's clock (`wall`) rather than the fixture's:
+    a real station's feed and the machine reading it agree on the time,
+    and a feed a year stale is one the page rightly treats as dead."""
+    bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+              'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+    packets = []
+    for i, ts in enumerate((TIME_TS, TIME_TS + 2, TIME_TS + 4)):
+        alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                    formatter=weewx.units.get_default_formatter())
+        r = {'current.dateTime.raw': wall + 2 * i,
+             'almanac.moon.phase': alm.moon.phase,
+             'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
+             'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
+        for b in bodies:
+            obj = getattr(alm, b)
+            r['almanac.%s.az' % b] = obj.az
+            r['almanac.%s.alt' % b] = obj.alt
+            r['almanac.%s.earth_distance' % b] = obj.earth_distance
+        for s in ('iss', 'tiangong') if satellites else ():
+            sat = getattr(alm, s)
+            r['almanac.%s.az' % s] = sat.az
+            r['almanac.%s.alt' % s] = sat.alt
+            r['almanac.%s.sunlit' % s] = sat.sunlit
+            r['almanac.%s.label' % s] = str(sat.label)
+            for kind, p in (('next_visible_pass', sat.next_visible_pass),
+                            ('next_pass', sat.next_pass)):
+                base = 'almanac.%s.%s' % (s, kind)
+                r[base + '.rise.unix_epoch.raw'] = p.rise.raw
+                r[base + '.set.unix_epoch.raw'] = p.set.raw
+                r[base + '.max_altitude.degree_angle.raw'] = p.max_altitude.raw
+                r[base + '.duration.second.raw'] = p.duration.raw
+                r[base + '.rise_azimuth.ordinal_compass'] = str(p.rise_azimuth.ordinal_compass())
+                r[base + '.culmination_azimuth.ordinal_compass'] = \
+                    str(p.culmination_azimuth.ordinal_compass())
+                r[base + '.set_azimuth.ordinal_compass'] = str(p.set_azimuth.ordinal_compass())
+            r['almanac.%s.next_pass.visible' % s] = sat.next_pass.visible
+        packets.append(loop_file(r, report).encode())
+    return packets
 
 
 def _wcag_ratio(fg, bg):
@@ -144,6 +228,19 @@ def _wcag_ratio(fg, bg):
     a, b = luminance(fg), luminance(bg)
     hi, lo = max(a, b), min(a, b)
     return (hi + 0.05) / (lo + 0.05)
+
+
+def lang_formatter(conf):
+    """The formatter a report running a shipped lang file has: its
+    [Units] [[Ordinates]] compass, and the unit labels of WeeWX's skin
+    defaults (weewx.defaults, what get_default_formatter carries) -- the
+    lang files ship no [[Labels]] of their own, so a German report
+    labels miles and kilometers as the defaults do.  A bare Formatter
+    has NO labels, and once painted the roster's unit cell empty here
+    while production painted ' miles'."""
+    return weewx.units.Formatter(
+        unit_label_dict=weewx.units.get_default_formatter().unit_label_dict,
+        ordinate_names=list(conf['Units']['Ordinates']['directions']))
 
 
 def make_sky_page(texts=None, theme=None):
@@ -331,14 +428,18 @@ class TestEngineGuards:
         assert not hasattr(celestial, 'CelestialSkyPage')
 
     def test_version_lockstep(self):
-        """The version lives in three places, kept identical: install.py,
-        CELESTIAL_VERSION, and the skin.conf [Extras] version."""
+        """The version lives in four places, kept identical: install.py,
+        CELESTIAL_VERSION, the skin.conf [Extras] version, and the literal
+        celestial.js checks its config against."""
         install_src = open(os.path.join(REPO_ROOT, 'install.py')).read()
         m = re.search(r'version\s*=\s*"([^"]+)"', install_src)
         assert m is not None
         assert m.group(1) == celestial.CELESTIAL_VERSION
         skin_src = open(os.path.join(SKIN_DIR, 'skin.conf')).read()
         m = re.search(r'^\s*version\s*=\s*(\S+)', skin_src, re.MULTILINE)
+        assert m is not None
+        assert m.group(1) == celestial.CELESTIAL_VERSION
+        m = re.search(r"^  var CELESTIAL_JS_VERSION = '([^']+)';", open(JS_PATH).read(), re.M)
         assert m is not None
         assert m.group(1) == celestial.CELESTIAL_VERSION
 
@@ -449,7 +550,7 @@ class TestSampleSkinRenders:
 
     @staticmethod
     def render(almanac_obj, with_time_zone=True, lang='en', texts=None, labels=None,
-               sky_page=None, current=None):
+               sky_page=None, interval_s=None, unbound_celestial=False):
         from Cheetah.Template import Template
 
         class Obj:
@@ -475,11 +576,6 @@ class TestSampleSkinRenders:
         labels = labels or {'hemispheres': ['N', 'S', 'E', 'W']}
         hemis = labels['hemispheres']
         source = open(os.path.join(SKIN_DIR, 'index.html.tmpl')).read()
-        # Inline the include so its directives and placeholders are also
-        # exercised through the errorCatcher render path.
-        include = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
-        assert '#include "realtime_updater.inc"' in source
-        source = source.replace('#include "realtime_updater.inc"', include)
         # expiration_time is HOURS (skin default 24): the include computes
         # 1000*60*60*expiration_time ms, and a value past ~596 hours
         # overflows the browser's 32-bit timer delay -- 86400 here once
@@ -489,17 +585,13 @@ class TestSampleSkinRenders:
                         version=celestial.CELESTIAL_VERSION)
         if with_time_zone:
             extras['time_zone'] = 'America/Los_Angeles'
-        template = Template(source, searchList=[{
+        # The skin dict the CelestialPanels search list would hand
+        # $celestial, mirrored from the same stubs the template's tags
+        # read, so the config block bakes what the tags bake.
+        skin_dict = {'Extras': extras, 'lang': lang, 'REPORT_NAME': REPORT_NAME,
+                     'Texts': texts}
+        search = {
             'almanac': almanac_obj,
-            # The default carries no $current.interval.second, the shape
-            # a pre-8.3.2 report hands the page: the wrapper's #try then
-            # falls back to 300 s.  A test that cares about the fragment
-            # set passes its own.
-            'current': current or Obj(dateTime=Obj(raw=TIME_TS), interval=Obj(raw=5)),
-            # windrun stands in for group_distance (this extension registers
-            # no observation types).
-            'unit': Obj(label=Obj(windrun=' miles'),
-                        unit_type=Obj(windrun='mile')),
             'station': Obj(location='Test Station',
                            latitude=('37', '26.55',
                                      hemis[0] if LATITUDE >= 0 else hemis[1]),
@@ -510,12 +602,34 @@ class TestSampleSkinRenders:
             'lang': lang,
             'REPORT_NAME': REPORT_NAME,
             'gettext': lambda key: texts.get(key, key),
+            # Core's $filename: the page's own path under HTML_ROOT,
+            # which config_script turns into the page's route up to it.
+            'filename': 'index.html',
             # What celestial_sky.CelestialSkyPage serves in production: the
             # real weewx-skyfield SkyPage, or None when skyfield is absent
             # (the dome panel then degrades to its skyhint).
             'sky_page': sky_page,
-        }])
+            # What celestial_page.CelestialPanels serves beside it: the
+            # page's panels, built on the same SkyPage (None included)
+            # and the archive interval the search list reads from the
+            # record at the page's instant (None: the 300 s default,
+            # what a report without a record gets).
+            'celestial': celestial_page.CelestialPage(skin_dict, sky_page, interval_s),
+        }
+        if unbound_celestial:
+            # A weewx.conf stanza overriding search_list_extensions with
+            # the pre-9.0 shim: $sky_page resolves, $celestial does not.
+            del search['celestial']
+        template = Template(source, searchList=[search])
         return str(template)
+
+    @staticmethod
+    def config(html):
+        """The config the rendered page starts celestial.js with, parsed
+        out of the block $celestial.config_script wrote."""
+        m = re.search(r'<script>\ncelestial\.start\((\{.*?\})\);\n</script>', html, re.S)
+        assert m is not None, 'no config block in the page'
+        return json.loads(m.group(1).replace('<\\/', '</'))
 
     def cell(self, html, cell_id):
         match = re.search(r'id="%s"[^>]*>([^<]*)<' % re.escape(cell_id), html)
@@ -541,22 +655,25 @@ class TestSampleSkinRenders:
             assert 'id="geo-row-%s"' % body in html
             alt_cell = self.cell(html, 'geo-alt-%s' % body)
             assert alt_cell.startswith('alt ') or alt_cell == 'below horizon', body
-        # The dial container and the inlined javascript engine rendered.
+        # The dial container, the script tag and the config block that
+        # starts celestial.js rendered (the javascript itself is a static
+        # file since 9.0, no longer inlined; its own pins read the file).
         assert 'id="dial"' in html
-        assert 'function buildDial(' in html
-        assert 'function setOdometer(' in html
-        assert '/gauge-data/loop-data.txt' in html
+        assert ('<script src="celestial.js?v=%s"></script>' % celestial.CELESTIAL_VERSION
+                in html)
+        assert 'celestial.start({' in html
+        assert '"loop_data_file": "/gauge-data/loop-data.txt"' in html
         # The stylesheet URL is version-tagged so browser caches refetch
         # it after an upgrade (skin.conf supplies version in production).
         assert 'href="celestial.css?v=%s"' % celestial.CELESTIAL_VERSION in html
-        assert 'PER_AU = 92955807' in html and "DIST_LABEL = ' miles'" in html
+        assert '"per_au": 92955807.0' in html and '"dist_label": " miles"' in html
         assert '37.44' in html
         # The station clock's pre-packet anchor, baked from the report's
         # own instant.  Asserted on the RENDERED value, never on the
         # template text: under #errorCatcher Echo a bad placeholder is
         # echoed as error prose instead of raising, so a broken bake
         # would ship a page whose clock never started.
-        assert 'GEN_TS = %d;' % int(TIME_TS) in html
+        assert '"gen_ts": %d' % int(TIME_TS) in html
         # The header's "updated" stamp first-paints that same instant, in
         # the shape fmtHMS repaints it in (%H:%M:%S, station-local, the
         # chip-detail precedent) -- the page displays on its own, and the
@@ -719,10 +836,13 @@ class TestSampleSkinRenders:
                 < html.index('id="geo-row-proxima_centauri"'))
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.halley.earth_distance'))
         assert self.cell(html, 'geo-au-halley').endswith(' au')
+        # A comet row is named through skyfield's label -- the perihelion
+        # chip's source -- so an unnamed tag reads title-cased with its
+        # underscores as spaces, never 'Hale_bopp'.
+        assert '<span class="cel-chip cel-chip-comet"></span>Hale Bopp<' in html
         assert self.cell(html, 'geo-alt-halley').startswith('alt ')
         assert self.cell(html, 'geo-alt-hale_bopp') == 'below horizon'
-        assert 'COMET_NAMES = ["halley", "hale_bopp", "bright", "mcnaught"];' in html
-        assert 'function renderComets(' in html
+        assert self.config(html)['comet_names'] == ['halley', 'hale_bopp', 'bright', 'mcnaught']
         # The countdown row: the pass chip and the windowed guests
         # first-paint hidden; the sun, shower and darkness chips
         # first-paint the COUNTDOWN ITSELF -- the remaining time at
@@ -806,26 +926,34 @@ class TestSampleSkinRenders:
         assert self.cell(html, 'almanac.ghost.earth_distance') == ''
         assert self.cell(html, 'geo-au-ghost') == ''
         assert self.cell(html, 'geo-alt-ghost') == ''
+        # The chip is hidden with no target to unhide from; its label
+        # bakes like every guest's (the script repaints only the
+        # countdown when it unhides a chip) and is the comet's name,
+        # never "None".
         assert 'id="chip-peri-ghost" hidden' in html
-        assert self.cell(html, 'chip-peri-ghost-k') == ''
+        assert self.cell(html, 'chip-peri-ghost-k') == 'Ghost perihelion'
 
     @staticmethod
     def render_dome_fragment(name, search):
-        """Render a dome fragment template FILE-based, so Cheetah's real
-        #include path runs: the include compiles separately and sees
-        only `#set global` variables -- textual inlining hid exactly
-        that (a local $frag_k rendered fine in the test and failed in
-        production).  Cheetah resolves the #include path against the
-        CWD, which weewx's generator (and so this test) makes the skin
-        directory."""
-        from Cheetah.Template import Template
-        cwd = os.getcwd()
-        os.chdir(SKIN_DIR)
-        try:
-            return str(Template(file=os.path.join(SKIN_DIR, name),
-                                searchList=[search]))
-        finally:
-            os.chdir(cwd)
+        """A dome fragment as the FragmentGenerator renders it, addressed
+        the way the 8.x templates were (the slot number is taken from the
+        template's name) so the tests written against those templates
+        read unchanged: `search` carries the almanac, the sky page and,
+        optionally, the archive interval in SECONDS (`interval_s`, what
+        the generator hands dome_fragment after interval_seconds has
+        converted the record's minutes)."""
+        m = re.match(r'dome-svg(?:-(\d+))?\.txt\.tmpl$', name)
+        assert m, name
+        k = int(m.group(1) or 0)
+        page = celestial_page.CelestialPage(
+            {}, sky_page=search.get('sky_page'))
+        return page.dome_fragment(search['almanac'], k, search.get('interval_s'))
+
+    @staticmethod
+    def render_pass_fragment(almanac_obj, sky_page):
+        """The pass-chart fragment as the FragmentGenerator renders it."""
+        page = celestial_page.CelestialPage({}, sky_page=sky_page)
+        return page.pass_fragment(almanac_obj)
 
     def test_dome_fragment_survives_any_group_interval(self, wxskyfield_almanac):
         """$current.interval arrives in whatever unit the report's
@@ -838,26 +966,18 @@ class TestSampleSkinRenders:
         #4, and it is why the templates read .second.raw.  Pinned for
         both templates, since they repeat the arithmetic."""
 
-        class Val:
-            """A $current.interval as WeeWX delivers it: .raw in the
-            report's own unit, .second.raw always in seconds."""
-
-            def __init__(self, raw, seconds):
-                self.raw = raw
-                self.second = type('S', (), {'raw': seconds})()
-
-        # The second case is what WeeWX really hands a group_interval =
-        # hour station: the conversion is floating point, so seconds come
-        # back as 299.99988 and a truncating int() would cost the set a
-        # slot (verified against weewx.units, not assumed).
-        for label, interval in (('hours', Val(0.08333333, 300.0)),
-                                ('hours, as converted', Val(0.0833333, 299.99988)),
-                                ('minutes', Val(5.0, 300.0)),
-                                ('seconds', Val(300.0, 300.0))):
+        # dome_fragment takes the interval in SECONDS -- what the generator
+        # hands it after interval_seconds has converted the record's
+        # minutes (the minutes-to-seconds conversion itself is pinned in
+        # test_one_interval_reader).  The second case is what that
+        # conversion really yields for a group_interval = hour station:
+        # floating point, 299.99988, and a truncating int() would cost
+        # the set a slot (verified against weewx.units, not assumed).
+        for label, seconds in (('seconds', 300.0), ('as converted', 299.99988)):
             out = self.render_dome_fragment('dome-svg.txt.tmpl', {
                 'almanac': wxskyfield_almanac,
                 'sky_page': make_sky_page(),
-                'current': type('C', (), {'interval': interval})(),
+                'interval_s': seconds,
             })
             assert '<svg' in out, label
             assert 'data-dome-step="60"' in out, label
@@ -867,7 +987,7 @@ class TestSampleSkinRenders:
         out = self.render_dome_fragment('dome-svg.txt.tmpl', {
             'almanac': wxskyfield_almanac,
             'sky_page': make_sky_page(),
-            'current': type('C', (), {'interval': Val(0.0, 0.0)})(),
+            'interval_s': 0.0,
         })
         assert '<svg' in out
         assert 'data-dome-count="5"' in out
@@ -1024,25 +1144,52 @@ class TestSampleSkinRenders:
         page whose plate keeps disagreeing (a cached copy, say) must wear
         one stale plate rather than reload for ever.  Source-pinned;
         there is no browser in CI."""
-        js = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
-        assert re.search(r"var PAGE_PALETTE\s*=", js), 'the page plate is gone'
-        assert "indexOf('theme-light')" in js
-        guard = re.search(r"data-dome-palette.*?\n(.*?)\n\s*var m = ", js, re.S)
-        assert guard is not None, 'the plate comparison moved'
-        body = guard.group(1)
-        assert 'PAGE_PALETTE' in body, body
-        assert 'plateReloadTried' in body and 'markPlateReload' in body, body
+        js = open(JS_PATH).read()
+        # The page's theme is its root class; every refetched fragment --
+        # the dome's wrapper and the pass chart's alike -- carries the
+        # REPORT's theme (data-page-theme), and a fragment carrying the
+        # other one is the flip.  The fragment SET's plate takes no part:
+        # a set on a plate other than the page's is styled by its own
+        # attribute and is never a flip.
+        # The page's theme comes from the config block (PAGE_THEME), never
+        # from the page's markup: a consumer's chrome owes the script no
+        # root class.
+        assert 'PAGE_THEME = config.theme;' in js
+        assert "indexOf('theme-light')" not in js
+        flip = re.search(r"function pageThemeFlip\(text, kind\) \{(.*?)\n  \}", js, re.S)
+        assert flip is not None, 'the flip check is gone'
+        body = flip.group(1)
+        assert 'data-page-theme=' in body and '!== PAGE_THEME' in body, body
+        assert 'data-dome-palette' not in body and 'data-pass-palette' not in body, body
+        assert 'plateReloadTried(kind' in body and 'markPlateReload(kind' in body, body
         assert 'window.location.reload()' in body, body
         # In step again clears the guard, or the SECOND flip never
-        # reloads (sunset works, the next sunrise does not).
-        assert 'clearPlateReload()' in body, body
+        # reloads (sunset works, the next sunrise does not) -- this
+        # judge's guard only: the dome in step must not clear the mark a
+        # stale pass chart set, or that chart reloads on every refetch.
+        assert 'clearPlateReload(kind)' in body, body
+        # Both fetch handlers run it before applying a fragment, each
+        # under its own kind.
+        assert "if (pageThemeFlip(this.responseText, 'dome')) {" in js
+        assert "if (pageThemeFlip(this.responseText, 'pass')) {" in js
         # The guard must outlive the reload it bounds: an in-page flag is
         # reset by that very navigation, so a page served from cache
         # would reload every DOME_REFRESH seconds for ever.  Proven in a
         # browser (playwright, this release); pinned here because CI has
         # no browser.
         assert 'sessionStorage' in js
-        assert re.search(r"var PLATE_KEY = 'celestial-plate-reload'", js)
+        assert re.search(r"var PLATE_KEY = 'celestial-plate-reload-'", js)
+        # Once ever per plate per kind, no expiry: the two generators take
+        # the cycle's own record as their instant, so there is no race for
+        # an expiry to paper over, and a stale copy behind a proxy wears
+        # its plate rather than reloading every few minutes for ever.
+        assert 'PLATE_RETRY' not in js and '.split(' not in js[js.index('var PLATE_KEY'):js.index('function clearPlateReload')]
+        # The pass chart's flip check runs BEFORE its emptiness test: an
+        # empty chart arrives in its wrapper, carrying the theme, and an
+        # empty wrapper reads as the deliberate empty.
+        pass_fn = js[js.index('function refreshPass() {'):]
+        assert pass_fn.index("pageThemeFlip(this.responseText, 'pass')") < pass_fn.index("indexOf('<svg')")
+        assert '<div class="passfrag"[^>]*>\\s*<\\/div>' in pass_fn
         for fn in ('plateReloadTried', 'markPlateReload', 'clearPlateReload'):
             assert re.search(r'function %s\(' % fn, js), fn
         # Every sessionStorage touch is wrapped: it throws outright in
@@ -1051,25 +1198,30 @@ class TestSampleSkinRenders:
             m = re.search(r'try \{\s*\n[^}]*sessionStorage\.%s' % call, js)
             assert m is not None, call
         # ... with the in-page flag as the fallback where it does throw
-        assert re.search(r'var plateReloaded = false', js)
+        assert re.search(r'var plateReloaded = \{\}', js)
 
-    def test_dome_fragment_palette_is_the_page_instant_not_the_slot(self):
+    def test_dome_fragment_palette_is_the_page_instant_not_the_slot(self, wxskyfield_almanac):
         """On theme = auto the palette must be resolved against the
         PAGE's almanac, never the slot's re-bound one: a stagger slot
         minutes past sunrise would otherwise render paper inside a page
-        that is still night, and flip the dome on refetch.  Pinned on
-        the source, since the bug only shows within minutes of
-        sunrise."""
-        frag = open(os.path.join(SKIN_DIR, 'dome-svg-frag.inc')).read()
-        call = re.search(r'\$sky_page\.dome_svg\((.*?)\)</div>', frag)
-        assert call is not None, 'the dome_svg call moved'
-        # The slot's re-bound almanac draws the sky; the palette does not
-        # come from it.
-        assert 'almanac_time=$frag_ts' in call.group(1)
-        assert 'palette=$palette' in call.group(1)
-        resolve = re.search(r'#set \$palette = .*?theme\((.*?)\)', frag)
-        assert resolve is not None, 'the palette resolution moved'
-        assert resolve.group(1) == '$almanac', resolve.group(1)
+        that is still night, and flip the dome on refetch.  Driven at
+        the boundary: a page generated half an hour before sunrise, on a
+        two-hour interval whose ninth slot depicts a sky well after it.
+        Every slot must carry the page's plate, night."""
+        sunrise = wxskyfield_almanac.sun.rise.raw
+        assert sunrise is not None
+        page_alm = wxskyfield_almanac(almanac_time=int(sunrise) - 1800)
+        assert float(page_alm.sun.alt) < 0
+        assert float(page_alm(almanac_time=int(sunrise) - 1800 + 9 * 720).sun.alt) > 0
+        page = celestial_page.CelestialPage(
+            {}, sky_page=make_sky_page(theme='auto'))
+        for k in (0, 9):
+            out = page.dome_fragment(page_alm, k, 7200)
+            assert 'data-dome-palette="night"' in out, k
+            assert '#161f3d' in out.lower(), k
+            assert '#efece2' not in out.lower(), k
+        # And the page's own plate is the same answer.
+        assert page.theme_class(page_alm) == 'theme-dark'
 
     def test_dome_fragment_stagger(self, wxskyfield_almanac):
         """The staggered slots: at a 5-minute interval slots 0-4 carry
@@ -1078,19 +1230,10 @@ class TestSampleSkinRenders:
         archive interval gets full-cycle coverage.  The shifted almanac
         rides core WeeWX's $almanac(almanac_time=...) -- the sky must
         actually differ between slots."""
-        from types import SimpleNamespace
-
         def render(name, interval_minutes):
-            # .second.raw is what the templates read, and deliberately so:
-            # .raw arrives in the report's own group_interval unit (see
-            # test_dome_fragment_survives_any_group_interval).
-            current = SimpleNamespace(
-                interval=SimpleNamespace(
-                    raw=interval_minutes,
-                    second=SimpleNamespace(raw=interval_minutes * 60)))
             return self.render_dome_fragment(name, {
                 'almanac': wxskyfield_almanac, 'sky_page': make_sky_page(),
-                'current': current})
+                'interval_s': interval_minutes * 60})
 
         out0 = render('dome-svg.txt.tmpl', 5)
         out4 = render('dome-svg-4.txt.tmpl', 5)
@@ -1122,15 +1265,6 @@ class TestSampleSkinRenders:
         Declared == emitted, and the last slot askable, on intervals that
         do NOT divide: neither this repo nor liveseasons had such a
         station, which is how it survived four review rounds."""
-        from types import SimpleNamespace
-
-        def current(seconds):
-            return SimpleNamespace(
-                dateTime=SimpleNamespace(raw=TIME_TS),
-                interval=SimpleNamespace(
-                    raw=seconds / 60.0,
-                    second=SimpleNamespace(raw=float(seconds))))
-
         def emitted(seconds):
             """The slots this interval actually writes, and what each one
             says about the set it belongs to."""
@@ -1139,7 +1273,7 @@ class TestSampleSkinRenders:
                 name = 'dome-svg.txt.tmpl' if k == 0 else 'dome-svg-%d.txt.tmpl' % k
                 frag = self.render_dome_fragment(name, {
                     'almanac': wxskyfield_almanac, 'sky_page': make_sky_page(),
-                    'current': current(seconds)})
+                    'interval_s': seconds})
                 if frag.strip():
                     out.append((k, frag))
             return out
@@ -1161,7 +1295,7 @@ class TestSampleSkinRenders:
             # The page's own baked wrapper counts the same set -- it is
             # the one the open page reads its meta from.
             html = self.render(wxskyfield_almanac, sky_page=make_sky_page(),
-                               current=current(interval))
+                               interval_s=interval)
             assert 'data-dome-count="%d"' % want in html, interval
             assert 'data-dome-interval="%d"' % interval in html, interval
 
@@ -1182,7 +1316,7 @@ class TestSampleSkinRenders:
         from the fragment at all.  Pins that it has not come back, and
         keeps the simulation of both arithmetics as the record of what
         fragment-relative walking actually did."""
-        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
+        src = open(JS_PATH).read()
         # 8.3.5 settles the zigzag by removing its cause rather than
         # correcting for it: the cycle base is computed from the
         # STATION's clock against the archive interval, so no arithmetic
@@ -1418,28 +1552,27 @@ class TestSampleSkinRenders:
         assert fetches(True, 200) == 3600 // step
         # Unpaced, the late station is answered with a fetch storm.
         assert fetches(False, 200) > 15 * fetches(True, 200)
-        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
+        src = open(JS_PATH).read()
         assert re.search(r'if \(\(want === null \|\| want\.ts === lastDomeWant\)'
                          r'\s*&& Date\.now\(\) / 1000 - lastDomeFetch < DOME_REFRESH\) \{',
                          src), 'the repeat-want pacing is gone'
         assert re.search(r'lastDomeWant = want === null \? 0 : want\.ts;', src)
 
     def test_pass_chart_fragment_template(self, wxskyfield_sat_almanac):
-        """pass-chart.txt.tmpl, the refetch fragment: the dated head line
+        """The pass-chart fragment, the one the page refetches: the dated head line
         and the chart SVG (dome-track hook included) with a capable
         $sky_page and a pass to show, and EMPTY without a $sky_page --
         the javascript hides the panel on a deliberate empty and keeps
         its chart on junk, so the fragment must never carry error
         text."""
-        from Cheetah.Template import Template
-        source = open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read()
-        out = str(Template(source, searchList=[{
-            'almanac': wxskyfield_sat_almanac, 'sky_page': make_sky_page()}]))
-        assert out.lstrip().startswith('<div class="passhead">')
+        out = self.render_pass_fragment(wxskyfield_sat_almanac, make_sky_page())
+        # Wrapped since 9.0 like a dome fragment: the set's plate and the
+        # report's theme, then skyfield's head line and chart.
+        assert out.lstrip().startswith('<div class="passfrag" data-pass-palette="night" '
+                                       'data-page-theme="dark"><div class="passhead">')
         assert '<svg' in out
         assert '<g class="dome-track" data-body="iss" ' in out
-        empty = str(Template(source, searchList=[{
-            'almanac': wxskyfield_sat_almanac, 'sky_page': None}]))
+        empty = self.render_pass_fragment(wxskyfield_sat_almanac, None)
         assert empty.strip() == ''
 
     def test_pass_chart_states_its_own_window(self, wxskyfield_sat_almanac):
@@ -1451,14 +1584,11 @@ class TestSampleSkinRenders:
         every 8.3.3 browser test into a silent skip while renderPass fell
         back to the feed's window in the field.  Skips only when the
         sibling is older than 2.3.2 (the fallback tier), never on shape."""
-        from Cheetah.Template import Template
         wxskyfield, _ = load_wxskyfield()
         if tuple(int(x) for x in wxskyfield.WXSKYFIELD_VERSION.split('.')[:3]) < (2, 3, 2):
             pytest.skip('weewx-skyfield %s predates data-rise/data-set (2.3.2)'
                         % wxskyfield.WXSKYFIELD_VERSION)
-        source = open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read()
-        out = str(Template(source, searchList=[{
-            'almanac': wxskyfield_sat_almanac, 'sky_page': make_sky_page()}]))
+        out = self.render_pass_fragment(wxskyfield_sat_almanac, make_sky_page())
         m = re.search(r'<g class="dome-track" data-body="iss" '
                       r'data-rise="(\d+)" data-set="(\d+)" ', out)
         assert m, 'the track carries no data-rise/data-set in the expected shape'
@@ -1467,8 +1597,7 @@ class TestSampleSkinRenders:
         assert rise == int(round(nvp.rise.raw)) and sset == int(round(nvp.set.raw))
         assert rise < sset
         # And the include reads exactly these two names off the track.
-        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
-                   encoding='utf-8').read()
+        src = open(JS_PATH, encoding='utf-8').read()
         assert "attrNum(track, 'data-rise')" in src
         assert "attrNum(track, 'data-set')" in src
 
@@ -1500,14 +1629,15 @@ class TestSampleSkinRenders:
         and the baked "updated" stamp) is in test_renders_with_skyfield_almanac;
         the browser half (a viewer's clock half an hour wrong changes
         nothing) is test_viewer_clock_skew_changes_nothing_in_a_real_browser."""
-        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
-                   encoding='utf-8').read()
+        src = open(JS_PATH, encoding='utf-8').read()
         # THE clock: the packet's stamp, or the generation instant.
         assert re.search(r'function serverNow\(\) \{', src)
         assert re.search(r'return latestTs === 0 \? GEN_TS : latestTs;', src), \
             'serverNow is the packet stamp, or GEN_TS before the first packet'
-        assert 'GEN_TS = $int($almanac.time_ts);' in src, \
-            'GEN_TS must be baked from the report generation instant'
+        assert 'GEN_TS = config.gen_ts;' in src, \
+            'GEN_TS must come from the config'
+        assert "'gen_ts': int(alm.time_ts)," in open(PAGE_PY, encoding='utf-8').read(), \
+            'gen_ts must be baked from the report generation instant'
         # The stopwatch, the only way the browser clock is read: packetAge
         # (both readings the browser's own), and no other subtraction of
         # anything from Date.now() but another Date.now() reading.  Every
@@ -1605,7 +1735,7 @@ class TestSampleSkinRenders:
                          r'\s*renderCountdown\(\);\s*renderSatRosters\(\);'
                          r'\s*renderGeo\(\);\s*renderDome\(nowTs\);\s*renderPass\(\);\s*\}',
                          src), 'the five packet paints are not in one place'
-        assert re.search(r'addLoadEvent\(function\(\) \{\s*if \(renderWanted && latest !== null\) \{\s*renderWanted = false;'
+        assert re.search(r'function renderOnLoad\(\) \{(?:\s*//[^\n]*\n)*\s*if \(renderWanted && latest !== null\) \{\s*renderWanted = false;'
                          r'\s*try \{\s*renderPacket\(Date\.now\(\) / 1000\);\s*\} catch',
                          code(src)), 'the load-time re-render of a mid-parse first packet is gone or unguarded'
         # The pass chart before a packet: untouched, and no load-time
@@ -1639,24 +1769,20 @@ class TestSampleSkinRenders:
         """The Next Visible Pass chart follows the page's plate too --
         the other refetched fragment, the same flicker trap (it
         refetches every 300 s)."""
-        from Cheetah.Template import Template
-        source = open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read()
-        out = str(Template(source, searchList=[{
-            'almanac': wxskyfield_sat_almanac,
-            'sky_page': make_sky_page(theme='light')}]))
+        out = self.render_pass_fragment(wxskyfield_sat_almanac,
+                                        make_sky_page(theme='light'))
         assert '<svg' in out
         assert '#efece2' in out.lower()
         assert '#161f3d' not in out.lower()
 
     def test_pass_chart_fragment_empty_without_satellites(self, wxskyfield_almanac):
         """No configured satellites: pass_chart_html itself returns '' and
-        the fragment ships empty -- the hidden-panel signal, not an
-        error."""
-        from Cheetah.Template import Template
-        source = open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read()
-        out = str(Template(source, searchList=[{
-            'almanac': wxskyfield_almanac, 'sky_page': make_sky_page()}]))
-        assert out.strip() == ''
+        the fragment ships as an EMPTY wrapper -- the hidden-panel signal,
+        not an error, and still carrying the report's theme for a page
+        whose only fragment this is."""
+        out = self.render_pass_fragment(wxskyfield_almanac, make_sky_page())
+        assert re.match(r'<div class="passfrag" data-pass-palette="night" '
+                        r'data-page-theme="dark"></div>$', out.strip())
 
     def test_javascript_reads_only_the_field_set(self):
         """The javascript's loop-data keys, expanded the way the include
@@ -1664,7 +1790,8 @@ class TestSampleSkinRenders:
         the literal moon-phase and dateTime keys), must equal
         PAGE_FIELDS exactly -- the skin consumes the whole
         page field set and nothing else."""
-        include = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
+        include = open(JS_PATH).read()
+        page_py = open(PAGE_PY, encoding='utf-8').read()
         m = re.search(r'var GEO_BODIES = \[(.*?)\];', include, re.DOTALL)
         assert m is not None
         bodies = re.findall(r"'([a-z_]+)'", m.group(1))
@@ -1710,7 +1837,7 @@ class TestSampleSkinRenders:
         # installer-DEFAULT satellites only (iss, tiangong); extra
         # [[Satellites]] entries take the same suffix set by hand -- the
         # README documents the pattern.
-        assert 'satellite_names()' in include
+        assert 'satellite_names()' in page_py
         # Per satellite, the javascript reads two pass chains through one
         # row renderer (renderPassRow composes base + attribute): the
         # chart-side next_visible_pass and the dome-side next_pass, the
@@ -1744,7 +1871,7 @@ class TestSampleSkinRenders:
         # carries the installer-DEFAULT comets (halley, hale_bopp);
         # extra [[Comets]] entries take the same six-entry pattern
         # (--add-comet writes it).
-        assert 'comet_names()' in include
+        assert 'comet_names()' in page_py
         for literal in ('.mag', '.perihelion.unix_epoch.raw'):
             assert "'%s'" % literal in include, literal
         for comet in ('halley', 'hale_bopp'):
@@ -1764,30 +1891,43 @@ class TestSampleSkinRenders:
             assert "'%s'" % legacy_attr in include, legacy_attr
 
     def test_no_window_global_collisions(self):
-        """The include's script runs at window scope, so its top-level
-        names must never shadow window built-ins: `var history` cost hours
-        on 2026-07-23 -- the declaration silently fails to bind against
-        the read-only History object and everything downstream throws.
-        This lints every top-level var, function and bare assignment in
-        the include against the hazardous window property names."""
-        BANNED = {'history', 'location', 'name', 'top', 'parent', 'self',
-                  'frames', 'length', 'status', 'opener', 'closed', 'event',
-                  'origin', 'screen', 'navigator', 'document', 'window',
-                  'external', 'crypto', 'performance', 'print', 'close',
-                  'open', 'stop', 'focus', 'blur', 'scroll', 'alert',
-                  'confirm', 'prompt', 'toolbar', 'menubar', 'scrollbars',
-                  'statusbar', 'locationbar', 'personalbar', 'localStorage',
-                  'sessionStorage', 'indexedDB', 'caches', 'customElements',
-                  'frameElement', 'speechSynthesis', 'visualViewport'}
-        include = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
-        # Top level in this file is two-space indentation directly under
-        # <script>; nested code is indented further.
-        names = set(re.findall(r'^  var ([A-Za-z_$][\w$]*)', include, re.MULTILINE))
-        names |= set(re.findall(r'^  function ([A-Za-z_$][\w$]*)', include, re.MULTILINE))
-        names |= set(re.findall(r'^  ([A-Za-z_$][\w$]*) =', include, re.MULTILINE))
-        assert names, 'the top-level name scan matched nothing; fix the regexes'
-        collisions = names & BANNED
-        assert not collisions, collisions
+        """Through 8.5 the script ran at window scope, and `var history`
+        cost hours on 2026-07-23: the declaration silently fails to bind
+        against the read-only History object and everything downstream
+        throws.  Since 9.0 celestial.js is one function scope publishing
+        one global, so the class of bug is closed by construction -- this
+        pins the construction.  Every line of the file is inside the
+        wrapper (or the header comment above it), the wrapper returns the
+        one object, and no top-level name is assigned without `var` (a
+        bare assignment inside a function would leak a global in sloppy
+        mode; every name the file assigns at wrapper level is declared
+        there).  The browser half is
+        test_celestial_js_publishes_one_global_in_a_real_browser."""
+        js = open(JS_PATH, encoding='utf-8').read()
+        body = js[js.index('*/') + 2:]           # past the header comment
+        lines = body.strip('\n').split('\n')
+        assert lines[0] == 'var celestial = (function () {'
+        assert lines[-1] == '})();'
+        assert lines[-2] == '  return {start: start};'
+        outside = [l for l in lines[1:-1] if l and not l.startswith('  ')]
+        assert outside == [], outside
+        # Every name assigned at wrapper level is declared at wrapper level.
+        declared = set(re.findall(r'^  var ([A-Za-z_$][\w$]*)', body, re.M))
+        declared |= {n for line in re.findall(r'^  var (.*);', body, re.M)
+                     for n in re.findall(r'([A-Za-z_$][\w$]*)(?:\s*=|\s*,|$)', line)}
+        declared |= set(re.findall(r'^  function ([A-Za-z_$][\w$]*)', body, re.M))
+        # ...and a function's parameters are declared in it (start
+        # normalizes its config, fmtDHMS floors its seconds).
+        for params in re.findall(r'function [A-Za-z_$]*\(([^)]*)\)', body):
+            declared |= {p.strip() for p in params.split(',') if p.strip()}
+        assigned = set(re.findall(r'^    ([A-Za-z_$][\w$]*) = ', body, re.M))
+        assert assigned - declared == set(), assigned - declared
+        # The only thing the file ever assigns on window is onload, which
+        # addLoadEvent chains (as it always has); nothing else is put there.
+        assert set(re.findall(r'window\.([A-Za-z_$][\w$]*) =', js)) == {'onload'}
+        # And nothing Cheetah survived the split: no directive, no tag.
+        assert not re.search(r'^\s*#', js, re.M)
+        assert not re.search(r'\$[A-Za-z_]', js)
 
     def test_page_runs_in_a_real_browser(self, wxskyfield_sat_almanac, tmp_path):
         """The one test that executes the page's javascript where it
@@ -1814,8 +1954,6 @@ class TestSampleSkinRenders:
         # Three packets, 2 s apart, computed by the same registered
         # almanac the page rendered from (the fixture keeps it registered
         # for the duration of this test).
-        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-                  'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
         # The packets carry the BROWSER's clock, not the fixture's, while
         # their astronomy stays the fixture's.  A real station's feed and
         # the machine reading it agree on the time; this harness would
@@ -1824,61 +1962,13 @@ class TestSampleSkinRenders:
         # puts the dome's marks back where the backdrop drew them.  The
         # embedded backdrop is restamped below for the same reason.
         wall = int(time.time())
-        packets = []
-        for i, ts in enumerate((TIME_TS, TIME_TS + 2, TIME_TS + 4)):
-            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
-            r = {'current.dateTime.raw': wall + 2 * i,
-                 'almanac.moon.phase': alm.moon.phase,
-                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
-                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
-            for b in bodies:
-                obj = getattr(alm, b)
-                r['almanac.%s.az' % b] = obj.az
-                r['almanac.%s.alt' % b] = obj.alt
-                r['almanac.%s.earth_distance' % b] = obj.earth_distance
-            # The satellite layer's keys, from the same registered almanac
-            # (Tiangong's pass fields serialize as honest JSON nulls).
-            for s in ('iss', 'tiangong'):
-                sat = getattr(alm, s)
-                r['almanac.%s.az' % s] = sat.az
-                r['almanac.%s.alt' % s] = sat.alt
-                r['almanac.%s.sunlit' % s] = sat.sunlit
-                r['almanac.%s.label' % s] = str(sat.label)
-                p = sat.next_visible_pass
-                r['almanac.%s.next_visible_pass.rise.unix_epoch.raw' % s] = p.rise.raw
-                r['almanac.%s.next_visible_pass.set.unix_epoch.raw' % s] = p.set.raw
-                r['almanac.%s.next_visible_pass.max_altitude.degree_angle.raw' % s] = \
-                    p.max_altitude.raw
-                r['almanac.%s.next_visible_pass.duration.second.raw' % s] = p.duration.raw
-                r['almanac.%s.next_visible_pass.rise_azimuth.ordinal_compass' % s] = \
-                    str(p.rise_azimuth.ordinal_compass())
-                r['almanac.%s.next_visible_pass.culmination_azimuth.ordinal_compass' % s] = \
-                    str(p.culmination_azimuth.ordinal_compass())
-                r['almanac.%s.next_visible_pass.set_azimuth.ordinal_compass' % s] = \
-                    str(p.set_azimuth.ordinal_compass())
-                p2 = sat.next_pass
-                r['almanac.%s.next_pass.rise.unix_epoch.raw' % s] = p2.rise.raw
-                r['almanac.%s.next_pass.set.unix_epoch.raw' % s] = p2.set.raw
-                r['almanac.%s.next_pass.max_altitude.degree_angle.raw' % s] = \
-                    p2.max_altitude.raw
-                r['almanac.%s.next_pass.duration.second.raw' % s] = p2.duration.raw
-                r['almanac.%s.next_pass.rise_azimuth.ordinal_compass' % s] = \
-                    str(p2.rise_azimuth.ordinal_compass())
-                r['almanac.%s.next_pass.culmination_azimuth.ordinal_compass' % s] = \
-                    str(p2.culmination_azimuth.ordinal_compass())
-                r['almanac.%s.next_pass.set_azimuth.ordinal_compass' % s] = \
-                    str(p2.set_azimuth.ordinal_compass())
-                r['almanac.%s.next_pass.visible' % s] = p2.visible
-            packets.append(loop_file(r).encode())
+        packets = sat_feed_packets(wall)
 
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
         html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % wall,
                          html, count=1)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         served = {'n': 0}
 
@@ -1921,13 +2011,13 @@ class TestSampleSkinRenders:
             "        'errors': errors,\n"
             "        'rate': page.inner_text('#geo-rate-mercury'),\n"
             "        'dots': page.eval_on_selector_all(\n"
-            "            '#dial .geodot:not([display])', 'els => els.length'),\n"
+            "            '#dial .cel-geodot:not([display])', 'els => els.length'),\n"
             "        'trails': page.eval_on_selector_all(\n"
-            '            \'#dial line.trail:not([display="none"])\', "els => els.length"),\n'
+            '            \'#dial line.cel-trail:not([display="none"])\', "els => els.length"),\n'
             "        'dome': page.eval_on_selector_all('#dome-svg svg', 'els => els.length'),\n"
             "        'nudged': page.eval_on_selector_all(\n"
             "            '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
-            "        'satdots': page.eval_on_selector_all('#dome-svg .satdot', 'els => els.length'),\n"
+            "        'satdots': page.eval_on_selector_all('#dome-svg .cel-satdot', 'els => els.length'),\n"
             "        'satline': page.inner_text('#sat-line-iss'),\n"
             "        'passchart': page.eval_on_selector_all('#pass-chart svg', 'els => els.length'),\n"
             "        'passwhen': page.inner_text('#pass-chart .passwhen'),\n"
@@ -2026,9 +2116,7 @@ class TestSampleSkinRenders:
 
         (tmp_path / 'index.html').write_text(
             self.render(wxskyfield_almanac, sky_page=make_sky_page()))
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *a):
@@ -2107,9 +2195,7 @@ class TestSampleSkinRenders:
         far = TIME_TS + 86400
         html = rewindow_pass_chart(html, far, far + 600)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
         # The fragment refreshDome swaps in when the fast-forwarded minute
         # arrives: the same dome re-rendered, under a fresh wrapper
         # identity.  The dome/pass chip machinery is independent of loop
@@ -2222,10 +2308,10 @@ class TestSampleSkinRenders:
             "    out['swapped_chip'] = chip()\n"
             "    out['chips'] = page.evaluate(\n"
             '        """() => document.querySelectorAll(\'.skytip\').length""")\n'
-            "    mars = '#dial circle.fill-mars'\n"
+            "    mars = '#dial circle.cel-fill-mars'\n"
             '    page.wait_for_selector(mars, timeout=15000)\n'
             "    out['dial_title'] = page.evaluate(\n"
-            '        """() => document.querySelector(\'#dial circle.fill-mars\')\n'
+            '        """() => document.querySelector(\'#dial circle.cel-fill-mars\')\n'
             '            .parentNode.querySelector(\'title\').textContent""")\n'
             '    tap(mars)\n'
             "    out['dial_chip'] = chip()\n"
@@ -2312,9 +2398,7 @@ class TestSampleSkinRenders:
         html = rewindow_pass_chart(html, int(time.time()) - 60,
                                    int(time.time()) + 600)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         # The generated look, straight from the rendered chart (the only
         # data-sunlit iss group on the page: the ISS is below the horizon
@@ -2398,7 +2482,7 @@ class TestSampleSkinRenders:
             "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
             "      return c !== null && c.getAttribute('fill') === '%(sfill)s' &&\n"
             "             c.getAttribute('stroke') === '%(sstroke)s' &&\n"
-            "             document.querySelector('#dome-svg .satdot.shadow') !== null;\n"
+            "             document.querySelector('#dome-svg .cel-satdot.cel-shadow') !== null;\n"
             '    }""", timeout=20000)\n'
             '    # Sunlit returns: the chart dot flips to the inversion of its\n'
             '    # generated shadow look, in step with the dome, mid-sweep.\n'
@@ -2406,8 +2490,8 @@ class TestSampleSkinRenders:
             "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
             "      return c !== null && c.getAttribute('fill') === '%(lfill)s' &&\n"
             "             c.getAttribute('stroke') === '%(lstroke)s' &&\n"
-            "             document.querySelector('#dome-svg .satdot') !== null &&\n"
-            "             document.querySelector('#dome-svg .satdot.shadow') === null;\n"
+            "             document.querySelector('#dome-svg .cel-satdot') !== null &&\n"
+            "             document.querySelector('#dome-svg .cel-satdot.cel-shadow') === null;\n"
             '    }""", timeout=20000)\n'
             "    out = {'errors': errors,\n"
             "           'swept': page.eval_on_selector_all(\n"
@@ -2457,7 +2541,6 @@ class TestSampleSkinRenders:
         import socketserver
         import subprocess
         import threading
-        from Cheetah.Template import Template
 
         pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
                              'tools', 'pwenv', 'bin', 'python')
@@ -2466,12 +2549,11 @@ class TestSampleSkinRenders:
 
         sky_page = make_sky_page()
         html = self.render(wxskyfield_sat_almanac, sky_page=sky_page)
-        # The refetched fragment is the REAL fragment template's output --
-        # what production serves -- re-windowed identically below, so a
-        # refetch brings back the same finished chart.
-        frag = str(Template(open(os.path.join(SKIN_DIR, 'pass-chart.txt.tmpl')).read(),
-                            searchList=[{'almanac': wxskyfield_sat_almanac,
-                                         'sky_page': sky_page}]))
+        # The refetched fragment is the REAL fragment -- what the
+        # FragmentGenerator writes and production serves -- re-windowed
+        # identically below, so a refetch brings back the same finished
+        # chart.
+        frag = self.render_pass_fragment(wxskyfield_sat_almanac, sky_page)
         # The chart's own window -- in progress now, over in a few
         # seconds -- is anchored to the browser's FIRST REQUEST for the
         # page, at serve time, so nothing that precedes it (a fresh
@@ -2480,9 +2562,7 @@ class TestSampleSkinRenders:
         # them.  A pre-2.3.2 sibling skips here, as everywhere.
         if not re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
             pytest.skip('this weewx-skyfield emits no data-rise/data-set (pre-2.3.2)')
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         win = {}
 
         def windowed(markup):
@@ -2690,9 +2770,7 @@ class TestSampleSkinRenders:
         # of every roster line -- this test is about the chart alone.
         html = rewindow_pass_chart(html, PACKET_TS + 3600, PACKET_TS + 4200)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         # A live feed, one packet repeated: renderPass returns at its
         # latest === null guard until one lands, and a single stamp keeps
         # the page's clock still, which is the state the latch is for.
@@ -2799,9 +2877,7 @@ class TestSampleSkinRenders:
         html = rewindow_pass_chart(html, None, None)      # a pre-2.3.2 chart
         assert 'data-set=' not in html.split('id="pass-chart"', 1)[1].split('</svg>', 1)[0]
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         state = {'n': 0, 't0': None}
 
@@ -2897,17 +2973,16 @@ class TestSampleSkinRenders:
         shape: no seedAppliedFrag, no load-time refetch, the first-packet
         refetch in updateCurrent, the same-or-older guard, and the
         loadend re-check that closes the in-flight window."""
-        src = open(os.path.join(SKIN_DIR, 'realtime_updater.inc'),
-                   encoding='utf-8').read()
+        src = open(JS_PATH, encoding='utf-8').read()
         assert 'seedAppliedFrag' not in src
         # No UNCONDITIONAL load-time refetch.  The one load handler that
         # can call refreshDome does so only to make a refetch that was
         # asked for while the document was still parsing (see below).
-        for m_ in re.finditer(r'addLoadEvent\(function\(\) \{(.*?)\n  \}\);', src, re.S):
-            body = m_.group(1)
-            if 'refreshDome' in body:
-                assert re.search(r'if \(domeRefetchWanted\) \{\s*domeRefetchWanted = false;\s*refreshDome\(\);',
-                                 body), 'an unguarded load-time refetch is back'
+        handlers = re.findall(r'^\s*addLoadEvent\((\w+)\);', src, re.M)
+        assert handlers == ['updateCurrent', 'renderOnLoad', 'refetchDomeOnLoad'], handlers
+        body = re.search(r'function refetchDomeOnLoad\(\) \{(.*?)\n  \}', src, re.S).group(1)
+        assert re.search(r'if \(domeRefetchWanted\) \{\s*domeRefetchWanted = false;\s*refreshDome\(\);',
+                         body), 'an unguarded load-time refetch is back'
         # A refetch asked for while the document is still streaming --
         # the first packet from the eval-armed interval poll on a slow
         # link -- is deferred to that handler, never made against an
@@ -2954,14 +3029,15 @@ class TestSampleSkinRenders:
         # generated with, onto the station's real time.
         assert 'if (prevTs === 0) {' not in src, \
             'the first packet has a special case again'
-        # And the template really does put the script above the dome, which
-        # is why the response handler must read the page rather than a
-        # load-time memory of it.
+        # And the template really does put the script above the dome (the
+        # dome_html call, whose markup carries #dome-svg), which is why
+        # the response handler must read the page rather than a load-time
+        # memory of it.
         tmpl = open(os.path.join(SKIN_DIR, 'index.html.tmpl'),
                     encoding='utf-8').read()
-        assert (tmpl.index('realtime_updater.inc')
-                < tmpl.index('id="dome-svg"')), \
-            'the include no longer precedes the dome; the ordering argument above changes'
+        assert (tmpl.index('$panels.config_script($almanac, $filename)')
+                < tmpl.index('$panels.dome_html($almanac)')), \
+            'the config block no longer precedes the dome; the ordering argument above changes'
 
     def test_freeze_restores_the_drawn_sky_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -3000,9 +3076,7 @@ class TestSampleSkinRenders:
         html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
                          html, count=1)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         def packet(ts, sun_alt):
             return loop_file({
@@ -3067,7 +3141,7 @@ class TestSampleSkinRenders:
             "        'live_hidden': page.eval_on_selector_all(\n"
             "            '#dome-svg g.dome-body[display]', 'els => els.length'),\n"
             "        'live_satdots': page.eval_on_selector_all(\n"
-            "            '#dome-svg .satdot', 'els => els.length'),\n"
+            "            '#dome-svg .cel-satdot', 'els => els.length'),\n"
             '    }\n'
             '    # ...and then the station clock leaps and the freeze engages.\n'
             "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=20000)\n"
@@ -3079,7 +3153,7 @@ class TestSampleSkinRenders:
             "        '#dome-svg g.dome-body[display], #dome-svg text[data-body][display]',\n"
             "        'els => els.length')\n"
             "    out['satdots'] = page.eval_on_selector_all(\n"
-            "        '#dome-svg .satdot', 'els => els.length')\n"
+            "        '#dome-svg .cel-satdot', 'els => els.length')\n"
             "    out['errors'] = errors\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -3133,9 +3207,7 @@ class TestSampleSkinRenders:
         html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
                          html, count=1)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         def packet(ts):
             return loop_file({
@@ -3195,7 +3267,7 @@ class TestSampleSkinRenders:
             "    out = {'live_nudged': page.eval_on_selector_all(\n"
             "        '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
             "        'live_satdots': page.eval_on_selector_all(\n"
-            "            '#dome-svg .satdot', 'els => els.length')}\n"
+            "            '#dome-svg .cel-satdot', 'els => els.length')}\n"
             '    # Now the feed repeats itself while the clock runs past\n'
             '    # EXTRAP_MAX.  Every poll still answers 200.  Stepped, not\n'
             '    # leapt: each step needs the event loop back to deliver the\n'
@@ -3210,7 +3282,7 @@ class TestSampleSkinRenders:
             "        '#dome-svg g.dome-body[display], #dome-svg text[data-body][display]',\n"
             "        'els => els.length')\n"
             "    out['satdots'] = page.eval_on_selector_all(\n"
-            "        '#dome-svg .satdot', 'els => els.length')\n"
+            "        '#dome-svg .cel-satdot', 'els => els.length')\n"
             "    out['errors'] = errors\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -3270,9 +3342,7 @@ class TestSampleSkinRenders:
         # the embedded backdrop's data-dome-ts is a year behind the feed.
         (tmp_path / 'index.html').write_text(
             self.render(wxskyfield_sat_almanac, sky_page=make_sky_page()))
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
         # The first-packet refetch (8.3.5) fires within the test's life, so
         # which reason the line carries is decided here: a fragment that
         # answers with the same old sky, or nothing to answer at all.
@@ -3365,7 +3435,7 @@ class TestSampleSkinRenders:
             "          document.querySelectorAll('#dome-svg g.dome-body[transform]')\n"
             "            .forEach(function(g) { out.push(g.getAttribute('data-body') +\n"
             "                                   ':' + g.getAttribute('transform')); });\n"
-            "          document.querySelectorAll('#dome-svg .satdot').forEach(\n"
+            "          document.querySelectorAll('#dome-svg .cel-satdot').forEach(\n"
             "            function(c) { out.push('sat:' + c.getAttribute('cx') +\n"
             "                                   ',' + c.getAttribute('cy')); });\n"
             "          return out.join('|'); }''')\n"
@@ -3374,10 +3444,10 @@ class TestSampleSkinRenders:
             "        'stale': page.inner_text('#dome-stale'),\n"
             "        'nudged': page.eval_on_selector_all(\n"
             "            '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
-            "        'satdots': page.eval_on_selector_all('#dome-svg .satdot', 'els => els.length'),\n"
+            "        'satdots': page.eval_on_selector_all('#dome-svg .cel-satdot', 'els => els.length'),\n"
             "        'marks': marks(),\n"
             "        'dialnudged': page.eval_on_selector_all(\n"
-            "            '#dial .geodot:not([display])', 'els => els.length'),\n"
+            "            '#dial .cel-geodot:not([display])', 'els => els.length'),\n"
             "        'rate': page.inner_text('#geo-rate-mercury'),\n"
             "        'anyline': page.inner_text('#sat-any-line-iss'),\n"
             "        'passline': page.inner_text('#sat-line-iss'),\n"
@@ -3457,9 +3527,7 @@ class TestSampleSkinRenders:
 
         (tmp_path / 'index.html').write_text(
             self.render(wxskyfield_almanac, sky_page=make_sky_page()))
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         # On a cycle boundary, so the walk asks for slot 0 and this
         # harness needs only the one file (the same staging the frozen-
@@ -3612,9 +3680,7 @@ class TestSampleSkinRenders:
                              'data-dome-slot="%d"' % slot, f, count=1)
         polls = {'n': 0}
         asked = []                     # every backdrop fragment requested
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         def packet_for(ts):
             return loop_file({
@@ -3746,9 +3812,7 @@ class TestSampleSkinRenders:
 
         html = self.render(wxskyfield_almanac, sky_page=make_sky_page())
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         page_dome_ts = relib.search(r'data-dome-ts="(\d+)"', html).group(1)
         # The fragment the station would serve for slot 0 of THIS cycle:
         # the same sky the page holds, stamped the same.
@@ -3870,9 +3934,7 @@ class TestSampleSkinRenders:
         page_dome_ts = int(relib.search(r'data-dome-ts="(\d+)"', html).group(1))
         cut = html.index('id="dome-svg"') + 2000      # well inside the dome
         head, tail = html[:cut].encode(), html[cut:].encode()
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         frag = self.render_dome_fragment('dome-svg.txt.tmpl', {
             'sky_page': make_sky_page(),
             'almanac': wxskyfield_almanac,
@@ -4019,13 +4081,12 @@ class TestSampleSkinRenders:
 
         html = self.render(wxskyfield_almanac, sky_page=make_sky_page())
         baked_dark = relib.search(r'id="chip-dark-v"[^>]*>([^<]*)<', html).group(1)
-        cut = html.index('<div class="countdown')
+        cut = html.index('<div class="cel-countdown')
         head, tail = html[:cut].encode(), html[cut:].encode()
         assert b'id="chip-dark-v"' not in head
-        assert b'setInterval(updateCurrent' in head     # the include has parsed and run
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        # The config block has parsed and run: start() armed the poll.
+        assert b'celestial.start({' in head and b'</script>' in head.split(b'celestial.start({')[1]
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         now = int(time.time())
         packet = loop_file({
             'current.dateTime.raw': now,
@@ -4211,9 +4272,7 @@ class TestSampleSkinRenders:
 
         polls = {'n': 0}
         asked = []
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
@@ -4339,9 +4398,7 @@ class TestSampleSkinRenders:
                                r'\g<1>%d\g<2>' % int(now + 5000), html)
         assert n_subs == 1
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         def packet(i, rolled):
             return loop_file({
@@ -4549,9 +4606,7 @@ class TestSampleSkinRenders:
         assert '<span id="last-update">%s</span>' % gen_hms in html
         baked_dark = re.search(r'id="chip-dark-v"[^>]*>([^<]*)<', html).group(1)
         (tmp_path / 'index.html').write_text(html)
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
         def packet(i):
             return loop_file({
@@ -4748,9 +4803,7 @@ class TestSampleSkinRenders:
 
         (tmp_path / 'index.html').write_text(
             self.render(wxskyfield_comet_almanac, sky_page=make_sky_page()))
-        for asset in ('celestial.css', 'sky.js'):
-            (tmp_path / asset).write_bytes(
-                open(os.path.join(SKIN_DIR, asset), 'rb').read())
+        write_assets(tmp_path)
 
         served = {'n': 0}
 
@@ -4792,12 +4845,12 @@ class TestSampleSkinRenders:
             '    tail_ok = page.evaluate("""() => {\n'
             '      // The visible comet groups: diamond center from the path\n'
             '      // d, center-ray direction vs the (comet - sun) vector.\n'
-            "      var sun = document.querySelector('#dial .geodot.fill-sun');\n"
+            "      var sun = document.querySelector('#dial .cel-geodot.cel-fill-sun');\n"
             '      if (sun === null) { return false; }\n'
             "      var sx = parseFloat(sun.getAttribute('cx'));\n"
             "      var sy = parseFloat(sun.getAttribute('cy'));\n"
             '      var ok = 0;\n'
-            "      document.querySelectorAll('#dial g.geocomet').forEach(function(g) {\n"
+            "      document.querySelectorAll('#dial g.cel-geocomet').forEach(function(g) {\n"
             "        if (g.getAttribute('display') === 'none') { return; }\n"
             "        var d = g.querySelector('path').getAttribute('d');\n"
             "        var m = /M ([\\\\d.-]+),([\\\\d.-]+)/.exec(d);\n"
@@ -4812,7 +4865,7 @@ class TestSampleSkinRenders:
             '    }""")\n'
             '    titles = page.evaluate("""() => {\n'
             '      var out = [];\n'
-            "      document.querySelectorAll('#dial g.geocomet title').forEach(function(t) {\n"
+            "      document.querySelectorAll('#dial g.cel-geocomet title').forEach(function(t) {\n"
             '        out.push(t.textContent);\n'
             '      });\n'
             '      return out;\n'
@@ -4820,15 +4873,15 @@ class TestSampleSkinRenders:
             '    out = {\n'
             "        'errors': errors,\n"
             "        'faint': page.eval_on_selector_all(\n"
-            "            '#dial path.cometdot.faint', 'els => els.length'),\n"
+            "            '#dial path.cel-cometdot.cel-faint', 'els => els.length'),\n"
             "        'solid': page.eval_on_selector_all(\n"
-            "            '#dial path.cometdot:not(.faint)', 'els => els.length'),\n"
+            "            '#dial path.cel-cometdot:not(.cel-faint)', 'els => els.length'),\n"
             "        'shown': page.eval_on_selector_all(\n"
-            '            \'#dial g.geocomet:not([display="none"])\', "els => els.length"),\n'
+            '            \'#dial g.cel-geocomet:not([display="none"])\', "els => els.length"),\n'
             "        'rays': page.eval_on_selector_all(\n"
             '            \'#dial line.comet-tail:not([display="none"])\', "els => els.length"),\n'
             "        'trails': page.eval_on_selector_all(\n"
-            '            \'#dial line.trail.stroke-comet:not([display="none"])\', "els => els.length"),\n'
+            '            \'#dial line.cel-trail.cel-stroke-comet:not([display="none"])\', "els => els.length"),\n'
             "        'tail_ok': tail_ok,\n"
             "        'titles': titles,\n"
             "        'dome_halley': page.eval_on_selector_all(\n"
@@ -4884,8 +4937,7 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
-        (tmp_path / 'celestial.css').write_bytes(
-            open(os.path.join(SKIN_DIR, 'celestial.css'), 'rb').read())
+        write_assets(tmp_path)
 
         # No special-casing of /gauge-data/loop-data.txt: the poll gets the
         # stock HTML 404 page, exactly what a misconfigured server serves.
@@ -4946,8 +4998,7 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
-        (tmp_path / 'celestial.css').write_bytes(
-            open(os.path.join(SKIN_DIR, 'celestial.css'), 'rb').read())
+        write_assets(tmp_path)
         record = {'current.dateTime.raw': int(time.time()),
                   'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                   'almanac.sun.earth_distance': 1.016}
@@ -4998,24 +5049,31 @@ class TestSampleSkinRenders:
             httpd.shutdown()
 
     def test_no_hex_colors_in_cheetah_files(self):
-        """Cheetah owns '#': hex color literals in the template or the
-        javascript include would be eaten as directives/comments.  All
-        colors must come from classes in celestial.css."""
-        for name in ('index.html.tmpl', 'realtime_updater.inc'):
+        """Cheetah owns '#': a hex color literal in the template would be
+        eaten as a directive or comment.  celestial.js is not Cheetah any
+        more, and carries none either: every color is a class in
+        celestial.css, which is the token set a consumer restyles."""
+        for name in ('index.html.tmpl', 'celestial.js'):
             source = open(os.path.join(SKIN_DIR, name)).read()
             assert not re.search(r'#[0-9A-Fa-f]{6}\b', source), name
 
-    def test_template_constants_consistent(self):
-        """The template and the javascript include each hardcode the AU
-        conversion constants; they must agree with each other and with the
-        IAU values.  The AU-per-light-year divisor (Proxima's dial label)
-        lives in the include."""
-        template = open(os.path.join(SKIN_DIR, 'index.html.tmpl')).read()
-        include = open(os.path.join(SKIN_DIR, 'realtime_updater.inc')).read()
-        for source, name in ((template, 'index.html.tmpl'), (include, 'realtime_updater.inc')):
-            per_au = {float(m) for m in re.findall(r'\$per_au = ([0-9.e+]+)', source)}
-            assert per_au == {9.2955807e7, 1.4959787e8}, name
-        assert re.search(r'AU_PER_LY = 63241\.077', include)
+    def test_page_constants_in_step_with_the_script(self):
+        """The Python that first-paints the panels and the javascript that
+        keeps them live must agree on what they share: the AU conversion
+        constants (the roster's first paint and the config the script
+        converts with -- pinned to the IAU values, since nothing else
+        carries a second copy now that the template no longer does), the
+        roster's body list and the windowed guests' 30-day window.  The
+        AU-per-light-year divisor (Proxima's dial label) lives in
+        celestial.js alone."""
+        js = open(JS_PATH).read()
+        assert (celestial_page.PER_AU_MILE, celestial_page.PER_AU_KM) == (9.2955807e7, 1.4959787e8)
+        assert re.search(r'AU_PER_LY = 63241\.077', js)
+        m = re.search(r'var GEO_BODIES = \[(.*?)\];', js, re.DOTALL)
+        assert m is not None
+        assert tuple(re.findall(r"'([a-z_]+)'", m.group(1))) == celestial_page.GEO_BODIES
+        assert re.search(r'var CHIP_WINDOW_SEC = 30 \* 86400;', js)
+        assert celestial_page.CHIP_WINDOW_S == 30 * 86400
 
     def test_sky_js_and_skytip_in_step_with_skyfield(self):
         """sky.js is COPIED from weewx-skyfield -- that repo is the source
@@ -5087,16 +5145,6 @@ class TestSampleSkinRenders:
             assert m is not None, name
             return m.group(1).upper()
 
-        def label_fill(css, cls):
-            """The fill of a class's OWN rule.  Anchored at line start so the
-            `:root.theme-light` overrides -- which this night-only page does
-            not copy -- can never be the one that matches."""
-            m = re.search(r'^\.%s\{([^}]*)\}' % cls, css, re.M | re.S)
-            assert m is not None, cls
-            fill = re.search(r'fill:\s*(#[0-9A-Fa-f]{6})', m.group(1))
-            assert fill is not None, cls
-            return fill.group(1).upper()
-
         # skyfield's 'night' palette is the one celestial gets: the template
         # calls dome_svg($almanac) with no palette argument, and dome_svg
         # defaults to 'night'.
@@ -5111,8 +5159,8 @@ class TestSampleSkinRenders:
 
         assert token(cel_css, 'grid') == palette_color('grid')
         assert token(cel_css, 'c-mars') == palette_color('mars')
-        for cls in ('skylab', 'starlab', 'conlab'):
-            assert label_fill(cel_css, cls) == label_fill(sky_css, cls), cls
+        # (The three chart-label classes are compared on both plates
+        # below, tokens resolved.)
 
         # The LIGHT plate (8.3).  Here the whole token set is skyfield's,
         # not just two values: on this plate celestial renders the dome
@@ -5121,7 +5169,7 @@ class TestSampleSkinRenders:
         # John's rule cutting this release: if the light theme hardcodes
         # body colors, they come FROM PALETTES['light'] rather than being
         # invented.  This is that rule, enforced.
-        light_block = re.search(r':root\.theme-light\{(.*?)\}', cel_css, re.S)
+        light_block = re.search(r'^\.theme-light, .*?\{(.*?)\n\}', cel_css, re.M | re.S)
         assert light_block is not None, 'the light theme block is gone'
 
         def light_token(name):
@@ -5178,22 +5226,82 @@ class TestSampleSkinRenders:
         assert light_token('c-proxima') == light_color('moon', 'ring')
 
         def light_rule_fill(css, cls):
-            m = re.search(r':root\.theme-light \.%s\{([^}]*)\}' % cls, css)
+            m = re.search(r'.theme-light \.cel-%s\{([^}]*)\}' % cls, css)
             assert m is not None, cls
             fill = re.search(r'fill:\s*(#[0-9A-Fa-f]{6}|var\(--[a-z]+\))',
                              m.group(1))
             assert fill is not None, cls
             return fill.group(1).upper()
 
+        # celestial writes the three chart-label fills as tokens (one rule
+        # per class, scoped by plate for a fragment on the other plate
+        # from the page); sky.css writes literals plus a :root.theme-light
+        # rule.  Resolve both to values and they must agree on both plates.
+        def plate_fill(css, cls, plate):
+            # Line-anchored: a comment may say ':root' too.
+            # Either shape: celestial keys its plates on a CLASS since 9.0 (so a
+            # consumer can put the plate on its own container), skyfield still
+            # keys them on :root.
+            block = re.search(r'^(?::root)?\.theme-light[^{\n]*\{(.*?)\n\}' if plate == 'light'
+                              else r'^:root[^{\n]*\{(.*?)\n\}', css, re.S | re.M).group(1)
+            rule = None
+            if plate == 'light':
+                rule = re.search(r'(?::root)?\.theme-light \.%s\{([^}]*)\}' % cls, css)
+            if rule is None:
+                rule = re.search(r'^\.%s(?:,[^{\n]*)?\{([^}]*)\}' % cls, css, re.M | re.S)
+            assert rule is not None, (cls, plate)
+            fill = re.search(r'fill:\s*(#[0-9A-Fa-f]{6}|var\(--[a-z]+\))', rule.group(1))
+            assert fill is not None, (cls, plate)
+            value = fill.group(1)
+            while value.startswith('var('):      # a token may name a token
+                value = re.search(r'--%s:\s*([^;]+)' % value[6:-1], block).group(1).strip()
+            return value.upper()
+
         for cls in ('skylab', 'starlab', 'conlab'):
-            assert light_rule_fill(cel_css, cls) == light_rule_fill(sky_css, cls), cls
+            for plate in ('night', 'light'):
+                assert plate_fill(cel_css, cls, plate) == plate_fill(sky_css, cls, plate), (cls, plate)
         # The moon's disc: skyfield's own paper values, including the ring
         # that is all that draws a disc whose lit limb is nearly the page.
         for cls, key in (('moon-dark', 'moon_dark'), ('moon-lit', 'moon_lit')):
             assert light_rule_fill(cel_css, cls) == light_color(key), cls
-        rim = re.search(r':root\.theme-light \.moon-rim\{([^}]*)\}', cel_css)
+        rim = re.search(r'.theme-light \.cel-moon-rim\{([^}]*)\}', cel_css)
         assert rim is not None
         assert light_color('moon_ring') in rim.group(1).upper()
+
+    def test_dome_labels_carry_an_inline_font_size(self, wxskyfield_almanac):
+        """Every label weewx-skyfield draws in a fragment sizes itself
+        INLINE, and label_scale is only honored because of it.
+
+        A consumer skin styles its own charts, and a rule of its own
+        written for those (`.gridlab{font-size:10px}`, say) matches
+        skyfield's dome labels too -- the class names are shared, by
+        design, so that the two extensions' charts read as one family.
+        Such a rule loses to an inline style and wins against anything
+        else, so the whole of `label_scale` rests on skyfield continuing
+        to write the size on the element.  Move that sizing to a class
+        over there and label_scale keeps working on THIS page, whose skin
+        writes no such rule, while silently doing nothing on a consumer's
+        -- a fault that would present as this extension's and be very hard
+        to find from here.
+
+        So it is pinned where it can be seen.  Reported by the first
+        consumer built against the 9.0 panels, which carries exactly such
+        rules for its own charts and had measured them inert.  Skips when
+        no weewx-skyfield is available."""
+        out = self.render_dome_fragment('dome-svg.txt.tmpl', {
+            'almanac': wxskyfield_almanac,
+            'sky_page': make_sky_page(),
+        })
+        assert '<svg' in out
+        labelled = re.findall(r'<text[^>]*class="([^"]*)"[^>]*>', out)
+        assert labelled, 'no labels in the fragment at all'
+        bare = [t for t in re.findall(r'<text[^>]*>', out)
+                if 'font-size' not in t]
+        assert bare == [], (
+            'weewx-skyfield stopped writing an inline font-size on %d of its '
+            'labels; label_scale is defeated for any consumer skin whose own '
+            'chart rules name these classes: %s' % (len(bare), bare[:3]))
+
 
     def test_renders_with_pyephem_almanac(self):
         """With PyEphem but no weewx-skyfield, the roster first-paints
@@ -5222,7 +5330,7 @@ class TestSampleSkinRenders:
         # Skyfield or the star catalog, and the generic credit's mention of
         # weewx-skyfield stays unlinked -- PyEphem may be the engine
         # serving the page.
-        assert html.count('class="skyhint"') == 1
+        assert html.count('class="cel-skyhint"') == 1
         assert 'live sky dome' in html
         assert 'Hipparcos' not in html
         assert "extended almanac" in html
@@ -5238,7 +5346,7 @@ class TestSampleSkinRenders:
             plain = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                           formatter=weewx.units.get_default_formatter())
             assert not plain.hasExtras
-            # Render without a time_zone Extras key: the include must
+            # Render without a time_zone Extras key: the config block must
             # auto-detect the station machine's zone (/etc/localtime
             # symlink, /etc/timezone fallback).
             html = self.render(plain, with_time_zone=False)
@@ -5247,7 +5355,7 @@ class TestSampleSkinRenders:
             assert self.cell(html, 'geo-alt-%s' % body) == '', body
         # Two install hints: the Geocentric's (no extended almanac at all)
         # and the dome panel's.
-        assert html.count('class="skyhint"') == 2
+        assert html.count('class="cel-skyhint"') == 2
         assert 'https://github.com/chaunceygardiner/weewx-skyfield' in html
         assert "built-in almanac" in html
         assert 'Hipparcos' not in html
@@ -5260,14 +5368,15 @@ class TestSampleSkinRenders:
                 auto_tz = open('/etc/timezone').read().strip()
             except OSError:
                 pass
-        assert "time_zone = '%s'" % auto_tz in html
+        assert self.config(html)['time_zone'] == auto_tz
 
     @staticmethod
     def _body_names(html):
-        """The roster's display names, and the javascript's BODY_LABELS."""
-        rows = re.findall(r'<span class="chip [^"]*"></span>([^<]*)<', html)
-        labels = json.loads(
-            re.search(r'BODY_LABELS = (\{.*?\});', html).group(1))
+        """The roster's display names, and the javascript's BODY_LABELS
+        (the config's body_labels)."""
+        rows = re.findall(r'<span class="cel-chip [^"]*"></span>([^<]*)<', html)
+        m = re.search(r'<script>\ncelestial\.start\((\{.*?\})\);\n</script>', html, re.S)
+        labels = json.loads(m.group(1))['body_labels']
         return rows, labels
 
     def test_body_names_come_from_almanac_texts(self, wxskyfield_almanac):
@@ -5349,8 +5458,2785 @@ class TestSampleSkinRenders:
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.moon.earth_distance'))
         # The dome degrades to its install hint, exactly as when
         # weewx-skyfield is absent altogether.
-        assert html.count('class="skyhint"') == 1
+        assert html.count('class="cel-skyhint"') == 1
         assert 'live sky dome' in html
+
+
+class TestFragmentGenerator:
+    """celestial_page: the dome backdrops and the pass-chart fragment as
+    the FragmentGenerator writes them into a report's HTML_ROOT, replacing
+    the eleven fragment templates of 8.x.  The 8.5 templates are kept
+    under tests/fixtures/fragments-8.5 and rendered live beside the
+    generator: what it writes must be what they wrote, for the same
+    almanac and the same sky page, so the proof survives weewx-skyfield
+    redrawing its dome."""
+
+    FIXTURE_DIR = os.path.join(TEST_DIR, 'fixtures', 'fragments-8.5')
+
+    @classmethod
+    def render_85_dome(cls, k, search, tmp_path):
+        """Slot k as the 8.5 templates rendered it: dome-svg.txt.tmpl for
+        slot 0, the three-line slot template for the rest, each including
+        dome-svg-frag.inc FILE-based (the include compiles separately and
+        sees only `#set global` variables), with the CWD the include is
+        resolved against being the fixture directory, as weewx makes it
+        the skin directory."""
+        from Cheetah.Template import Template
+        if k == 0:
+            path = os.path.join(cls.FIXTURE_DIR, 'dome-svg.txt.tmpl')
+        else:
+            path = str(tmp_path / ('dome-svg-%d.txt.tmpl' % k))
+            with open(path, 'w') as fd:
+                fd.write('#encoding UTF-8\n#set global $frag_k = %d\n'
+                         '#include "dome-svg-frag.inc"\n' % k)
+        cwd = os.getcwd()
+        os.chdir(cls.FIXTURE_DIR)
+        try:
+            return str(Template(file=path, searchList=[search]))
+        finally:
+            os.chdir(cwd)
+
+    @classmethod
+    def render_85_pass(cls, search):
+        from Cheetah.Template import Template
+        source = open(os.path.join(cls.FIXTURE_DIR, 'pass-chart.txt.tmpl')).read()
+        return str(Template(source, searchList=[search]))
+
+    @staticmethod
+    def current(seconds):
+        return types.SimpleNamespace(
+            dateTime=types.SimpleNamespace(raw=TIME_TS),
+            interval=types.SimpleNamespace(
+                raw=seconds / 60.0, second=types.SimpleNamespace(raw=float(seconds))))
+
+    @staticmethod
+    def stn_info():
+        return types.SimpleNamespace(
+            latitude_f=LATITUDE, longitude_f=LONGITUDE, location='Test Station',
+            altitude_vt=weewx.units.ValueTuple(ALTITUDE_M, 'meter', 'group_altitude'))
+
+    @staticmethod
+    def shim_sees_skyfield():
+        """The celestial_sky shim binds weewx-skyfield's SkyPage at import,
+        and this module imports it before any fixture has put the sibling
+        checkout on sys.path -- a test-order artifact weewxd never has.
+        Re-import it once the path is there."""
+        load_wxskyfield()
+        if celestial_page.celestial_sky.SkyPage is None:
+            importlib.reload(celestial_page.celestial_sky)
+        assert celestial_page.celestial_sky.SkyPage is not None
+
+    @classmethod
+    def make_generator(cls, tmp_path, skin_dict=None, record=None, gen_ts=TIME_TS,
+                       config_dict=None, stop_event=None):
+        """A FragmentGenerator as the report engine would construct one,
+        on a config with no database bindings (the almanac then rides
+        gen_ts and the refraction defaults, and the interval the record
+        the engine passed) unless a config_dict says otherwise."""
+        cls.shim_sees_skyfield()
+        sd = {'HTML_ROOT': 'celestial', 'REPORT_NAME': REPORT_NAME,
+              'CheetahGenerator': {'encoding': 'html_entities'}}
+        sd.update(skin_dict or {})
+        cd = config_dict or {'WEEWX_ROOT': str(tmp_path)}
+        if record is None:
+            record = {'dateTime': TIME_TS, 'usUnits': weewx.US, 'interval': 5}
+        return celestial_page.FragmentGenerator(cd, sd, gen_ts, True, cls.stn_info(),
+                                                record=record, stop_event=stop_event)
+
+    @staticmethod
+    def html_root(tmp_path):
+        return tmp_path / 'celestial'
+
+    # -- the geometry and the declaration ---------------------------------
+
+    def test_dome_slots_geometry(self):
+        """One function, every interval: step max(60, interval/10), count
+        the CEILING of interval/step capped at ten (the 8.4 fix: 350 s
+        writes six slots and must say six, or the walk can never ask for
+        the sixth), and the default for anything that is not a positive
+        number -- a report that cannot say its interval still gets a
+        whole set."""
+        table = {60: (60, 1), 90: (60, 2), 120: (60, 2), 150: (60, 3),
+                 300: (60, 5), 350: (60, 6), 600: (60, 10), 900: (90, 10),
+                 1800: (180, 10), 3600: (360, 10), 7200: (720, 10), 86400: (8640, 10)}
+        for interval, (step, count) in table.items():
+            assert celestial_page.dome_slots(interval) == (interval, step, count), interval
+        # round(), not int(): the hour-based conversion's 299.99988.
+        assert celestial_page.dome_slots(299.99988) == (300, 60, 5)
+        for bad in (None, 0, -5, 'x', 0.0):
+            assert celestial_page.dome_slots(bad) == (300, 60, 5), bad
+
+    def test_fragment_sets(self):
+        """No [CelestialFragments]: the one default set.  Declared sets
+        carry their name, prefix, label scale and theme; two sets that
+        would write the same files are refused, naming both, and a
+        label_scale that is not a number is refused naming the set."""
+        default = celestial_page.fragment_sets({})
+        assert default == [celestial_page.DEFAULT_SET]
+        assert default[0].prefix == 'dome-svg' and default[0].label_scale == 1.0
+        assert default[0].theme is None
+        assert celestial_page.fragment_sets({'CelestialFragments': {}}) == default
+        assert celestial_page.fragment_sets({'CelestialFragments': 'junk'}) == default
+        sets = celestial_page.fragment_sets({'CelestialFragments': {
+            'desktop': {'prefix': 'dome-svg-desk', 'label_scale': '0.8'},
+            'smartphone': {'prefix': 'dome-svg-sp', 'label_scale': 2.2, 'theme': 'Light'},
+        }})
+        assert [fs.name for fs in sets] == ['desktop', 'smartphone']
+        # A scalar straight under the section -- the obvious way to try
+        # to tune the default set -- is refused, naming it, never
+        # silently ignored (a set is a [[name]] subsection).
+        for section in ({'label_scale': '1.4', 'theme': 'light'},
+                        {'desktop': {'prefix': 'dome-svg-desk'}, 'stray': 'x'}):
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': section})
+            assert 'outside a [[set]] subsection' in str(e.value)
+        assert 'label_scale, theme' in str(e.value) or 'stray' in str(e.value)
+        assert sets[0] == celestial_page.FragmentSet('desktop', 'dome-svg-desk', 0.8, None)
+        # A set may take the page's own prefix at any scale or theme: the
+        # page first-paints the set it names (dome_html), so the files it
+        # then refetches are that set's -- TestPanels pins the follow.
+        assert celestial_page.fragment_sets({'CelestialFragments': {
+            'desk': {'label_scale': 0.8, 'theme': 'auto'}}})[0] == \
+            celestial_page.FragmentSet('desk', 'dome-svg', 0.8, 'auto')
+        assert sets[1] == celestial_page.FragmentSet('smartphone', 'dome-svg-sp', 2.2, 'light')
+        # Collisions are judged on the FILES: the same prefix twice, a
+        # prefix that is another set's slot name, a prefix that is the
+        # default set's pass-chart name, and foo beside foo-pass.
+        for b, shared in (({'prefix': 'dome-svg'}, 'dome-svg.txt'),
+                          ({'prefix': 'dome-svg-1'}, 'dome-svg-1.txt'),
+                          ({'prefix': 'pass-chart'}, 'pass-chart.txt')):
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': {'a': {}, 'b': b}})
+            assert '[[a]]' in str(e.value) and '[[b]]' in str(e.value), b
+            assert shared in str(e.value), b
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'foo': {'prefix': 'foo'}, 'bar': {'prefix': 'foo-pass'}}})
+        assert 'foo-pass.txt' in str(e.value)
+        # Distinct files: no complaint.
+        assert len(celestial_page.fragment_sets({'CelestialFragments': {
+            'a': {}, 'b': {'prefix': 'dome-svg-sp'}}})) == 2
+        for bad in ('huge', 0, '0.0', -1.5):
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': {'big': {'label_scale': bad}}})
+            assert '[[big]]' in str(e.value) and 'positive' in str(e.value), bad
+        # A prefix is a file name and an attribute value: plain, or refused.
+        for bad in ('sub/dome', 'dome"x', '-dome', 'dome svg', '../x'):
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': {'p': {'prefix': bad}}})
+            assert '[[p]]' in str(e.value) and 'file name' in str(e.value), bad
+        assert celestial_page.fragment_sets({'CelestialFragments': {
+            'p': {'prefix': 'dome.v2_sp-1'}}})[0].prefix == 'dome.v2_sp-1'
+        # A set's theme is validated where a report's is not: a typo
+        # would otherwise render a silently dark set for ever.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'sp': {'prefix': 'dome-svg-sp', 'theme': 'lite'}}})
+        assert '[[sp]]' in str(e.value) and "'lite'" in str(e.value)
+        assert celestial_page.fragment_sets({'CelestialFragments': {
+            'sp': {'prefix': 'dome-svg-sp', 'theme': ''}}})[0].theme is None
+        for ok in ('dark', 'Light', ' auto '):
+            assert celestial_page.fragment_sets({'CelestialFragments': {
+                'sp': {'prefix': 'dome-svg-sp', 'theme': ok}}})[0].theme == ok.strip().lower()
+
+    def test_fragment_names(self):
+        """The default set keeps every 8.x name (a page opened before the
+        upgrade goes on refetching successfully); another set is
+        <prefix>.txt, <prefix>-1..9.txt and <prefix>-pass.txt."""
+        domes, pass_name = celestial_page.fragment_names(celestial_page.DEFAULT_SET)
+        assert domes == ['dome-svg.txt'] + ['dome-svg-%d.txt' % k for k in range(1, 10)]
+        assert pass_name == 'pass-chart.txt'
+        sp = celestial_page.FragmentSet('smartphone', 'dome-svg-sp', 2.2, None)
+        domes, pass_name = celestial_page.fragment_names(sp)
+        assert domes[0] == 'dome-svg-sp.txt' and domes[9] == 'dome-svg-sp-9.txt'
+        assert pass_name == 'dome-svg-sp-pass.txt'
+
+    # -- parity with the 8.5 templates ------------------------------------
+
+    def test_writes_what_the_templates_wrote(self, wxskyfield_sat_almanac, tmp_path):
+        """Every slot, on a dividing and a non-dividing interval and a
+        long one, on both plates, plus the pass chart: the generator's
+        render equals the 8.5 template's, whitespace at the ends aside
+        (the templates' directive lines left newlines the javascript
+        trims)."""
+        for theme in ('dark', 'light'):
+            sky_page = make_sky_page(theme=theme)
+            page = celestial_page.CelestialPage({}, sky_page=sky_page)
+            for interval in (300, 350, 7200):
+                search = {'almanac': wxskyfield_sat_almanac, 'sky_page': sky_page,
+                          'current': self.current(interval)}
+                for k in range(10):
+                    want = self.render_85_dome(k, search, tmp_path).strip()
+                    got = page.dome_fragment(wxskyfield_sat_almanac, k, interval).strip()
+                    # 9.0 adds the report's theme to the wrapper (the
+                    # javascript's flip check); everything else is 8.5's.
+                    if want:
+                        assert ' data-page-theme="%s">' % theme in got, (theme, interval, k)
+                        got = got.replace(' data-page-theme="%s"' % theme, '', 1)
+                    assert got == want, (theme, interval, k)
+                    if want:
+                        assert 'data-dome-slot="%d"' % k in got
+            search = {'almanac': wxskyfield_sat_almanac, 'sky_page': sky_page}
+            want = self.render_85_pass(search).strip()
+            got = page.pass_fragment(wxskyfield_sat_almanac).strip()
+            # 9.0 wraps the chart the way the dome fragments are wrapped;
+            # inside the wrapper it is what the 8.5 template wrote.
+            head = '<div class="passfrag" data-pass-palette="%s" data-page-theme="%s">' % (
+                'light' if theme == 'light' else 'night', theme)
+            assert got.startswith(head) and got.endswith('</div>'), theme
+            assert got[len(head):-len('</div>')] == want and '<svg' in got, theme
+
+    # -- the generator ------------------------------------------------------
+
+    def test_generator_writes_the_default_set(self, wxskyfield_sat_almanac, tmp_path):
+        """Run as the report engine runs it: eleven files in HTML_ROOT,
+        the five slots inside a five-minute interval carrying skies and
+        the five beyond it written EMPTY (the page never asks for them,
+        and a stale numbered file from a longer interval must not linger
+        with an old sky), the pass chart drawn, every byte what the page
+        renders through the same almanac, in the page's html_entities
+        encoding."""
+        gen = self.make_generator(tmp_path)
+        gen.run()
+        root = self.html_root(tmp_path)
+        names = sorted(p.name for p in root.iterdir())
+        assert names == sorted(['dome-svg.txt'] + ['dome-svg-%d.txt' % k for k in range(1, 10)]
+                               + ['pass-chart.txt'])
+        assert not [n for n in names if n.endswith('.tmp')]
+        alm, interval_s = gen.almanac_and_interval()
+        assert interval_s == 300
+        assert int(alm.time_ts) == TIME_TS
+        page = celestial_page.CelestialPage({}, sky_page=make_sky_page())
+        for k in range(10):
+            name = 'dome-svg.txt' if k == 0 else 'dome-svg-%d.txt' % k
+            data = (root / name).read_bytes()
+            want = page.dome_fragment(alm, k, interval_s).encode('ascii', 'xmlcharrefreplace')
+            assert data == want, name
+            if k < 5:
+                assert b'<svg' in data and b'data-dome-ts="%d"' % (TIME_TS + 60 * k) in data
+                assert b'data-dome-count="5"' in data and b'data-dome-interval="300"' in data
+            else:
+                assert data == b'', name
+        chart = (root / 'pass-chart.txt').read_bytes()
+        assert chart.startswith(b'<div class="passfrag" ') and b'data-body="iss"' in chart
+        # ASCII throughout: the degree signs in the labels became entities.
+        chart.decode('ascii')
+
+    def test_a_set_writes_only_the_fragments_its_kind_names(self, wxskyfield_sat_almanac,
+                                                            tmp_path):
+        """`kind` says whether a set is for the dome, the pass chart or
+        both.
+
+        A skin with the dome on one page and the chart on another, at
+        different label scales, needs a set for each -- and without this
+        each writes the other's fragments every cycle for a page that
+        never asks: 22 files where 11 are wanted.  The first consumer
+        built against these panels needs four such sets, so 44 files a
+        cycle of which 22 are dead.
+
+        The collision check follows `kind` too -- it refuses two sets
+        that would WRITE the same file, which a dome-only and a pass-only
+        set do not -- while one-set-per-prefix stays its own rule, so a
+        page naming no set still finds exactly one set on the dome-svg
+        prefix.  Enforcing both by the names a prefix spells is what
+        refused this very layout when the first consumer declared it."""
+        gen = self.make_generator(tmp_path, skin_dict={
+            'CelestialFragments': {
+                'stars': {'prefix': 'sky-dome', 'kind': 'dome'},
+                'sats': {'prefix': 'sky-pass', 'kind': 'Pass'},
+            }})
+        gen.run()
+        names = sorted(p.name for p in self.html_root(tmp_path).iterdir())
+        assert names == sorted(['sky-dome.txt']
+                               + ['sky-dome-%d.txt' % k for k in range(1, 10)]
+                               + ['sky-pass-pass.txt']), names
+        # The dome set wrote no chart and the pass set no backdrops.
+        assert 'sky-dome-pass.txt' not in names
+        assert 'sky-pass.txt' not in names
+        assert (self.html_root(tmp_path) / 'sky-pass-pass.txt').read_bytes().startswith(
+            b'<div class="passfrag" ')
+
+    def test_kind_defaults_to_both_and_refuses_anything_else(self):
+        """Absent, `kind` is `both`: every set declared before this
+        existed keeps writing all eleven files.  A value that is not one
+        of the three is refused, naming the set, at the first cycle --
+        never a set that silently writes nothing."""
+        assert celestial_page.DEFAULT_SET.kind == 'both'
+        sets = celestial_page.fragment_sets({'CelestialFragments': {
+            'desk': {'label_scale': 0.8}}})
+        assert sets[0].kind == 'both'
+        assert celestial_page.fragment_sets({'CelestialFragments': {
+            'a': {'prefix': 'x', 'kind': ' DOME '}}})[0].kind == 'dome'
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'a': {'prefix': 'x', 'kind': 'domes'}}})
+        assert "[[a]] kind = 'domes' is not both, dome or pass" in str(e.value)
+        # Two sets of different kinds still may not share a prefix: the
+        # page resolves a set BY prefix when the call names none, and two
+        # sets on one prefix would make that ambiguous.  They are refused
+        # for THAT, not for writing the same file -- their files are
+        # disjoint (sky*.txt against sky-pass.txt), and saying they
+        # collide was what refused a legal skin in 9.0.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'd': {'prefix': 'sky', 'kind': 'dome'},
+                'p': {'prefix': 'sky', 'kind': 'pass'}}})
+        assert 'both use prefix = sky' in str(e.value)
+
+
+    def test_generator_writes_every_declared_set(self, wxskyfield_sat_almanac, tmp_path):
+        """Two sets, one on a plate of its own: twenty-two files, each
+        set under its own prefix, the smartphone set drawn on paper
+        inside a report whose own theme is dark, its labels at its own
+        scale, and its pass chart under <prefix>-pass.txt."""
+        gen = self.make_generator(tmp_path, skin_dict={
+            'theme': 'dark',
+            'CelestialFragments': {
+                'desktop': {'prefix': 'dome-svg-desk', 'label_scale': 0.8},
+                'smartphone': {'prefix': 'dome-svg-sp', 'label_scale': 2.2, 'theme': 'light'}}})
+        gen.run()
+        root = self.html_root(tmp_path)
+        names = sorted(p.name for p in root.iterdir())
+        assert len(names) == 22
+        assert 'dome-svg-sp.txt' in names and 'dome-svg-sp-9.txt' in names
+        assert 'dome-svg-sp-pass.txt' in names and 'dome-svg-desk-pass.txt' in names
+        assert 'dome-svg.txt' not in names       # no default set was declared
+        desktop = (root / 'dome-svg-desk.txt').read_text()
+        phone = (root / 'dome-svg-sp.txt').read_text()
+        assert '#161f3d' in desktop.lower() and 'data-dome-palette="night"' in desktop
+        assert '#efece2' in phone.lower() and 'data-dome-palette="light"' in phone
+        assert '#161f3d' not in phone.lower()
+        assert desktop != phone
+        # The scales differ: the same constellation label is set larger on
+        # the phone (2.2) than on the desktop (0.8).
+        def label_px(svg):
+            m = re.search(r'class="conlab" style="font-size:([\d.]+)px"', svg)
+            assert m, 'no constellation label'
+            return float(m.group(1))
+        assert label_px(phone) > label_px(desktop)
+        # ... and so is the pass chart's (the cardinal labels: 14 px at
+        # 1.0), on the phone set's plate.
+        phone_pass = (root / 'dome-svg-sp-pass.txt').read_text()
+        desktop_pass = (root / 'dome-svg-desk-pass.txt').read_text()
+        assert '#efece2' in phone_pass.lower() and '<svg' in desktop_pass
+
+        def cardinal_px(svg):
+            m = re.search(r'class="mono cardinal" style="font-size:([\d.]+)px"', svg)
+            assert m, 'no cardinal label'
+            return float(m.group(1))
+        assert cardinal_px(phone_pass) > cardinal_px(desktop_pass)
+
+    def test_a_bad_declaration_writes_nothing(self, wxskyfield_sat_almanac, tmp_path, caplog):
+        """Two sets on one prefix: the error names both and no file is
+        written -- one loud failure, not ten silently overwritten files
+        every cycle."""
+        gen = self.make_generator(tmp_path, skin_dict={'CelestialFragments': {
+            'a': {}, 'b': {'prefix': 'dome-svg'}}})
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            gen.run()
+        assert not self.html_root(tmp_path).exists()
+        assert any('[[a]]' in r.getMessage() and '[[b]]' in r.getMessage()
+                   for r in caplog.records)
+
+    def test_a_failing_fragment_keeps_the_old_file(self, wxskyfield_sat_almanac, tmp_path,
+                                                   monkeypatch, caplog):
+        """A render that raises is logged and its file left exactly as it
+        was -- the old sky stays on disk for the page to keep -- while
+        the other fragments are written; never an empty file, never
+        error text the javascript would inject into the page."""
+        root = self.html_root(tmp_path)
+        root.mkdir()
+        (root / 'dome-svg-3.txt').write_text('THE OLD SKY')
+        real = celestial_page.CelestialPage.dome_fragment
+
+        def flaky(self, alm, k, interval_s=None, fs=celestial_page.DEFAULT_SET, palette=None):
+            if k == 3:
+                raise RuntimeError('slot three is cursed')
+            return real(self, alm, k, interval_s, fs, palette)
+        monkeypatch.setattr(celestial_page.CelestialPage, 'dome_fragment', flaky)
+        gen = self.make_generator(tmp_path)
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            gen.run()
+        assert (root / 'dome-svg-3.txt').read_text() == 'THE OLD SKY'
+        assert b'<svg' in (root / 'dome-svg-2.txt').read_bytes()
+        assert b'<svg' in (root / 'dome-svg-4.txt').read_bytes()
+        assert not (root / 'dome-svg-3.txt.tmp').exists()
+        assert any('dome-svg-3.txt' in r.getMessage() and 'cursed' in r.getMessage()
+                   for r in caplog.records)
+        # ... with the traceback, whose frame is what identifies a bug
+        # in weewx-skyfield: the raising function is named.
+        assert any('flaky' in r.getMessage() for r in caplog.records)
+
+    def test_a_write_that_fails_keeps_the_old_file(self, wxskyfield_sat_almanac, tmp_path,
+                                                   caplog):
+        """A full tmpfs, a permission gone: the write fails, the file is
+        left as it was, the temporary file is removed, the failure names
+        the file, and the remaining fragments of the cycle are still
+        written -- never core's generic 'unrecoverable exception' with
+        the rest of the set skipped."""
+        if os.geteuid() == 0:
+            pytest.skip('root writes anywhere')
+        root = self.html_root(tmp_path)
+        root.mkdir()
+        (root / 'dome-svg.txt').write_text('THE OLD SKY')
+        root.chmod(0o555)
+        try:
+            gen = self.make_generator(tmp_path)
+            with caplog.at_level(logging.ERROR, logger='celestial_page'):
+                gen.run()
+        finally:
+            root.chmod(0o755)
+        assert (root / 'dome-svg.txt').read_text() == 'THE OLD SKY'
+        assert sorted(p.name for p in root.iterdir()) == ['dome-svg.txt']
+        names = [r.getMessage() for r in caplog.records if 'not written' in r.getMessage()]
+        assert len(names) == 11
+        assert any('pass-chart.txt' in m and 'PermissionError' in m for m in names)
+
+    def test_runs_on_weewx_5_2s_generator_shape(self, wxskyfield_sat_almanac, tmp_path):
+        """WeeWX 5.2's ReportGenerator takes six arguments and never sets
+        stop_event (its engine has none); the generator must run on that
+        shape -- the extension's floor -- to its end, as 5.2's own
+        CheetahGenerator does.  Constructed positionally the 5.2 way,
+        then stripped of the attribute 5.5's base class added."""
+        self.shim_sees_skyfield()
+        gen = celestial_page.FragmentGenerator(
+            {'WEEWX_ROOT': str(tmp_path)},
+            {'HTML_ROOT': 'celestial', 'REPORT_NAME': REPORT_NAME},
+            TIME_TS, True, self.stn_info(),
+            {'dateTime': TIME_TS, 'usUnits': weewx.US, 'interval': 5})
+        if hasattr(gen, 'stop_event'):
+            del gen.stop_event
+        assert not hasattr(gen, 'stop_event')
+        gen.run()
+        names = sorted(p.name for p in self.html_root(tmp_path).iterdir())
+        assert len(names) == 11
+        assert b'<svg' in (self.html_root(tmp_path) / 'dome-svg-4.txt').read_bytes()
+
+    def test_stops_when_weewxd_is_stopping(self, wxskyfield_sat_almanac, tmp_path):
+        """The engine checks stop_event only between generators; the
+        CheetahGenerator checked it before every template, and so does
+        this: a set stop_event ends the cycle at the next fragment."""
+        import threading
+        ev = threading.Event()
+        ev.set()
+        gen = self.make_generator(tmp_path, stop_event=ev)
+        gen.run()
+        root = self.html_root(tmp_path)
+        assert root.exists() and list(root.iterdir()) == []
+
+    def test_an_unusable_report_theme_warns_once_per_cycle(
+            self, wxskyfield_sat_almanac, tmp_path, caplog):
+        """A mistyped report theme renders every fragment dark and says
+        so ONCE per cycle, in the page template's own words -- not once
+        per fragment, and not never (a consumer using the generator
+        without the page's template has no other warning site)."""
+        gen = self.make_generator(tmp_path, skin_dict={'theme': 'papyrus'})
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            gen.run()
+        warnings = [r for r in caplog.records if 'unusable theme option' in r.getMessage()]
+        assert len(warnings) == 1
+        assert 'The Celestial report has an unusable theme option' in warnings[0].getMessage()
+        data = (self.html_root(tmp_path) / 'dome-svg.txt').read_text()
+        assert 'data-dome-palette="night"' in data
+
+    def test_a_set_on_auto_follows_the_sun_at_the_page_instant(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """theme = auto on a set: light while the sun is up at the page's
+        instant (noon here), inside a report whose own theme is dark --
+        resolved from the ONE SkyPage, so the set costs no second pass
+        search."""
+        gen = self.make_generator(tmp_path, skin_dict={
+            'theme': 'dark',
+            'CelestialFragments': {'sp': {'prefix': 'dome-svg-sp', 'theme': 'auto'}}})
+        gen.run()
+        root = self.html_root(tmp_path)
+        assert 'data-dome-palette="light"' in (root / 'dome-svg-sp.txt').read_text()
+        assert '#efece2' in (root / 'dome-svg-sp-pass.txt').read_text().lower()
+
+    def test_no_sky_page_writes_the_empties(self, wxskyfield_sat_almanac, tmp_path,
+                                             monkeypatch):
+        """Without weewx-skyfield there is no dome to draw: every fragment
+        is written EMPTY, exactly as the 8.5 templates wrote it.  A page
+        left open then says "dome-svg.txt is empty", whose troubleshooting
+        row points at weewx-skyfield; a stale sky left on disk would have
+        it say "no newer backdrop has arrived" and send the reader to the
+        report's timing instead."""
+        root = self.html_root(tmp_path)
+        root.mkdir()
+        (root / 'dome-svg.txt').write_text('AN OLD SKY')
+        gen = self.make_generator(tmp_path)
+        monkeypatch.setattr(celestial_page.celestial_sky, 'SkyPage', None)
+        gen.run()
+        names = sorted(p.name for p in root.iterdir())
+        assert len(names) == 11
+        for name in names:
+            assert (root / name).read_bytes() == b'', name
+
+    def test_interval_is_read_in_seconds_whatever_the_report_units(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The record's interval is in minutes and the report's
+        group_interval may say hours (Jacques Terrettaz, issue #4, which
+        once emptied every fragment): the generator converts the record
+        field to seconds regardless, so a five-minute interval is five
+        60 s slots under any unit setting."""
+        gen = self.make_generator(tmp_path, skin_dict={
+            'Units': {'Groups': {'group_interval': 'hour'}}})
+        gen.run()
+        root = self.html_root(tmp_path)
+        assert gen.almanac_and_interval()[1] == 300
+        for k in range(10):
+            data = (root / ('dome-svg.txt' if k == 0 else 'dome-svg-%d.txt' % k)).read_bytes()
+            if k < 5:
+                assert b'data-dome-step="60"' in data and b'data-dome-count="5"' in data, k
+            else:
+                assert data == b'', k
+
+    def test_encoding_is_read_like_the_cheetah_generator(self, wxskyfield_sat_almanac,
+                                                         tmp_path, caplog):
+        """The report's encoding option, as the CheetahGenerator reads it:
+        case-insensitive and stripped, from [CheetahGenerator] or the
+        skin's root; html_entities by default.  An encoding this Python
+        has no codec for costs the fragments, not the generator -- each
+        file is skipped with a logged reason and the old ones stay."""
+        assert celestial_page.report_encoding({}) == 'html_entities'
+        assert celestial_page.report_encoding({'CheetahGenerator': {'encoding': ' HTML_ENTITIES '}}) == 'html_entities'
+        assert celestial_page.report_encoding({'encoding': 'UTF-8'}) == 'utf8'
+        assert celestial_page.report_encoding({'encoding': 'utf8', 'CheetahGenerator': {'encoding': 'strict_ascii'}}) == 'strict_ascii'
+        assert celestial_page.report_encoding({'CheetahGenerator': {
+            'encoding': 'strict_ascii', 'ToDate': {'encoding': 'utf8'}}}) == 'utf8'
+        # Upper case in the stanza: entities, as the page gets.
+        gen = self.make_generator(tmp_path, skin_dict={'CheetahGenerator': {'encoding': 'HTML_ENTITIES'}})
+        gen.run()
+        chart = (self.html_root(tmp_path) / 'pass-chart.txt').read_bytes()
+        chart.decode('ascii')
+        assert b'&#' in chart
+        # utf8 at the skin root and no [CheetahGenerator] section: raw UTF-8.
+        gen = self.make_generator(tmp_path, skin_dict={'encoding': 'utf8', 'CheetahGenerator': {}})
+        gen.run()
+        chart = (self.html_root(tmp_path) / 'pass-chart.txt').read_bytes()
+        assert b'\xc2\xb7' in chart          # the head line's middle dot, raw
+        chart.decode('utf-8')
+        assert chart != chart.decode('utf-8').encode('ascii', 'xmlcharrefreplace')
+        # No such codec: nothing overwritten, every skip logged, no raise.
+        before = (self.html_root(tmp_path) / 'dome-svg.txt').read_bytes()
+        gen = self.make_generator(tmp_path, skin_dict={'CheetahGenerator': {'encoding': 'no-such-codec'}})
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            gen.run()
+        assert (self.html_root(tmp_path) / 'dome-svg.txt').read_bytes() == before
+        skipped = [r.getMessage() for r in caplog.records if 'not written' in r.getMessage()]
+        assert len(skipped) == 11 and all('LookupError' in m for m in skipped)
+
+    def test_a_record_without_an_interval_gets_the_default_set(
+            self, wxskyfield_sat_almanac, tmp_path):
+        gen = self.make_generator(tmp_path, record={'dateTime': TIME_TS, 'usUnits': weewx.US})
+        assert gen.almanac_and_interval()[1] is None
+        gen.run()
+        data = (self.html_root(tmp_path) / 'dome-svg-4.txt').read_bytes()
+        assert b'data-dome-count="5"' in data and b'data-dome-interval="300"' in data
+
+    # -- the almanac, against the CheetahGenerator's ----------------------
+
+    def cheetah_almanac(self, gen):
+        """The almanac the CheetahGenerator's own Almanac search list
+        builds for the same generator -- the oracle, and since the
+        generator delegates to that very search list, the check is that
+        the delegation stays (a formatter and converter of its own, the
+        interval read beside it)."""
+        import weewx.cheetahgenerator
+        gen.formatter = weewx.units.Formatter.fromSkinDict(gen.skin_dict)
+        gen.converter = weewx.units.Converter.fromSkinDict(gen.skin_dict)
+        return weewx.cheetahgenerator.Almanac(gen).almanac
+
+    def assert_same_almanac(self, ours, theirs):
+        for attr in ('time_ts', 'lat', 'lon', 'altitude', 'temperature', 'pressure'):
+            assert getattr(ours, attr) == getattr(theirs, attr), attr
+        if WEEWX_HAS_ALMANAC_TEXTS:
+            assert ours.texts == theirs.texts
+        assert ours.formatter.unit_format_dict == theirs.formatter.unit_format_dict
+        assert ours.converter.group_unit_dict == theirs.converter.group_unit_dict
+        # And the sky they serve is the same sky.
+        assert float(ours.sun.az) == float(theirs.sun.az)
+
+    def test_almanac_matches_the_cheetah_generators_without_an_archive(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """No database binding: both almanacs ride gen_ts, the refraction
+        defaults, the station's altitude in meters, the skin's [Almanac]
+        names (where this WeeWX takes them) and a formatter and converter
+        from the skin dict.  The record the engine passed is not read for
+        temperature or pressure -- core's search list does not, and the
+        fragments must be drawn for the page's observer."""
+        skin_dict = {'Almanac': {'sun': 'Sol', 'moon': 'Luna'},
+                     'Units': {'Groups': {'group_temperature': 'degree_C'}}}
+        gen = self.make_generator(tmp_path, skin_dict=skin_dict)
+        ours, _ = gen.almanac_and_interval()
+        theirs = self.cheetah_almanac(gen)
+        self.assert_same_almanac(ours, theirs)
+        assert ours.temperature == 15.0 and ours.pressure == 1010.0
+        assert ours.altitude == ALTITUDE_M
+        if WEEWX_HAS_ALMANAC_TEXTS:
+            assert ours.texts == {'sun': 'Sol', 'moon': 'Luna'}
+
+    def test_almanac_reads_the_archive_like_the_cheetah_generator(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """With a database: no gen_ts from the engine (the production
+        case), so the almanac's time is the archive's last good stamp,
+        and the record within an hour of it supplies temperature and
+        pressure -- converted to C and mbar -- and the archive interval,
+        in seconds."""
+        import weewx.manager
+        import weewx.schemas.wview_small
+        db_path = str(tmp_path / 'weewx.sdb')
+        db_dict = {'database_name': db_path, 'driver': 'weedb.sqlite'}
+        with weewx.manager.Manager.open_with_create(
+                db_dict, schema=weewx.schemas.wview_small.schema) as mgr:
+            mgr.addRecord({'dateTime': TIME_TS, 'usUnits': weewx.US, 'interval': 5,
+                           'outTemp': 68.0, 'barometer': 30.1})
+        config_dict = {
+            'WEEWX_ROOT': str(tmp_path),
+            'DataBindings': {'wx_binding': {'database': 'archive_sqlite',
+                                            'table_name': 'archive',
+                                            'manager': 'weewx.manager.Manager'}},
+            'Databases': {'archive_sqlite': {'database_name': db_path,
+                                             'database_type': 'SQLite'}},
+            'DatabaseTypes': {'SQLite': {'driver': 'weedb.sqlite'}},
+        }
+        gen = self.make_generator(tmp_path, gen_ts=None, record=None, config_dict=config_dict)
+        try:
+            ours, interval_s = gen.almanac_and_interval()
+            theirs = self.cheetah_almanac(gen)
+        finally:
+            gen.finalize()
+        self.assert_same_almanac(ours, theirs)
+        assert ours.time_ts == TIME_TS
+        assert abs(ours.temperature - 20.0) < 1e-6
+        assert abs(ours.pressure - 1019.3) < 0.1
+        assert interval_s == 300
+
+    # -- the search list ----------------------------------------------------
+
+    def test_search_list_serves_celestial_and_sky_page(self, monkeypatch):
+        """$celestial and $sky_page from one search list, the sky page
+        exactly as the celestial_sky shim serves it: the real SkyPage
+        when weewx-skyfield is importable, None otherwise -- and then the
+        page holds None too, without probing for one of its own."""
+        self.shim_sees_skyfield()
+        gen = types.SimpleNamespace(skin_dict={'theme': 'light', 'Extras': {'version': '9'}})
+        ext = celestial_page.CelestialPanels(gen).get_extension_list(None, None)[0]
+        assert set(ext) == {'celestial', 'sky_page'}
+        assert isinstance(ext['celestial'], celestial_page.CelestialPage)
+        assert ext['sky_page'] is not None
+        assert ext['celestial'].sky_page is ext['sky_page']
+        assert ext['celestial'].skin_dict is gen.skin_dict
+        monkeypatch.setattr(celestial_page.celestial_sky, 'SkyPage', None)
+        ext = celestial_page.CelestialPanels(gen).get_extension_list(None, None)[0]
+        assert ext['sky_page'] is None and ext['celestial'].sky_page is None
+        assert ext['celestial'].theme_class(None) == 'theme-dark'
+        # The generator asks the same shim (the one presence-detection
+        # site) and passes the answer in: no SkyPage -> None, no probe.
+        gen5 = types.SimpleNamespace(skin_dict={})
+        assert celestial_page.sky_page_from_shim(gen5) is None
+
+    def test_theme_class(self, wxskyfield_almanac, caplog):
+        """The root element's class from the report's theme option, dark
+        for an unusable one -- with the warning logged here and nowhere
+        else."""
+        for theme, cls in (('dark', 'theme-dark'), ('light', 'theme-light'),
+                           ('auto', 'theme-light')):        # noon: the sun is up
+            page = celestial_page.CelestialPage({}, sky_page=make_sky_page(theme=theme))
+            assert page.theme_class(wxskyfield_almanac) == cls, theme
+            assert page.palette(wxskyfield_almanac) == ('light' if cls == 'theme-light' else 'night')
+        light_set = celestial_page.FragmentSet('a', 'x', 1.0, 'light')
+        auto_set = celestial_page.FragmentSet('b', 'y', 1.0, 'auto')
+        page = celestial_page.CelestialPage({}, sky_page=make_sky_page(theme='dark'))
+        assert page.palette(wxskyfield_almanac, light_set) == 'light'
+        assert page.palette(wxskyfield_almanac, auto_set) == 'light'      # noon
+        page = celestial_page.CelestialPage({}, sky_page=make_sky_page(theme='papyrus'))
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            assert page.theme_class(wxskyfield_almanac) == 'theme-dark'
+        assert any('unusable theme' in r.getMessage() for r in caplog.records)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            assert page.palette(wxskyfield_almanac) == 'night'
+            assert 'data-dome-palette="night"' in page.dome_fragment(wxskyfield_almanac, 0)
+        assert not [r for r in caplog.records if 'unusable theme' in r.getMessage()]
+
+    # -- what ships -----------------------------------------------------------
+
+    def test_skin_conf_lists_the_generator_and_no_fragment_templates(self):
+        """The bundled skin is a consumer of celestial_page like any
+        other: the search list, the generator in the generator list, one
+        template, and no fragment template or include left in the skin
+        directory (an upgrade overlays files, so a leftover would be
+        inert but misleading)."""
+        import configobj
+        conf = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'), encoding='utf-8')
+        assert conf['CheetahGenerator']['search_list_extensions'] == 'user.celestial_page.CelestialPanels'
+        assert list(conf['CheetahGenerator']['ToDate']) == ['index']
+        gens = [g.strip() for g in conf['Generators']['generator_list']]
+        assert gens == ['weewx.cheetahgenerator.CheetahGenerator',
+                        'user.celestial_page.FragmentGenerator',
+                        'weewx.reportengine.CopyGenerator']
+        assert 'CelestialFragments' not in conf
+        shipped = sorted(n for n in os.listdir(SKIN_DIR) if not n.startswith('.'))
+        assert shipped == ['celestial-page.css', 'celestial.css', 'celestial.js',
+                           'index.html.tmpl', 'lang', 'skin.conf', 'sky.js']
+
+    def test_installer_ships_exactly_the_files_in_the_tree(self):
+        """install.py's file list is the tree: every listed file exists
+        and every file under bin/user and skins/Celestial is listed --
+        the twelve fragment files left both, celestial_page.py joined
+        both."""
+        installer = load_installer().loader()
+        listed = sorted(f for _, files in installer['files'] for f in files)
+        for f in listed:
+            assert os.path.exists(os.path.join(REPO_ROOT, f)), f
+        in_tree = []
+        for top in ('bin/user', 'skins/Celestial'):
+            for dirpath, _, names in os.walk(os.path.join(REPO_ROOT, top)):
+                rel = os.path.relpath(dirpath, REPO_ROOT)
+                if any(part.startswith('.') or part == '__pycache__' for part in rel.split(os.sep)):
+                    continue
+                for n in names:
+                    if n.endswith('.pyc') or n.startswith('.'):
+                        continue
+                    in_tree.append(os.path.relpath(os.path.join(dirpath, n), REPO_ROOT))
+        assert sorted(in_tree) == listed
+        assert 'bin/user/celestial_page.py' in listed
+
+    def test_a_set_writes_into_its_directory(self, wxskyfield_sat_almanac, tmp_path):
+        """A set declared with a directory lands there under HTML_ROOT --
+        beside the page that embeds it, which refetches its fragments by
+        bare name relative to its own URL, so a page generated into a
+        subdirectory (template = sky/index.html.tmpl) names a set with
+        directory = astro.  The names are unchanged (the page's markup
+        carries bare names); a nested directory is made; a trailing
+        slash is forgiven; and a directory that could leave HTML_ROOT,
+        or is no plain path, is refused naming the set.  Prefixes stay
+        unique across sets whatever their directories: a page naming no
+        set follows the set on the dome-svg prefix, and two such sets
+        would leave it following whichever was declared first."""
+        gen = self.make_generator(tmp_path, skin_dict={'CelestialFragments': {
+            'astro': {'directory': 'astro/'},
+            'deep': {'directory': 'a/b', 'prefix': 'dome-svg-deep'},
+            'root': {'prefix': 'dome-svg-root'}}})
+        gen.run()
+        root = self.html_root(tmp_path)
+        domes, pass_name = celestial_page.fragment_names(celestial_page.DEFAULT_SET)
+        assert sorted(p.name for p in (root / 'astro').iterdir()) == sorted(domes + [pass_name])
+        deep = sorted(p.name for p in (root / 'a' / 'b').iterdir())
+        assert deep == sorted(['dome-svg-deep.txt', 'dome-svg-deep-pass.txt']
+                              + ['dome-svg-deep-%d.txt' % k for k in range(1, 10)])
+        assert (root / 'dome-svg-root.txt').exists() and not (root / 'dome-svg.txt').exists()
+        assert '<svg' in (root / 'astro' / 'dome-svg.txt').read_text()
+        assert '<svg' in (root / 'a' / 'b' / 'dome-svg-deep-pass.txt').read_text()
+        sets = celestial_page.fragment_sets(gen.skin_dict)
+        assert [fs.directory for fs in sets] == ['astro', 'a/b', '']
+        assert celestial_page.DEFAULT_SET.directory == ''
+        # Refused: one prefix in two sets, whatever their directories,
+        # the message naming the file; a path that leaves HTML_ROOT or
+        # is not plain; and a directory outside any set, as any scalar.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'a': {'directory': 'astro'}, 'b': {'directory': 'other'}}})
+        assert 'both write dome-svg.txt' in str(e.value) and 'own prefix' in str(e.value)
+        for bad in ('/abs', '../up', 'a/../b', 'a b', '.hidden', '\\srv\\x', 'a\\b', '~/x',
+                    'a//b', '/'):
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': {'s': {'directory': bad}}})
+            assert '[[s]] directory = %r' % bad in str(e.value), bad
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {'directory': 'astro'}})
+        assert 'directory outside a [[set]]' in str(e.value)
+        # The grammar is the prefix's, per segment.
+        assert celestial_page.fragment_sets({'CelestialFragments': {
+            's': {'directory': 'a.b/c-d_e/'}}})[0].directory == 'a.b/c-d_e'
+
+    def test_a_directory_that_cannot_be_made_costs_that_set_only(self, wxskyfield_sat_almanac,
+                                                                  tmp_path, caplog):
+        """A set whose directory cannot be made -- a plain file where it
+        should go, or a read-only HTML_ROOT -- costs that set its files,
+        named in the log with the directory and the error, and no other
+        set its cycle: the fault's scope is the set's, as a failed
+        write's is the file's.  Nothing escapes run()."""
+        root = self.html_root(tmp_path)
+        root.mkdir()
+        (root / 'astro').write_text('a file, not a directory')
+        gen = self.make_generator(tmp_path, skin_dict={'CelestialFragments': {
+            'astro': {'directory': 'astro'},
+            'root': {'prefix': 'dome-svg-root'}}})
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            gen.run()
+        assert (root / 'dome-svg-root-9.txt').exists() and (root / 'dome-svg-root-pass.txt').exists()
+        assert (root / 'astro').read_text() == 'a file, not a directory'
+        msgs = [r.getMessage() for r in caplog.records]
+        assert sum('fragment set astro not written (FileExistsError making' in m
+                   and str(root / 'astro') in m and 'previous files stay' in m for m in msgs) == 1
+        assert 'Traceback' not in caplog.text
+        if os.geteuid() == 0:
+            return                                   # root makes any directory
+        root.chmod(0o555)
+        try:
+            caplog.clear()
+            gen = self.make_generator(tmp_path, skin_dict={'CelestialFragments': {
+                'deep': {'directory': 'x/y'}}})
+            with caplog.at_level(logging.ERROR, logger='celestial_page'):
+                gen.run()
+        finally:
+            root.chmod(0o755)
+        assert not (root / 'x').exists()
+        assert any('fragment set deep not written (PermissionError making' in m for m in msgs + [
+            r.getMessage() for r in caplog.records])
+
+
+class TestConsumerSkin:
+    """The consumer contract from the outside: tests/fixtures/consumer-skin
+    is a skin that embeds every panel using nothing but the public
+    surface -- the search list, the generator, the copied assets, the
+    pasted field groups, one fragment set declared beside its page --
+    with its page in a SUBDIRECTORY of the report's HTML_ROOT, run
+    through WeeWX's own report engine into a scratch station and then
+    driven in a real browser: the page comes up live and refetches its
+    fragments from where the generator put them, beside the page."""
+
+    FIXTURE_DIR = os.path.join(TEST_DIR, 'fixtures', 'consumer-skin')
+
+    def test_the_fixture_writes_what_a_consumer_writes(self):
+        """What the fixture declares under [LoopData] [[fields]] is what
+        the Celestial skin's own skin.conf declares -- the paste --
+        group for group; and the rest is the design's list: the search
+        list, the generator, the three assets, one set with the page's
+        directory, the page in that directory."""
+        import configobj
+        ours = configobj.ConfigObj(os.path.join(self.FIXTURE_DIR, 'skin.conf'))
+        theirs = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'))
+        assert dict(ours['LoopData']['fields']) == dict(theirs['LoopData']['fields'])
+        assert (ours['CheetahGenerator']['search_list_extensions']
+                == 'user.celestial_page.CelestialPanels')
+        assert 'user.celestial_page.FragmentGenerator' in ours['Generators']['generator_list']
+        assert ours['CopyGenerator']['copy_once'] == ['celestial.css', 'celestial.js', 'sky.js']
+        assert dict(ours['CelestialFragments']['astro']) == {'directory': 'astro'}
+        assert ours['CheetahGenerator']['ToDate']['astro']['template'] == 'astro/index.html.tmpl'
+        assert os.path.exists(os.path.join(self.FIXTURE_DIR, 'astro', 'index.html.tmpl'))
+        assert not os.path.exists(os.path.join(self.FIXTURE_DIR, 'celestial.js'))
+        text = open(os.path.join(self.FIXTURE_DIR, 'skin.conf'), encoding='utf-8').read()
+        assert 'celestial_panels = countdown, geocentric, dome, pass' in text
+
+    @classmethod
+    def build_station(cls, tmp_path, panels='countdown, geocentric, dome, pass',
+                      declared=True, layout=''):
+        """A scratch station: the fixture skin under skins/Consumer with
+        the three assets copied in from the Celestial skin, an archive
+        with one record at the fixture instant, and a weewx.conf whose
+        [[ConsumerReport]] runs the skin, generates into a subdirectory
+        of public_html and names its panels."""
+        import shutil
+        import configobj
+        import weewx.manager
+        import weewx.schemas.wview_small
+        skin_dir = tmp_path / 'skins' / 'Consumer'
+        shutil.copytree(cls.FIXTURE_DIR, str(skin_dir))
+        assets = skin_dir / layout if layout else skin_dir
+        assets.mkdir(exist_ok=True)
+        for asset in ('celestial.css', 'celestial.js', 'sky.js'):
+            shutil.copy(os.path.join(SKIN_DIR, asset), str(assets / asset))
+        if layout:
+            # The skin that keeps its assets in a subdirectory (Seasons'
+            # layout): copy_once names them there, the page links them
+            # there.
+            conf = skin_dir / 'skin.conf'
+            conf.write_text(conf.read_text(encoding='utf-8').replace(
+                'copy_once = celestial.css, celestial.js, sky.js',
+                'copy_once = %s/celestial.css, %s/celestial.js, %s/sky.js' % ((layout,) * 3)),
+                encoding='utf-8')
+            tmpl = skin_dir / 'astro' / 'index.html.tmpl'
+            text = tmpl.read_text(encoding='utf-8')
+            for asset in ('celestial.css', 'celestial.js', 'sky.js'):
+                text = text.replace('"../%s"' % asset, '"../%s/%s"' % (layout, asset))
+            tmpl.write_text(text, encoding='utf-8')
+        db_path = str(tmp_path / 'weewx.sdb')
+        with weewx.manager.Manager.open_with_create(
+                {'database_name': db_path, 'driver': 'weedb.sqlite'},
+                schema=weewx.schemas.wview_small.schema) as mgr:
+            mgr.addRecord({'dateTime': TIME_TS, 'usUnits': weewx.US, 'interval': 5,
+                           'outTemp': 68.0, 'barometer': 30.1})
+        config_dict = configobj.ConfigObj(io.StringIO(
+            'WEEWX_ROOT = %s\n'
+            '[Station]\n    location = Test Station\n    latitude = %s\n'
+            '    longitude = %s\n    altitude = %s, meter\n'
+            '[StdReport]\n    SKIN_ROOT = skins\n    HTML_ROOT = public_html\n'
+            '    data_binding = wx_binding\n    log_success = false\n'
+            '    [[ConsumerReport]]\n        skin = Consumer\n'
+            '        HTML_ROOT = public_html/consumer\n'
+            '        celestial_panels = %s\n'
+            '    [[Defaults]]\n'
+            '[DataBindings]\n    [[wx_binding]]\n        database = archive_sqlite\n'
+            '        table_name = archive\n        manager = weewx.manager.Manager\n'
+            '[Databases]\n    [[archive_sqlite]]\n        database_name = %s\n'
+            '        database_type = SQLite\n'
+            '[DatabaseTypes]\n    [[SQLite]]\n        driver = weedb.sqlite\n'
+            % (tmp_path, LATITUDE, LONGITUDE, ALTITUDE_M, panels, db_path)))
+        if declared:
+            # What the installer's configure hook does on this station:
+            # the satellites and comets groups under the consumer's stanza.
+            celestial.declare_page_fields(config_dict)
+        return config_dict
+
+    @classmethod
+    def generate(cls, tmp_path, sky, panels='countdown, geocentric, dome, pass',
+                 declared=True, layout=''):
+        """Run the report engine over the scratch station as weewxd does
+        after an archive record -- the record passed, no gen_ts, so the
+        CheetahGenerator takes the archive's last good stamp and the
+        FragmentGenerator the record's, the same instant -- with
+        weewx-skyfield registered as the almanac and this checkout's bin
+        on sys.path, so `user.celestial_page`, the name the fixture's
+        skin.conf writes, imports as it does on a station.  Returns the
+        report's HTML_ROOT."""
+        import weewx.reportengine
+        import weewx.station
+        mod, _ = load_wxskyfield()
+        TestFragmentGenerator.shim_sees_skyfield()
+        config_dict = cls.build_station(tmp_path, panels, declared, layout)
+        stn_info = weewx.station.StationInfo(**config_dict['Station'])
+        record = {'dateTime': TIME_TS, 'usUnits': weewx.US, 'interval': 5}
+        bin_dir = os.path.join(REPO_ROOT, 'bin')
+        sys.path.append(bin_dir)
+        try:
+            with saved_almanacs():
+                assert mod.register_almanac(sky)
+                weewx.reportengine.StdReportEngine(config_dict, stn_info, record=record,
+                                                   gen_ts=None, first_run=True).run()
+        finally:
+            sys.path.remove(bin_dir)
+        # The engine imported THIS checkout's module under the consumer's
+        # name -- not a station's installed copy that happened to be
+        # importable as `user` -- or the run proved nothing about this
+        # code.
+        for name in ('user.celestial_page', 'user.celestial', 'user.celestial_sky'):
+            assert os.path.realpath(sys.modules[name].__file__).startswith(
+                os.path.realpath(REPO_ROOT) + os.sep), sys.modules[name].__file__
+        return tmp_path / 'public_html' / 'consumer'
+
+    def test_generates_the_page_and_its_fragments_beside_it(self, wxskyfield_sat_sky,
+                                                             tmp_path):
+        """One engine cycle: the page at astro/index.html with every panel
+        (each root marked, the config block naming the report, the set's
+        bare file names on the markup, no echoed tag, no hint), the ten
+        dome slots and the pass chart BESIDE it in astro/ -- none at
+        HTML_ROOT -- and the three assets at HTML_ROOT, where the page's
+        ../ references point."""
+        root = self.generate(tmp_path, wxskyfield_sat_sky)
+        page = (root / 'astro' / 'index.html').read_text(encoding='utf-8')
+        for asset in ('celestial.css', 'celestial.js', 'sky.js'):
+            assert (root / asset).read_bytes() == open(os.path.join(SKIN_DIR, asset), 'rb').read()
+        domes, pass_name = celestial_page.fragment_names(celestial_page.DEFAULT_SET)
+        assert sorted(p.name for p in (root / 'astro').iterdir()) == sorted(
+            ['index.html'] + domes + [pass_name])
+        assert sorted(p.name for p in root.iterdir()) == ['astro', 'celestial.css',
+                                                          'celestial.js', 'sky.js']
+        for k in range(5):                       # a 300 s interval: five slots
+            assert '<svg' in (root / 'astro' / domes[k]).read_text(encoding='utf-8'), k
+        assert (root / 'astro' / domes[5]).read_text(encoding='utf-8') == ''
+        assert '<svg' in (root / 'astro' / pass_name).read_text(encoding='utf-8')
+        mark = 'data-celestial="%s"' % celestial.CELESTIAL_VERSION
+        assert page.count(mark) == 6
+        assert '<html lang="en" class="theme-dark">' in page
+        cfg = TestSampleSkinRenders.config(page)
+        assert cfg['report_name'] == 'ConsumerReport'
+        assert cfg['loop_data_file'] == '../loop-data.txt'
+        assert cfg['sat_names'] == ['iss', 'tiangong'] and cfg['comet_names'] == []
+        assert cfg['version'] == celestial.CELESTIAL_VERSION and cfg['theme'] == 'dark'
+        assert cfg['gen_ts'] == TIME_TS and cfg['root'] == '../'
+        assert 'data-dome-prefix="dome-svg"' in page
+        assert 'data-pass-fragment="pass-chart.txt"' in page
+        assert 'data-dome-interval="300"' in page and 'data-dome-count="5"' in page
+        assert 'id="chip-pass"' in page and 'id="geo-row-proxima_centauri"' in page
+        assert 'id="sat-line-iss"' in page and 'id="sat-any-line-iss"' in page
+        assert '<section id="pass-sec">' in page
+        assert 'Hipparcos' in page
+        assert '$celestial' not in page and 'skyhint' not in page
+        # The page's own wrapper and the slot-0 fragment describe the
+        # same sky: one instant, one geometry, one plate.
+        frag = (root / 'astro' / domes[0]).read_text(encoding='utf-8')
+        wrap = re.search(r'<div class="domefrag" [^>]*>', page).group(0)
+        assert wrap.replace('data-dome-ts', 'x') == re.search(
+            r'<div class="domefrag" [^>]*>', frag).group(0).replace(
+            'data-dome-slot="0" ', '').replace('data-dome-ts', 'x')
+        assert 'data-dome-ts="%d"' % TIME_TS in wrap and 'data-dome-ts="%d"' % TIME_TS in frag
+
+    def test_a_page_with_comets_declares_them(self, wxskyfield_comet_sky, tmp_path):
+        """The fixture on a station with comets: the report's stanza names
+        every panel the page embeds, so the installer's declaration
+        (declare_page_fields on the station's own configuration) owns
+        both groups under it, and the page renders the comet chip and
+        row with no line about an undeclared panel."""
+        root = self.generate(tmp_path, wxskyfield_comet_sky)
+        page = (root / 'astro' / 'index.html').read_text(encoding='utf-8')
+        cfg = TestSampleSkinRenders.config(page)
+        assert cfg['comet_names'], 'the comet sky configures comets'
+        comet = cfg['comet_names'][0]
+        assert 'id="chip-peri-%s"' % comet in page and 'id="geo-row-%s"' % comet in page
+        assert 'skyhint' not in page
+        report = celestial.declare_page_fields(self.build_station(tmp_path / 'again'))
+        assert report['groups']['ConsumerReport'] == ('satellites', 'comets')
+        assert report['refused'] == {} and report['unread'] == {}
+
+    def test_a_misdeclared_stanza_says_so_on_the_page(self, wxskyfield_sat_sky, tmp_path):
+        """The same page under a stanza naming only the dome and the pass
+        panel: the countdown row and the Geocentric each carry the line
+        saying their fields are not declared, the two named panels do
+        not, and the page is otherwise whole."""
+        root = self.generate(tmp_path, wxskyfield_sat_sky, panels='dome, pass')
+        page = (root / 'astro' / 'index.html').read_text(encoding='utf-8')
+        assert page.count('skyhint') == 2
+        assert 'does not name the countdown panel' in page
+        assert 'does not name the geocentric panel' in page
+        assert page.count('data-celestial=') == 6
+
+    def test_a_station_that_never_declared_says_re_run(self, wxskyfield_sat_sky, tmp_path):
+        """The likeliest first-time sequence: the key added to the stanza
+        and weewxd restarted, the installer never re-run.  Every named
+        panel carries the out-of-date line saying what to run -- the
+        writer's own dry run knows the groups are not there -- and the
+        page is otherwise whole."""
+        root = self.generate(tmp_path, wxskyfield_sat_sky, declared=False)
+        page = (root / 'astro' / 'index.html').read_text(encoding='utf-8')
+        assert page.count('skyhint') == 4
+        assert page.count('field declaration is out of date') == 4
+        assert 'does not name' not in page
+        assert page.count('data-celestial=') == 6
+
+    @staticmethod
+    def serve(root, packets):
+        """Serve a scratch HTML_ROOT on a free port with the loop feed at
+        /loop-data.txt: (httpd, port, requests) -- every request's path
+        and status, in order."""
+        import http.server
+        import socketserver
+        import threading
+        served = {'n': 0}
+        requests = []
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.split('?')[0] == '/loop-data.txt':
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(root / path.split('?')[0].lstrip('/'))
+
+            def log_request(self, code='-', size='-'):
+                requests.append((self.path.split('?')[0], int(code)))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        return httpd, httpd.server_address[1], requests
+
+    RUNNER = (
+        'import json, sys\n'
+        'from playwright.sync_api import sync_playwright\n'
+        'def drive(browser, url):\n'
+        '    page = browser.new_page()\n'
+        '    errors, warnings = [], []\n'
+        "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+        "    page.on('console', lambda m: warnings.append(m.text) if m.type == 'warning' else None)\n"
+        '    page.goto(url)\n'
+        "    page.wait_for_load_state('networkidle')\n"
+        '    page.wait_for_timeout(5500)\n'
+        "    page.evaluate('refreshPass()')\n"
+        '    page.wait_for_timeout(1500)\n'
+        '    out = {\n'
+        "        'errors': errors, 'warnings': list(warnings),\n"
+        "        'root': page.evaluate('FRAGMENT_ROOT'),\n"
+        "        'url': page.evaluate(\"fragmentUrl('astro', 'x.txt')\"),\n"
+        "        'dots': page.eval_on_selector_all(\n"
+        "            '#dial .cel-geodot:not([display])', 'els => els.length'),\n"
+        "        'dome': page.eval_on_selector_all('#dome-svg svg', 'els => els.length'),\n"
+        "        'passchart': page.eval_on_selector_all('#pass-chart svg', 'els => els.length'),\n"
+        "        'marks': page.eval_on_selector_all('[data-celestial]', 'els => els.length'),\n"
+        "        'hints': page.eval_on_selector_all('.cel-skyhint', 'els => els.length'),\n"
+        "        'sec_hidden': page.evaluate(\"(function(){var s = document.getElementById('pass-sec'); return s === null ? null : s.hidden;})()\"),\n"
+        "        'satline': page.inner_text('#sat-line-iss') if page.query_selector('#sat-line-iss') else '',\n"
+        "        'badge': page.inner_text('#live-label'),\n"
+        "        'theme': page.evaluate('document.documentElement.className'),\n"
+        '    }\n'
+        "    # A fetch that fails: one line, naming the URL asked.\n"
+        "    page.evaluate(\"document.getElementById('pass-chart').setAttribute('data-pass-fragment', 'nope.txt')\")\n"
+        "    page.evaluate('refreshPass()')\n"
+        '    page.wait_for_timeout(1000)\n'
+        "    out['late_warnings'] = warnings[len(out['warnings']):]\n"
+        '    page.close()\n'
+        '    return out\n'
+        'urls = json.loads(sys.argv[1])\n'
+        'with sync_playwright() as p:\n'
+        '    browser = p.chromium.launch()\n'
+        '    out = {u: drive(browser, u) for u in urls}\n'
+        '    browser.close()\n'
+        'print(json.dumps(out))\n')
+
+    @classmethod
+    def drive(cls, tmp_path, urls):
+        """Run the runner over the URLs; the parsed results by URL."""
+        import json as jsonlib
+        import subprocess
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        runner = tmp_path / 'runner.py'
+        runner.write_text(cls.RUNNER)
+        proc = subprocess.run([pwenv, str(runner), jsonlib.dumps(urls)], capture_output=True,
+                              text=True, timeout=240)
+        assert proc.returncode == 0, proc.stderr
+        return jsonlib.loads(proc.stdout)
+
+    def test_the_consumer_page_runs_in_a_real_browser(self, wxskyfield_sat_sky, tmp_path):
+        """The generated consumer page, served from its scratch HTML_ROOT
+        and opened at /astro/index.html in headless Chromium with a live
+        feed: no page errors, no console warnings, the dial and the
+        satellite rows come up live, and every refetch -- the dome slot
+        the walk asks for on the first packet, the pass chart when its
+        refresh fires -- goes to /astro/, the set's directory under
+        HTML_ROOT, and is answered 200.  The SAME page served from
+        another directory (other/index.html) fetches from /astro/ just
+        the same, and so does the skin that keeps its assets in js/
+        (copy_once = js/celestial.js): the script locates HTML_ROOT by
+        stripping its copy_once path from its own URL, so neither where
+        the page sits nor where the script sits matters.  A fetch that
+        does fail earns one console line naming the URL, and the
+        script-root fallback (no root known) is the bare relative name.
+        Skips when the playwright env is absent."""
+        import re as relib
+        import shutil
+        mod, _ = load_wxskyfield()
+        wall = int(time.time())
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            packets = sat_feed_packets(wall, 'ConsumerReport')
+        servers = {}
+        urls = []
+        for layout in ('', 'js'):
+            root = self.generate(tmp_path / (layout or 'root'), wxskyfield_sat_sky, layout=layout)
+            page_path = root / 'astro' / 'index.html'
+            html = page_path.read_text(encoding='utf-8')
+            # The embedded backdrop restamped an hour behind the browser's
+            # clock: the slot walk then wants a slot the page does not
+            # hold and asks for it on the first packet -- the request
+            # that shows where the page looks.
+            html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (wall - 3600),
+                             html, count=1)
+            page_path.write_text(html, encoding='utf-8')
+            (root / 'other').mkdir()
+            shutil.copy(str(page_path), str(root / 'other' / 'index.html'))
+            # The unwrapped build, so the runner can fire the pass chart's
+            # refetch itself (its timer is minutes out) and read the
+            # script's root; the shipped copy's arrival is the generation
+            # test's.
+            (root / layout / 'celestial.js' if layout else root / 'celestial.js').write_text(
+                unwrapped_js(), encoding='utf-8')
+            httpd, port, requests = self.serve(root, packets)
+            servers[layout] = (httpd, port, requests)
+            urls += ['http://127.0.0.1:%d/astro/index.html' % port,
+                     'http://127.0.0.1:%d/other/index.html' % port]
+        try:
+            results = self.drive(tmp_path, urls)
+        finally:
+            for httpd, _, _ in servers.values():
+                httpd.shutdown()
+        for layout, (httpd, port, requests) in servers.items():
+            for where in ('astro', 'other'):
+                out = results['http://127.0.0.1:%d/%s/index.html' % (port, where)]
+                assert out['errors'] == [] and out['warnings'] == [], (layout, where, out)
+                assert out['root'] == '../' and out['url'] == '../astro/x.txt', (layout, where)
+                assert out['dots'] >= 9 and out['dome'] == 1 and out['passchart'] == 1, (layout, where)
+                assert out['marks'] == 6 and out['hints'] == 0 and out['theme'] == 'theme-dark'
+                assert 'Jun 22' in out['satline'], (layout, where)   # the row went live
+                assert out['late_warnings'] == [
+                    'celestial: the pass fragment ../astro/nope.txt came back HTTP 404'], (layout, where)
+            # Every fragment fetch, from either page, went to /astro/ --
+            # the set's directory under HTML_ROOT, reached through the
+            # page's own route up to it -- and was answered; nothing was
+            # asked for at HTML_ROOT, under other/ or under js/.  (The
+            # .txt fetches are the fragments and the feed; the browser
+            # also asks for a favicon.)  The one deliberate bad fetch went
+            # there too, from both pages, 404 and warned.
+            asks = [(p, c) for p, c in requests if p.endswith('.txt') and p != '/loop-data.txt']
+            fragments = [(p, c) for p, c in asks if not p.endswith('/nope.txt')]
+            assert fragments and all(p.startswith('/astro/') and c == 200 for p, c in fragments), (layout, requests)
+            assert sum(1 for p, c in fragments if relib.match(r'^/astro/dome-svg(-\d)?\.txt$', p)) >= 2
+            assert sum(1 for p, c in fragments if p == '/astro/pass-chart.txt') >= 2
+            assert sorted(p for p, c in asks if p.endswith('/nope.txt')) == ['/astro/nope.txt',
+                                                                             '/astro/nope.txt']
+            assert all(c == 404 for p, c in asks if p.endswith('/nope.txt'))
+            script = '/js/celestial.js' if layout else '/celestial.js'
+            assert (script, 200) in requests, (layout, requests)
+
+    def test_the_declaration_line_survives_the_refetch_in_a_real_browser(self, wxskyfield_sky,
+                                                                          tmp_path):
+        """A consumer whose stanza covers no satellite group (geocentric
+        alone), on a station with no satellites: the pass section
+        first-paints visible with the panel's line (nothing else to show
+        -- no chart, no roster row), and the first pass refetch, which
+        brings an EMPTY fragment, must not hide the section and the line
+        with it: the script's hide rule counts a line as something to
+        show, as pass_panel_hidden does.  (The countdown and the dome
+        read satellites too, so they carry lines as well: three on the
+        page.)  Skips when the playwright env is absent."""
+        mod, _ = load_wxskyfield()
+        wall = int(time.time())
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sky)
+            packets = sat_feed_packets(wall, 'ConsumerReport', satellites=False)
+        root = self.generate(tmp_path, wxskyfield_sky, panels='geocentric')
+        page = (root / 'astro' / 'index.html').read_text(encoding='utf-8')
+        assert '<section id="pass-sec">' in page and 'does not name the pass panel' in page
+        assert (root / 'astro' / 'pass-chart.txt').read_text(encoding='utf-8').startswith(
+            '<div class="passfrag"')
+        (root / 'celestial.js').write_text(unwrapped_js(), encoding='utf-8')
+        httpd, port, requests = self.serve(root, packets)
+        try:
+            out = self.drive(tmp_path, ['http://127.0.0.1:%d/astro/index.html' % port])
+        finally:
+            httpd.shutdown()
+        out = out['http://127.0.0.1:%d/astro/index.html' % port]
+        assert out['errors'] == [] and out['warnings'] == []
+        assert ('/astro/pass-chart.txt', 200) in requests
+        assert out['sec_hidden'] is False and out['hints'] == 3 and out['passchart'] == 0
+
+
+class TestConfigScript:
+    """The script split (9.0): celestial.js is one static file with one
+    global, and $celestial.config_script($almanac) builds the config that
+    starts it -- every value the 8.5 include baked, now a contract of
+    keys."""
+
+    # The config's keys: contract, additive only inside a major version.
+    KEYS = {'version', 'page_update_pwd', 'refresh_rate', 'expiration_time',
+            'time_zone', 'station_lat', 'gen_ts', 'per_au', 'dist_label',
+            'locale', 'body_labels', 'cardinals', 'texts', 'sat_names',
+            'comet_names', 'report_name', 'loop_data_file', 'theme', 'root'}
+
+    @staticmethod
+    def page(extras=None, texts=None, sky_page=None, **skin):
+        skin_dict = {'Extras': {'loop_data_file': 'loop.txt'} if extras is None else extras,
+                     'lang': 'en', 'REPORT_NAME': REPORT_NAME}
+        if texts is not None:
+            skin_dict['Texts'] = texts
+        skin_dict.update(skin)
+        return celestial_page.CelestialPage(skin_dict, sky_page)
+
+    @staticmethod
+    def almanac(converter=None):
+        return weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                     formatter=weewx.units.get_default_formatter(),
+                                     converter=converter)
+
+    @staticmethod
+    def fmt(key, params, texts):
+        """celestial.js's fmt, transliterated: `T[key] || key` (an empty
+        entry is English too), then split/join on each placeholder --
+        every occurrence, the value's text inserted verbatim.  _t must
+        agree with it on every input."""
+        s = texts.get(key) or key
+        for k in params:
+            s = str(params[k]).join(s.split('{' + k + '}'))
+        return s
+
+    def test_config_keys_are_the_contract(self):
+        assert set(self.page().config_dict(self.almanac())) == self.KEYS
+
+    def test_expiration_time_zero_reaches_the_script_and_disarms_it(
+            self, wxskyfield_sat_almanac):
+        """0 means never expire, for a page in another skin that runs an
+        expiry of its own -- two regimes on one page being worse than
+        either, and a consumer keeping its own badge having nowhere for
+        CLICK-ME to appear.
+
+        Two halves, and the first is the one that would fail silently:
+        0 must survive the config block rather than being read as absent
+        and defaulted to 24, which is what a truthiness test would do."""
+        page = self.page(extras={'loop_data_file': 'x.txt', 'expiration_time': '0'})
+        assert celestial_page._number('0', 24) == 0
+        assert page.config_dict(wxskyfield_sat_almanac)['expiration_time'] == 0
+        # And the script disarms rather than arming a zero-delay timer,
+        # which is what it did through 9.0 -- setTimeout(..., 0) expired
+        # the page at once, so nothing can be relying on the old reading.
+        with open(JS_PATH, encoding='utf-8') as f:
+            js = f.read()
+        body = js.split('function setPageExpirationTimer()', 1)[1].split('function ', 1)[0]
+        assert 'expiration_time <= 0' in body and 'return;' in body, body[:200]
+
+    def test_javascript_reads_exactly_the_contract(self):
+        """Both directions between the file and the Python: every
+        config.<key> celestial.js reads is a key config_dict emits, and
+        every key it emits is read -- a key the javascript wants that the
+        Python does not send is a dead panel, and one the Python sends
+        that nothing reads is contract for nobody."""
+        js = open(JS_PATH, encoding='utf-8').read()
+        read = set(re.findall(r'\bconfig\.([a-z_]+)', js))
+        assert read == self.KEYS
+        emitted = set(re.findall(r"^            '([a-z_]+)': ", open(PAGE_PY, encoding='utf-8').read(),
+                                 re.M))
+        assert emitted == self.KEYS
+
+    def test_javascript_text_keys_are_live_texts(self):
+        """Every [Texts] key celestial.js looks up -- fmt('...') and
+        T['...'] literals, non-ASCII spelled with \\u escapes -- is a
+        LIVE_TEXTS entry, so config_dict sends it and a translated page
+        renders it translated.  Through 8.5 these were the include's own
+        $gettext lines and pinned by the en.conf test; the split moved
+        the table to Python, and without this a key added to the
+        javascript alone would silently render English on every
+        translated page (fmt falls back to the key)."""
+        js = open(JS_PATH, encoding='utf-8').read()
+        found = set()
+        for m in re.finditer(r"fmt\(\s*(['\"])((?:[^'\"\\]|\\.)*)\1", js):
+            found.add(m.group(2))
+        for inner in re.findall(r"\bT\[([^\]]*)\]", js):
+            # T[eclKind === 'lunar' ? 'lunar eclipse' : 'solar eclipse']: the
+            # comparison value is not a key.
+            inner = re.sub(r"===\s*'[^']*'", '', inner)
+            found |= set(re.findall(r"'((?:[^'\\]|\\.)*)'", inner))
+        assert found, 'the literal scan matched nothing; fix the regexes'
+        keys = {s.encode('ascii').decode('unicode_escape') for s in found}
+        assert keys - set(celestial_page.LIVE_TEXTS) == set()
+
+    def test_config_bakes_what_the_include_baked(self, wxskyfield_sat_almanac):
+        """Value for value against the fixture: what the 8.5 include's
+        literals were for the same almanac and [Extras]."""
+        page = self.page(extras={'loop_data_file': '/gauge-data/loop-data.txt',
+                                 'refresh_rate': '2', 'expiration_time': '24',
+                                 'time_zone': 'America/Los_Angeles',
+                                 'page_update_pwd': 'foobar'},
+                         sky_page=make_sky_page())
+        cfg = page.config_dict(wxskyfield_sat_almanac)
+        assert cfg['version'] == celestial.CELESTIAL_VERSION
+        assert cfg['page_update_pwd'] == 'foobar'
+        assert cfg['refresh_rate'] == 2 and isinstance(cfg['refresh_rate'], int)
+        assert cfg['expiration_time'] == 24
+        assert cfg['time_zone'] == 'America/Los_Angeles'
+        assert cfg['station_lat'] == LATITUDE
+        assert cfg['gen_ts'] == int(TIME_TS)
+        assert cfg['per_au'] == 9.2955807e7 and cfg['dist_label'] == ' miles'
+        assert cfg['locale'] == 'en'
+        assert set(cfg['body_labels']) == set(celestial_page.LABEL_BODIES)
+        assert cfg['body_labels']['moon'] == 'Moon' and cfg['body_labels']['earth'] == 'Earth'
+        assert cfg['cardinals'] == ['N', 'E', 'S', 'W']
+        # English is the identity translation, one entry per LIVE_TEXTS key.
+        assert cfg['texts'] == {k: k for k in celestial_page.LIVE_TEXTS}
+        assert cfg['sat_names'] == [str(n) for n in make_sky_page().satellite_names()]
+        assert 'iss' in cfg['sat_names']
+        assert cfg['comet_names'] == [str(n) for n in make_sky_page().comet_names()]
+        assert cfg['report_name'] == REPORT_NAME
+        assert cfg['loop_data_file'] == '/gauge-data/loop-data.txt'
+        assert cfg['theme'] == 'dark'
+
+    def test_metric_report_converts_to_kilometers(self):
+        cfg = self.page().config_dict(self.almanac(weewx.units.Converter(weewx.units.MetricUnits)))
+        assert cfg['per_au'] == 1.4959787e8 and cfg['dist_label'] == ' km'
+
+    def test_defaults_without_extras(self):
+        """The include's fallbacks, kept: foo, 2, 24, the station's own
+        zone, and an EMPTY loop_data_file (the javascript then polls
+        nothing and the badge names the option)."""
+        cfg = self.page(extras={}).config_dict(self.almanac())
+        assert cfg['page_update_pwd'] == 'foo'
+        assert cfg['refresh_rate'] == 2 and cfg['expiration_time'] == 24
+        assert cfg['time_zone'] == celestial_page.station_time_zone()
+        assert cfg['loop_data_file'] == ''
+        # A skin dict without an [Extras] section at all is the same.
+        cfg = celestial_page.CelestialPage({}, None).config_dict(self.almanac())
+        assert cfg['page_update_pwd'] == 'foo' and cfg['report_name'] == ''
+
+    def test_time_zone_option_passes_through(self):
+        """The option wins over the detected zone, 'browser' included
+        (the javascript resolves it), and an EMPTY value is a value --
+        browser-local, as the include's has_key branch made it."""
+        for tz in ('Europe/Berlin', 'browser', ''):
+            cfg = self.page(extras={'time_zone': tz}).config_dict(self.almanac())
+            assert cfg['time_zone'] == tz
+
+    def test_locale_is_the_language_only(self):
+        """As core's $lang: 'en', never 'en_AU.utf8'."""
+        assert self.page(lang='en_AU.utf8').config_dict(self.almanac())['locale'] == 'en'
+        assert self.page(lang='de').config_dict(self.almanac())['locale'] == 'de'
+
+    def test_texts_translate_through_the_report(self):
+        page = self.page(texts={'LIVE': 'EN DIRECT', 'alt {alt}\u00b0': 'H\u00f6he {alt}\u00b0'})
+        cfg = page.config_dict(self.almanac())
+        assert cfg['texts']['LIVE'] == 'EN DIRECT'
+        assert cfg['texts']['alt {alt}\u00b0'] == 'H\u00f6he {alt}\u00b0'
+        assert cfg['texts']['OFFLINE'] == 'OFFLINE'            # per-string fallback
+        # _t fills placeholders by the rule celestial.js's fmt uses live
+        # (every occurrence of a known name replaced by the value's text,
+        # the rest left as written, an empty entry English, nothing
+        # raised), so a translation that misspells one first-paints the
+        # same bytes the first packet paints: an English fallback or a
+        # raise at generation would each make the first packet change
+        # what the page first showed.  Pinned against a transliteration
+        # of fmt on a misspelled, a repeated, an empty and a '$'-carrying
+        # input (String.replace would have read '$&' as a pattern).
+        assert page._t('alt {alt}\u00b0', alt='1.0') == 'H\u00f6he 1.0\u00b0'
+        odd = {'{ly} ly': '{lichtjahre} Lj', '{d}d {h}h {m}m': '{d} Tage {h} h {m} min {d}',
+               'supermoon': '', '{name} perihelion': 'Perihel von {name}'}
+        broken = self.page(texts=odd)
+        assert broken._t('{ly} ly', ly='4.24') == '{lichtjahre} Lj'
+        assert broken._t('{d}d {h}h {m}m', d=2, h=3, m=4) == '2 Tage 3 h 4 min 2'
+        assert broken._t('supermoon') == 'supermoon'
+        assert broken._t('{name} perihelion', name='R$&D') == 'Perihel von R$&D'
+        for key, params in (('{ly} ly', {'ly': '4.24'}),
+                            ('{d}d {h}h {m}m', {'d': 2, 'h': 3, 'm': 4}),
+                            ('supermoon', {}),
+                            ('{name} perihelion', {'name': 'R$&D'})):
+            assert broken._t(key, **params) == self.fmt(key, params, odd), key
+        # A [Texts] value that is not a string (a subsection) is the key.
+        odd = self.page(texts={'LIVE': {'x': 'y'}})
+        assert odd._t('LIVE') == 'LIVE'
+
+    def test_body_labels_from_almanac_texts_and_without(self):
+        alm = self.almanac()
+        alm.__dict__['texts'] = {'moon': 'Mond'}
+        labels = self.page().config_dict(alm)['body_labels']
+        assert labels['moon'] == 'Mond' and labels['jupiter'] == 'Jupiter'
+        alm.__dict__.pop('texts', None)                        # WeeWX 5.2's shape
+        assert self.page().config_dict(alm)['body_labels']['moon'] == 'Moon'
+
+    def test_names_without_a_sky_page(self):
+        """No SkyPage, a SkyPage whose enumeration raises, and an older
+        skyfield without the method: [] every time, never a failure."""
+        assert self.page().config_dict(self.almanac())['sat_names'] == []
+
+        class Raising:
+            def satellite_names(self):
+                raise RuntimeError('boom')
+
+            def comet_names(self):
+                raise RuntimeError('boom')
+        cfg = self.page(sky_page=Raising()).config_dict(self.almanac())
+        assert cfg['sat_names'] == [] and cfg['comet_names'] == []
+
+        class Older:
+            def satellite_names(self):
+                return ['iss']
+        cfg = self.page(sky_page=Older()).config_dict(self.almanac())
+        assert cfg['sat_names'] == ['iss'] and cfg['comet_names'] == []
+
+    def test_script_block_cannot_be_closed_early(self):
+        """json.dumps leaves '/' alone, so a report name (or a password)
+        containing </script> would end the block: the '</' is escaped,
+        and the javascript still reads the right name."""
+        page = self.page(REPORT_NAME='Evil</script><b>x</b>')
+        block = page.config_script(self.almanac())
+        assert block.startswith('<script>\ncelestial.start({')
+        assert block.endswith('});\n</script>')
+        assert block.count('</script>') == 1
+        assert '<\\/script><b>x<\\/b>' in block
+        cfg = json.loads(re.search(r'celestial\.start\((\{.*\})\);', block, re.S).group(1))
+        assert cfg['report_name'] == 'Evil</script><b>x</b>'
+        # Non-ASCII rides as \u escapes, so html_entities encoding cannot
+        # touch it (the same reason the include used json.dumps).
+        block = self.page(texts={'LIVE': 'EN DIRECT \u2014 \u00e9'}).config_script(self.almanac())
+        assert '\\u2014' in block and '\u2014' not in block
+
+    def test_config_script_is_guarded(self, caplog):
+        """A failure costs the live layer, never the page: the block
+        renders empty and the log names the method and the exception."""
+        class Broken:
+            time_ts = TIME_TS
+            lat = LATITUDE
+
+            @property
+            def formatter(self):
+                raise RuntimeError('no formatter here')
+        caplog.set_level(logging.ERROR)
+        assert self.page().config_script(Broken()) == ''
+        assert any('celestial.config_script failed (RuntimeError: no formatter here)' in r.message
+                   for r in caplog.records)
+
+    def test_number(self):
+        n = celestial_page._number
+        assert n('2', 9) == 2 and isinstance(n('2', 9), int)
+        assert n('2.5', 9) == 2.5
+        assert n(3, 9) == 3
+        assert n(None, 9) == 9
+        assert n('two', 9) == 9
+
+    def test_station_time_zone_is_a_zone_the_machine_has(self):
+        tz = celestial_page.station_time_zone()
+        assert tz == '' or os.path.exists('/usr/share/zoneinfo/' + tz)
+
+    def test_the_page_starts_the_script_before_its_panels(self, wxskyfield_almanac):
+        """The script tag is a plain <script src> in <head> -- NOT
+        deferred, because start() arms the loop poll and the parse-time
+        paths (a packet or a backdrop refetch owed while the document is
+        still loading) exist for a poll armed before the panels parse --
+        and the config block calls start() at the top of <body>."""
+        html = TestSampleSkinRenders.render(wxskyfield_almanac, sky_page=make_sky_page())
+        tag = '<script src="celestial.js?v=%s"></script>' % celestial.CELESTIAL_VERSION
+        assert tag in html
+        assert html.index(tag) < html.index('</head>')
+        assert html.index('<body>') < html.index('celestial.start({') < html.index('id="countdown"')
+        # sky.js stays deferred: a document-level listener needs nothing.
+        assert '<script src="sky.js?v=%s" defer></script>' % celestial.CELESTIAL_VERSION in html
+        # And the page validates the config it emits: one block, parsable.
+        assert html.count('celestial.start(') == 1
+        assert set(TestSampleSkinRenders.config(html)) == self.KEYS
+
+    def test_celestial_js_publishes_one_global_in_a_real_browser(self, tmp_path):
+        """The browser half of the scope test, on a page the way a report
+        builds it (the script in <head>, the config block at the top of
+        <body>, here with no panels at all): loading celestial.js adds
+        exactly one name to window, `celestial`, whose start is a
+        function; none of the old window-scope names (fmt, latest,
+        GEO_BODIES, refreshDome, T) exists; every render returned at its
+        root-element guard (no page error); a second start() arms
+        nothing twice and logs.  And the empty loop_data_file case: the
+        page polls NOTHING -- an empty URL is the page's own, a whole
+        page every refresh_rate seconds for nothing -- and the badge
+        says BAD DATA, naming the option.  Skips when the playwright env
+        is absent."""
+        import json as jsonlib
+        import subprocess
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        (tmp_path / 'celestial.js').write_bytes(open(JS_PATH, 'rb').read())
+        (tmp_path / 'blank.html').write_text('<!DOCTYPE html><html><body></body></html>')
+        page = self.page(extras={'loop_data_file': '', 'refresh_rate': '1'})
+        block = page.config_script(self.almanac())
+        (tmp_path / 'index.html').write_text(
+            '<!DOCTYPE html><html><head><script src="celestial.js"></script></head>'
+            '<body>%s<span id="live-label"></span></body></html>' % block)
+        (tmp_path / 'cfg.json').write_text(jsonlib.dumps(page.config_dict(self.almanac())))
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json, sys\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'cfg = json.load(open(sys.argv[1]))\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    page = b.new_page()\n'
+            '    errors, logs, requests = [], [], []\n'
+            '    page.on("pageerror", lambda e: errors.append(str(e)))\n'
+            '    page.on("console", lambda m: logs.append(m.text))\n'
+            '    page.on("request", lambda r: requests.append(r.url))\n'
+            '    page.goto("file://%s/blank.html")\n'
+            '    before = set(page.evaluate("Object.getOwnPropertyNames(window)"))\n'
+            '    page.goto("file://%s/index.html")\n'
+            '    after = set(page.evaluate("Object.getOwnPropertyNames(window)"))\n'
+            '    out = {"added": sorted(after - before),\n'
+            '           "start": page.evaluate("typeof celestial.start"),\n'
+            '           "old": page.evaluate("[\'fmt\', \'latest\', \'GEO_BODIES\', \'refreshDome\', \'T\']'
+            '.filter(function (n) { return n in window; })")}\n'
+            '    page.evaluate("function (c) { celestial.start(c); }", cfg)\n'
+            '    page.wait_for_timeout(3000)\n'
+            '    out["errors"] = errors\n'
+            '    out["twice"] = [l for l in logs if "called twice" in l]\n'
+            '    out["badge"] = page.evaluate("document.getElementById(\'live-label\').textContent")\n'
+            '    out["requests"] = sorted(set(requests))\n'
+            '    b.close()\n'
+            'print(json.dumps(out))\n' % (tmp_path, tmp_path))
+        res = subprocess.run([pwenv, str(runner), str(tmp_path / 'cfg.json')],
+                             capture_output=True, text=True, timeout=120)
+        assert res.returncode == 0, res.stderr
+        out = jsonlib.loads(res.stdout)
+        assert out['added'] == ['celestial'], out['added']
+        assert out['start'] == 'function'
+        assert out['old'] == []
+        assert out['errors'] == [], out['errors']
+        assert len(out['twice']) == 1
+        assert out['badge'] == 'BAD DATA \u2014 check loop_data_file'
+        # Three seconds at refresh_rate 1: a poll would have fetched the
+        # page's own URL three times.  Only the two files were requested.
+        assert out['requests'] == ['file://%s/blank.html' % tmp_path,
+                                   'file://%s/celestial.js' % tmp_path,
+                                   'file://%s/index.html' % tmp_path], out['requests']
+
+
+class TestPanels:
+    """The countdown row and the Geocentric (9.0 step 3): the chip row and
+    the dial-plus-roster are $celestial.countdown_html($almanac) and
+    $celestial.geocentric_html($almanac), rendered from the almanac the
+    template passes and guarded like every other panel method.  What
+    they render is pinned by TestSampleSkinRenders (the page's cells and
+    chips are theirs); these pin the shapes the page cannot show at one
+    instant and the failure containment."""
+
+    @staticmethod
+    def page(sky_page=None, texts=None):
+        skin_dict = {'Extras': {'loop_data_file': 'loop.txt'}, 'lang': 'en',
+                     'REPORT_NAME': REPORT_NAME}
+        if texts is not None:
+            skin_dict['Texts'] = texts
+        return celestial_page.CelestialPage(skin_dict, sky_page)
+
+    @staticmethod
+    def cell(html, cell_id):
+        return TestSampleSkinRenders().cell(html, cell_id)
+
+    @staticmethod
+    def chip_attrs(html, chip_id):
+        m = re.search(r'<div class="cel-count" id="%s"([^>]*)>' % re.escape(chip_id), html)
+        assert m is not None, chip_id
+        return m.group(1)
+
+    def test_pass_chip_first_paints_every_state(self, wxskyfield_sat_sky):
+        """The pass chip's first paint is the live layer's pick at the
+        generation instant -- the soonest visible pass -- in the live
+        layer's own dress: counting down in hh:mm:ss inside the final
+        day, in days-hours-minutes beyond, 'overhead now' during the
+        pass with an empty countdown, and its rise AND set instants baked
+        so a feed without the pass keys can roll it by itself."""
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+
+            def row(ts):
+                alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                            formatter=weewx.units.get_default_formatter())
+                return self.page(make_sky_page()).countdown_html(alm)
+
+            html = row(TIME_TS)                        # the fixture pass is ~15 h out
+            assert re.search(r'^ data-ts="\d+" data-set="\d+"$', self.chip_attrs(html, 'chip-pass'))
+            assert self.cell(html, 'chip-pass-k') == 'Iss'
+            assert self.cell(html, 'chip-pass-d') == 'appears in'
+            assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-pass-v'))
+            html = row(1750388400)                     # Jun 19 20:00 PDT: 32 h out
+            assert re.match(r'1d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-pass-v'))
+            html = row(1750503568 + 120)               # two minutes into the pass
+            assert self.cell(html, 'chip-pass-d') == 'overhead now'
+            assert self.cell(html, 'chip-pass-v') == ''
+            assert ' hidden' not in self.chip_attrs(html, 'chip-pass')
+
+    def test_windowed_guest_first_paints_visible_inside_its_window(self, wxskyfield_sat_sky):
+        """The season chip bakes its label and target at any distance
+        (pinned hidden at the June fixture instant, 93 days out) and
+        first-paints visible, counting, dated, once the event is inside
+        CHIP_WINDOW_S -- what the javascript would show for that instant."""
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            alm = weewx.almanac.Almanac(TIME_TS + 80 * 86400, LATITUDE, LONGITUDE,
+                                        altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            html = self.page(make_sky_page()).countdown_html(alm)
+        assert re.search(r'^ data-ts="\d+"$', self.chip_attrs(html, 'chip-season'))
+        assert self.cell(html, 'chip-season-k') == 'autumn begins'
+        assert re.match(r'1[0-3]d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-season-v'))
+        assert re.match(r'Sep \d{1,2} \d{2}:\d{2}$', self.cell(html, 'chip-season-d'))
+        # After sunset the sun chip has rolled to sunrise by itself.
+        assert self.cell(html, 'chip-sun-k') in ('sunset', 'sunrise')
+
+    def test_roster_translates_through_the_report(self, wxskyfield_almanac):
+        """The roster's names come from the almanac's [Almanac] texts and
+        its cells from [Texts], both the report's own, so a translated
+        report first-paints translated -- and Proxima's row uses the short
+        [Texts] label, never the tag."""
+        wxskyfield_almanac.texts = {'moon': 'Mond'}
+        html = self.page(make_sky_page(), texts={'Proxima': 'Nachbar', 'below horizon': 'unten',
+                                                 'alt {alt}°': 'H {alt}°', '{dist} au': '{dist} AE'}
+                         ).geocentric_html(wxskyfield_almanac)
+        assert '<span class="cel-chip cel-chip-moon"></span>Mond<' in html
+        assert '<span class="cel-chip cel-chip-proxima_centauri"></span>Nachbar<' in html
+        assert self.cell(html, 'geo-au-moon').endswith(' AE')
+        assert self.cell(html, 'geo-alt-sun').startswith('H ')
+        assert 'id="dial"' in html and 'skyhint' not in html
+
+    def test_a_failing_panel_is_logged_and_left_out(self, caplog):
+        """_panel_guard on both: an almanac that raises on the first read
+        costs the panel (rendered blank, the failure logged with its
+        traceback), never the page."""
+
+        class Raising:
+            def __getattr__(self, name):
+                raise RuntimeError('almanac down')
+
+        page = self.page()
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            assert page.countdown_html(Raising()) == ''
+            assert page.geocentric_html(Raising()) == ''
+        assert 'celestial.countdown_html failed (RuntimeError: almanac down)' in caplog.text
+        assert 'celestial.geocentric_html failed (RuntimeError: almanac down)' in caplog.text
+
+    def test_a_failed_panel_leaves_the_page_and_the_live_layer_whole(
+            self, wxskyfield_almanac, monkeypatch, caplog):
+        """Through the template: a panel whose render fails inside the
+        guard is simply absent from the page -- no chip row, no dial --
+        while the header, the config block, the dome and the footer
+        render as ever.  (celestial.js finds no #countdown and no #dial
+        and leaves them alone: every DOM helper tolerates a missing
+        element, and buildDial returns null without one.)"""
+
+        def boom(*args, **kwargs):
+            raise KeyError('Texts')
+
+        # Sabotage what only the two panels read: the chip builder and
+        # the roster's body list (distance_unit and almanac_texts feed the
+        # config block too, which must render).
+        monkeypatch.setattr(celestial_page.CelestialPage, '_chip', staticmethod(boom))
+        monkeypatch.setattr(celestial_page, 'GEO_BODIES', None)
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            html = TestSampleSkinRenders.render(wxskyfield_almanac, sky_page=make_sky_page())
+        assert 'celestial.countdown_html failed' in caplog.text
+        assert 'celestial.geocentric_html failed' in caplog.text
+        assert 'id="countdown"' not in html and 'id="dial"' not in html
+        assert 'id="geo-row-moon"' not in html
+        assert '<span id="last-update">12:00:00</span>' in html
+        assert 'celestial.start({' in html
+        assert 'Sky dome chart' in html
+        assert 'Hipparcos' in html
+        # The section chrome stands, empty, so the page's structure and
+        # heading order do not change under it.
+        assert '<h2 class="cel-eyebrow">The geocentric · live</h2>' in html
+
+    def test_an_unbound_celestial_costs_the_panels_not_the_page(self, wxskyfield_almanac):
+        """A weewx.conf stanza overriding search_list_extensions with the
+        pre-9.0 shim leaves $celestial unbound.  The template resolves it
+        once with $getVar's default and tests it at every call, because
+        under #errorCatcher Echo a bare placeholder would ECHO its own
+        text into the page: the page must generate without the config
+        block and without any panel, and without a single echoed tag --
+        which is what upgrading.md says that override costs."""
+        html = TestSampleSkinRenders.render(wxskyfield_almanac, sky_page=make_sky_page(),
+                                            unbound_celestial=True)
+        # No echoed placeholder: neither the tag's own text nor Echo's
+        # "cannot find" prose reaches the page.
+        assert '$celestial' not in html and 'cannot find' not in html
+        assert 'celestial.start(' not in html
+        assert 'id="countdown"' not in html and 'id="dial"' not in html
+        assert '<span id="last-update">12:00:00</span>' in html
+        # The dome, the pass panel and the footer's credit are the tag's
+        # too; the section chrome stands, empty.
+        assert 'Sky dome chart' not in html and 'id="pass-sec"' not in html
+        assert 'Hipparcos' not in html
+        assert '<h2 class="cel-eyebrow">The sky dome · live</h2>' in html
+        assert '<html lang="en" class="theme-dark">' in html
+
+
+    # -- the dome, the Next Visible Pass and their rosters -----------------
+
+    @staticmethod
+    def sets_page(sky_page, sets, interval_s=None):
+        skin_dict = {'Extras': {'loop_data_file': 'loop.txt'}, 'lang': 'en',
+                     'REPORT_NAME': REPORT_NAME, 'CelestialFragments': sets}
+        return celestial_page.CelestialPage(skin_dict, sky_page, interval_s)
+
+    def test_dome_and_pass_panels_first_paint_the_set_they_name(self, wxskyfield_sat_almanac):
+        """A page names the fragment set it embeds and gets that set's
+        first paint: its label scale, its plate (a set on light inside a
+        dark report draws the paper dome and chart) and its file names,
+        which the panels' own markup carries -- data-dome-prefix on the
+        swap target, data-pass-fragment on the chart -- so the javascript
+        refetches the files the generator writes for that set without
+        the page saying the name twice.  No set means the set on the
+        dome-svg prefix; a set the skin does not declare, or no set on a
+        skin that declares none on that prefix, renders nothing and logs
+        the name, never the default."""
+        sets = {'sp': {'prefix': 'dome-svg-sp', 'label_scale': 2.2, 'theme': 'light'},
+                'desk': {'label_scale': 0.8}}
+        page = self.sets_page(make_sky_page(theme='dark'), sets, interval_s=350)
+        alm = wxskyfield_sat_almanac
+        dome = page.dome_html(alm, set='sp')
+        assert '<div id="dome-svg" data-dome-prefix="dome-svg-sp" data-dome-dir="">' in dome
+        assert ('<div class="domefrag" data-dome-ts="%d" data-dome-step="60" data-dome-count="6" '
+                'data-dome-interval="350" data-dome-palette="light" data-page-theme="dark">'
+                % TIME_TS) in dome
+        assert '#efece2' in dome.lower() and '#161f3d' not in dome.lower()
+        assert 'id="dome-stale" hidden' in dome and 'skyhint' not in dome
+        default = self.sets_page(make_sky_page(theme='dark'), {}, interval_s=350).dome_html(alm)
+        passp = page.pass_html(alm, set='sp')
+        assert passp.startswith('<div id="pass-wrap" data-celestial="%s">\n  <div id="pass-chart" '
+                                % celestial.CELESTIAL_VERSION +
+                                'data-pass-fragment="dome-svg-sp-pass.txt" data-pass-dir="">'
+                                '<div class="passfrag" data-pass-palette="light" '
+                                'data-page-theme="dark">')
+        assert '#efece2' in passp.lower()
+        # The report's theme rides the page's wrapper too, beside the set's
+        # plate: the flip check's input, on a fragment set that is not
+        # the page's plate.
+        assert 'data-dome-palette="light" data-page-theme="dark">' in dome
+        # Both rosters and the predicate stand behind the SAME set's dome
+        # (memoized): one draw for the set, whatever the call order.
+        page.dome_roster_html(alm, set='sp')
+        page.pass_roster_html(alm, set='sp')
+        page.pass_panel_hidden(alm, set='sp')
+        assert len([k for k in page._memo if k[0] == 'dome']) == 1
+        # No set: the declared set on the page's own prefix, at ITS scale.
+        # Same plate as the skin's default set, so the difference is the
+        # scale reaching skyfield.
+        dome = page.dome_html(alm)
+        assert 'data-dome-prefix="dome-svg"' in dome and 'data-dome-palette="night"' in dome
+        assert ('data-pass-fragment="pass-chart.txt" data-pass-dir=""><div class="passfrag" '
+                'data-pass-palette="night" data-page-theme="dark">' in page.pass_html(alm))
+        assert dome != default
+
+    def test_a_panel_declared_by_the_skin_carries_no_line(self, wxskyfield_sat_almanac,
+                                                         tmp_path):
+        """The page asks the installer's own reader, so a key the SKIN
+        declares satisfies it exactly as one in the report's stanza
+        does.  This is the invariant the whole design rests on: one
+        reader, both sides.  Step 5 shipped the opposite once -- the page
+        read the merged skin dict while the installer read weewx.conf, so
+        a key in skin.conf satisfied the page and declared nothing -- and
+        a second place to look brings that back the moment the two sides
+        stop asking the same question."""
+        alm = wxskyfield_sat_almanac
+        root = tmp_path / 'root'
+        (root / 'skins' / 'MySkin').mkdir(parents=True)
+        (root / 'skins' / 'MySkin' / 'skin.conf').write_text(
+            'celestial_panels = countdown, geocentric, dome, pass\n')
+        config = {'WEEWX_ROOT': str(root),
+                  'Skyfield': {'Satellites': {'iss': '25544'}, 'Comets': {'halley': '1P'}},
+                  'StdReport': {'SKIN_ROOT': 'skins',
+                                'Stars': {'skin': 'MySkin'}}}
+        celestial.declare_page_fields(config)          # what the installer does
+        page = celestial_page.CelestialPage(
+            {'skin': 'MySkin', 'REPORT_NAME': 'Stars', 'Texts': {}},
+            make_sky_page(), config_dict=config)
+        for html in (page.countdown_html(alm), page.geocentric_html(alm),
+                     page.dome_html(alm), page.pass_html(alm)):
+            assert 'celestial_panels' not in html
+            assert 'out of date' not in html
+
+    def test_the_collision_check_follows_kind(self):
+        """Two rules, and they guard different things.  A set is refused
+        for writing a file another set writes -- judged on what each
+        actually WRITES, so a dome-only set does not claim the pass
+        fragment its prefix spells, nor a pass-only set the ten dome
+        slots -- and separately for taking a prefix another set has,
+        because a page naming no set finds its set by prefix.
+
+        9.0 enforced both by comparing the names each set's prefix
+        spells, which refused the layout `kind` exists for: the first
+        skin to use it declared a dome-only set on dome-svg (whose pass
+        fragment is the legacy name pass-chart.txt) beside a pass-only
+        set whose prefix was, reasonably, pass-chart -- and the report
+        wrote no fragments at all."""
+        # The layout that was refused: two label scales x two panels.
+        sets = celestial_page.fragment_sets({'CelestialFragments': {
+            'stars':         {'prefix': 'dome-svg',      'kind': 'dome', 'label_scale': '0.8'},
+            'stars_sp':      {'prefix': 'dome-svg-sp',   'kind': 'dome', 'label_scale': '2.2'},
+            'satellites':    {'prefix': 'pass-chart',    'kind': 'pass', 'label_scale': '1.35'},
+            'satellites_sp': {'prefix': 'pass-chart-sp', 'kind': 'pass', 'label_scale': '2.2'}}})
+        assert [fs.name for fs in sets] == ['stars', 'stars_sp', 'satellites', 'satellites_sp']
+        written = [celestial_page.written_names(fs) for fs in sets]
+        assert [len(d) for d, _ in written] == [10, 10, 0, 0]
+        assert [p for _, p in written] == ['', '', 'pass-chart-pass.txt',
+                                           'pass-chart-sp-pass.txt']
+        # Every written name is spoken for once: no two sets clobber.
+        names = [n for d, p in written for n in d + ([p] if p else [])]
+        assert len(names) == len(set(names)) == 22
+        # A REAL clobber still fails: two dome sets on one prefix.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'a': {'kind': 'dome'}, 'b': {'kind': 'dome', 'directory': 'x'}}})
+        assert 'both write dome-svg.txt' in str(e.value)
+        # And so does one prefix in two sets whose files do NOT collide:
+        # the page resolves a no-set call by prefix, so it must be one.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                'a': {'kind': 'dome'}, 'b': {'kind': 'pass'}}})
+        assert 'both use prefix = dome-svg' in str(e.value)
+        assert 'names no set finds its set by prefix' in str(e.value)
+
+    def test_a_set_declared_for_the_other_panel_is_refused(
+            self, wxskyfield_sat_almanac, caplog):
+        """`kind` says which fragments a set writes, so a set declared
+        kind = dome writes no pass chart -- and a pass panel naming it
+        would first-paint from the almanac and then 404 for ever on a
+        file nobody writes, one console line and nothing on the page to
+        say why.  It is refused as the set fault it is, sharing the
+        missing-or-invalid line (the reader's action is the same: look
+        at [CelestialFragments]), with the reason in the log, once."""
+        refused = "The page's fragment set is missing or invalid in [CelestialFragments]"
+        sets = {'sky': {'kind': 'dome'}, 'chart': {'prefix': 'pc', 'kind': 'pass'}}
+        page = self.sets_page(make_sky_page(), sets)
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            # The dome-only set serves the dome and refuses the chart.
+            assert '<svg' in page.dome_html(wxskyfield_sat_almanac, set='sky')
+            assert refused in page.pass_html(wxskyfield_sat_almanac, set='sky')
+            assert page.pass_roster_html(wxskyfield_sat_almanac, set='sky') == ''
+            # And the pass-only set the other way about.
+            assert refused in page.dome_html(wxskyfield_sat_almanac, set='chart')
+            assert page.dome_roster_html(wxskyfield_sat_almanac, set='chart') == ''
+            assert '<svg' in page.pass_html(wxskyfield_sat_almanac, set='chart')
+        # One line per fault, naming the set, the kind and the panel --
+        # and the two faults above are two different ones.
+        lines = [r.getMessage() for r in caplog.records if 'kind =' in r.getMessage()]
+        assert len(lines) == 2, lines
+        assert "'sky'" in lines[0] and 'kind = dome' in lines[0] and 'no pass fragment' in lines[0]
+        assert "'chart'" in lines[1] and 'kind = pass' in lines[1] and 'no dome fragment' in lines[1]
+
+    def test_an_undeclared_set_says_so_and_logs_once(self, wxskyfield_sat_almanac, caplog):
+        """A set the skin does not declare -- or no set on a skin that
+        declares none on the dome-svg prefix, or a bad section -- is a
+        configuration fault the owner must see: the dome's place carries
+        a line saying so, the pass panel is left out, and the log gets
+        ONE line per fault per page render, not one per panel call."""
+        refused = "The page's fragment set is missing or invalid in [CelestialFragments]"
+        sets = {'sp': {'prefix': 'dome-svg-sp'}}
+        page = self.sets_page(make_sky_page(), sets)
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            dome = page.dome_html(wxskyfield_sat_almanac, set='phone')
+            assert dome.startswith('<p class="cel-skyhint">') and refused in dome
+            assert refused in page.pass_html(wxskyfield_sat_almanac, set='phone')
+            assert page.pass_panel_hidden(wxskyfield_sat_almanac, set='phone') is False
+            # The rosters belong to the refused dome: no rows beside the
+            # line.
+            assert page.dome_roster_html(wxskyfield_sat_almanac, set='phone') == ''
+            assert page.pass_roster_html(wxskyfield_sat_almanac, set='phone') == ''
+            assert page.dome_roster_html(wxskyfield_sat_almanac) == ''
+            # The skin declares a set, but none on the dome-svg prefix:
+            # a page naming no set gets no default either.
+            page = self.sets_page(make_sky_page(), sets)
+            assert refused in page.dome_html(wxskyfield_sat_almanac)
+            assert refused in page.pass_html(wxskyfield_sat_almanac)
+            # A bad section is the generator's own refusal, here too.
+            bad = self.sets_page(make_sky_page(), {'a': {'label_scale': 0}})
+            assert refused in bad.dome_html(wxskyfield_sat_almanac)
+            assert refused in bad.pass_html(wxskyfield_sat_almanac)
+            # Without weewx-skyfield the install hint is the answer,
+            # whatever the section says.
+            assert 'Install' in self.sets_page(None, sets).dome_html(wxskyfield_sat_almanac)
+        msgs = [r.getMessage() for r in caplog.records]
+        assert sum("'phone'" in m and 'declared: sp' in m for m in msgs) == 1
+        # Two pages asked for the no-set default (the first's roster, the
+        # second's dome): one line each.
+        assert sum('names no fragment set' in m and 'dome-svg prefix' in m for m in msgs) == 2
+        assert sum('[[a]] label_scale' in m for m in msgs) == 1
+        assert 'Traceback' not in caplog.text
+
+    def test_pass_panel_hidden_is_the_panel_and_the_roster(self, wxskyfield_sat_sky,
+                                                            wxskyfield_almanac):
+        """The section's first-paint hidden state is the same chart and
+        rows pass_html and pass_roster_html render: a chart shows the
+        section; rows without a chart show it with the chart area hidden;
+        neither hides it.  And without satellites both rosters are ''."""
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            page = self.page(make_sky_page())
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            assert page.pass_panel_hidden(alm) is False
+            assert page.pass_html(alm).startswith(
+                '<div id="pass-wrap" data-celestial="%s">\n' % celestial.CELESTIAL_VERSION)
+            assert '<svg' in page.pass_html(alm)
+            # Eighty days on, the fixture elements serve no visible pass:
+            # rows only.
+            later = weewx.almanac.Almanac(TIME_TS + 80 * 86400, LATITUDE, LONGITUDE,
+                                          altitude=ALTITUDE_M,
+                                          formatter=weewx.units.get_default_formatter())
+            assert page.pass_panel_hidden(later) is False
+            assert page.pass_html(later).startswith(
+                '<div id="pass-wrap" data-celestial="%s" hidden>\n' % celestial.CELESTIAL_VERSION)
+            assert 'id="sat-row-iss"' in page.pass_roster_html(later)
+            dome_roster = page.dome_roster_html(alm)
+            pass_roster = page.pass_roster_html(alm)
+            assert 'id="sat-any-row-iss"' in dome_roster and 'sat-row-' not in dome_roster
+            assert 'id="sat-row-iss"' in pass_roster and 'sat-any-' not in pass_roster
+            roster_root = ('<div class="cel-roster cel-mono" data-celestial="%s">\n  <h3 class="cel-eyebrow">'
+                           % celestial.CELESTIAL_VERSION)
+            assert dome_roster.startswith(roster_root + 'Satellites · the next pass overhead</h3>')
+            assert pass_roster.startswith(roster_root + 'Satellites · the next visible pass</h3>')
+        # No satellites on this sky: hidden, and no rosters at all.
+        page = self.page(make_sky_page())
+        assert page.pass_panel_hidden(wxskyfield_almanac) is True
+        assert page.dome_roster_html(wxskyfield_almanac) == ''
+        assert page.pass_roster_html(wxskyfield_almanac) == ''
+        assert 'hidden' in page.pass_html(wxskyfield_almanac)
+        # No sky page: no dome (its install hint instead), no pass panel.
+        page = self.page()
+        assert page.dome_html(wxskyfield_almanac).startswith('<p class="cel-skyhint">')
+        assert page.pass_html(wxskyfield_almanac) == ''
+        assert page.pass_panel_hidden(wxskyfield_almanac) is True
+
+    @requires_almanac_texts
+    def test_labels_are_escaped_on_first_paint(self, wxskyfield_sat_sky):
+        """A display name the report controls -- a satellite's, a body's,
+        a comet's, from [Almanac] -- is markup-escaped where the panels
+        drop it into markup (the rosters, the pass chip), as skyfield's
+        own panels escape theirs; the config's body_labels stay raw, since
+        the javascript places them with textContent.  (celestial.js
+        escapes the same names on its live writes: pinned on its
+        source.)"""
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter(),
+                                        texts={'iss': 'ISS & <Zarya>', 'moon': 'Mo"on'})
+            page = self.page(make_sky_page())
+            for html in (page.dome_roster_html(alm), page.pass_roster_html(alm),
+                         page.countdown_html(alm)):
+                assert 'ISS &amp; &lt;Zarya&gt;' in html and '<Zarya>' not in html
+            assert self.cell(page.countdown_html(alm), 'chip-pass-k') == 'ISS &amp; &lt;Zarya&gt;'
+            assert '<span class="cel-chip cel-chip-moon"></span>Mo&quot;on<' in page.geocentric_html(alm)
+            assert page.config_dict(alm)['body_labels']['moon'] == 'Mo"on'
+
+    def test_javascript_escapes_what_the_feed_names(self):
+        js = open(JS_PATH, encoding='utf-8').read()
+        assert "setHtml('chip-pass-k', esc(satLabel(bestTag)));" in js
+        assert "setHtml('chip-shower-k', esc(showerLab));" in js
+        assert "fmt('{name} perihelion', {name: esc(satLabel(cometTag))})" in js
+        assert '{rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),' in js
+        # And the panels name their own files; the config no longer does,
+        # and the script defaults to none: no attribute, no fetch.
+        assert "wrap.getAttribute('data-dome-prefix')" in js
+        assert "target.getAttribute('data-pass-fragment')" in js
+        assert 'config.dome_prefix' not in js and 'config.pass_fragment' not in js
+        assert "prefix = 'dome-svg'" not in js and "'pass-chart.txt'" not in js
+        assert 'if (fragName === null) {' in js
+
+    def test_footer_html_credits_the_almanac_that_serves(self, wxskyfield_almanac):
+        """The credit per tier, with weewx-skyfield linked only when the
+        identity check proves it is ours, closed by the loopdata credit."""
+        page = self.page()
+        html = page.footer_html(wxskyfield_almanac)
+        assert html == ('Calculated with %s: Skyfield, JPL\'s DE421 ephemeris and the Hipparcos '
+                        'star catalog (Credit: ESA) &middot; live via weewx-loopdata.' % LINKED_NAME)
+        ephem = pytest.importorskip('ephem')
+        assert ephem
+        with saved_almanacs():
+            weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            assert page.footer_html(alm) == (
+                "Calculated with the station's extended almanac (weewx-skyfield or PyEphem) "
+                '&middot; live via weewx-loopdata.')
+            weewx.almanac.almanacs[:] = [weewx.almanac.WeeutilAlmanacType()]
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            assert page.footer_html(alm) == (
+                "Calculated with WeeWX's built-in almanac &middot; live via weewx-loopdata.")
+
+    def test_the_search_list_reads_the_interval_for_the_dome(self, monkeypatch,
+                                                             wxskyfield_almanac, caplog):
+        """CelestialPanels hands the page the archive interval in seconds,
+        read as the generator reads it for the fragments -- the record at
+        the page's instant, else the engine's record -- and nothing on
+        that path can cost the page: a database that cannot be opened is
+        the default geometry."""
+        monkeypatch.setattr(celestial_page, 'sky_page_from_shim', lambda gen: None)
+        gen = types.SimpleNamespace(skin_dict={}, record={'interval': 10, 'usUnits': 1})
+
+        def boom():
+            raise weewx.UnknownBinding('wx_binding')
+
+        span = types.SimpleNamespace(stop=TIME_TS)
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            page = celestial_page.CelestialPanels(gen).get_extension_list(span, boom)[0]['celestial']
+        assert page.interval_s == 600
+        assert 'not readable' in caplog.text
+        assert 'data-dome-count="10"' in celestial_page.CelestialPage(
+            {}, make_sky_page(), page.interval_s).dome_html(wxskyfield_almanac)
+
+        class Archive:
+            def getRecord(self, ts, max_delta):
+                assert (ts, max_delta) == (TIME_TS, 3600)
+                return {'interval': 2, 'usUnits': 1}
+
+        page = celestial_page.CelestialPanels(gen).get_extension_list(
+            span, lambda: Archive())[0]['celestial']
+        assert page.interval_s == 120
+        # (The reader's precedence and its failure ladder are
+        # test_one_interval_reader's: one reader, one test.)
+        gen.record = None
+        page = celestial_page.CelestialPanels(gen).get_extension_list(None, None)[0]['celestial']
+        assert page.interval_s is None
+
+    def test_a_lesser_almanac_with_skyfield_installed_gets_no_pass_panel(self):
+        """weewx-skyfield installed but its almanac not registered (the
+        PyEphem tier): the dome degrades to its install hint as ever,
+        and -- the template's own gate through 8.5 -- there is no pass
+        section for the javascript to poll an empty fragment for, and no
+        satellite rows under the hint."""
+        pytest.importorskip('ephem')
+        with saved_almanacs():
+            weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=weewx.units.get_default_formatter())
+            page = self.page(make_sky_page())
+            assert page.dome_html(alm).startswith('<p class="cel-skyhint">Install')
+            assert page.pass_html(alm) == ''
+            assert page.pass_panel_hidden(alm) is True
+            assert page.dome_roster_html(alm) == '' and page.pass_roster_html(alm) == ''
+            html = TestSampleSkinRenders.render(alm, sky_page=make_sky_page())
+        assert html.count('class="cel-skyhint"') == 1
+        assert 'id="pass-sec"' not in html and 'id="pass-chart"' not in html
+        assert 'sat-any-row' not in html
+
+    def test_the_plate_rules_are_scoped_to_the_fragment(self):
+        """A fragment set on a plate other than the page's keeps its own
+        label colors: skyfield colors its charts inline but its labels
+        by class, and celestial.css hangs those classes on the page's
+        root class -- so every plate rule is ALSO scoped to a fragment
+        declaring that plate (data-dome-palette on the dome's wrapper,
+        data-pass-palette on the chart), at a specificity that beats the
+        root-class rule.  Source-pinned here; the browser half is
+        test_fragment_plate_wins_in_a_real_browser."""
+        with open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8') as f:
+            css = f.read()
+        # The token blocks scope to the fragment's SVG only: the pass
+        # chart's head line is HTML on the page's surface and keeps the
+        # page's tokens (the browser test reads its color too).
+        # ...and only on a MISMATCH with the page's plate: a fragment on
+        # the page's own plate inherits :root's tokens, so a consumer's
+        # :root override reaches the charts (the browser test checks).
+        night = re.search(r'^:root, (.*?)\{', css, re.M)
+        assert night is not None, 'the night token block lost its fragment selectors'
+        assert night.group(1) == ('.theme-dark, .theme-light .domefrag[data-dome-palette="night"] svg, '
+                                  '.theme-light .passfrag[data-pass-palette="night"] svg')
+        light = re.search(r'^\.theme-light, (.*?)\{', css, re.M)
+        assert light is not None, 'the light token block lost its fragment selectors'
+        assert light.group(1) == ('.theme-dark .domefrag[data-dome-palette="light"] svg, '
+                                  '.theme-dark .passfrag[data-pass-palette="light"] svg, '
+                                  ':root:not(.theme-light) .domefrag[data-dome-palette="light"] svg, '
+                                  ':root:not(.theme-light) .passfrag[data-pass-palette="light"] svg')
+        # The chart-label classes read tokens like every other class, so
+        # the scoping above is the whole mechanism: one rule per class,
+        # no plate variants (a new skyfield label class copied in as a
+        # literal plus a :root.theme-light rule would drift; the in-step
+        # test resolves sky.css's literals against these tokens).
+        for cls, tok in (('skylab', 'skylab'), ('starlab', 'skylab'), ('conlab', 'conlab')):
+            m = re.search(r'^\.%s\{([^}]*)\}' % cls, css, re.M)
+            assert m is not None and 'fill:var(--%s)' % tok in m.group(1), cls
+            assert '.theme-light .%s{' % cls not in css, cls
+            assert 'data-dome-palette="night"] .%s' % cls not in css, cls
+        night_block = re.search(r'^:root, .*?\{(.*?)\n\}', css, re.M | re.S).group(1)
+        light_block = re.search(r'^\.theme-light, .*?\{(.*?)\n\}', css, re.M | re.S).group(1)
+        assert '--skylab:#' in night_block and '--conlab:#' in night_block
+        # The paper plate hands the ring and star labels back to --muted
+        # (sky.css's rule), so a consumer's light --muted override reaches
+        # them: a token, not a copied value.
+        assert '--skylab:var(--muted)' in light_block and '--conlab:#' in light_block
+
+    def test_fragment_plate_wins_in_a_real_browser(self, tmp_path):
+        """The computed fill of a dome label inside a LIGHT fragment on a
+        DARK page is the light plate's, and of a NIGHT fragment on a
+        light page the night plate's -- for a token-driven class
+        (cardinal, brass) and a literal one (skylab) alike, on the dome
+        wrapper and on the pass chart -- while the pass chart's head
+        line, HTML on the page's surface, keeps the PAGE's brass.  Skips
+        when the playwright env is absent."""
+        import json as jsonlib
+        import subprocess
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        with open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8') as f:
+            css = f.read()
+        light_block = re.search(r'^\.theme-light, .*?\{(.*?)\n\}', css, re.M | re.S).group(1)
+
+        def rgb(hexcolor):
+            return 'rgb(%d, %d, %d)' % tuple(int(hexcolor[i:i + 2], 16) for i in (1, 3, 5))
+
+        def tok(name, block):
+            return rgb(re.search(r'--%s:\s*(#[0-9A-Fa-f]{6})' % name, block).group(1))
+
+        # The third page is on its own plate with a consumer's override
+        # after the stylesheet: the override must reach the charts' labels
+        # (the token contract), which the mismatch-only scoping leaves to
+        # :root.
+        want = {'dark-light': {'cardinal': tok('brass', light_block), 'skylab': tok('muted', light_block),
+                               'head': tok('brass', css)},
+                'light-night': {'cardinal': tok('brass', css), 'skylab': rgb('#9FA5C4'),
+                                'head': tok('brass', light_block)},
+                'dark-night': {'cardinal': rgb('#367BA3'), 'skylab': rgb('#9FA5C4'),
+                               'head': rgb('#367BA3')},
+                # A light page's --muted override reaches the ring and
+                # star labels: --skylab is a token on that plate.  (On the
+                # light plate an override is written on :root.theme-light,
+                # where the plate's own tokens are declared -- a plain
+                # :root rule loses to it on specificity, for every token.)
+                'light-light': {'cardinal': tok('brass', light_block), 'skylab': rgb('#333333'),
+                                'head': tok('brass', light_block)}}
+        override = {'dark-night': '<style>:root{--brass:#367BA3}</style>',
+                    'light-light': '<style>:root.theme-light{--muted:#333333}</style>'}
+        write_assets(tmp_path)
+        for theme, plate in (('dark', 'light'), ('light', 'night'), ('dark', 'night'),
+                             ('light', 'light')):
+            (tmp_path / ('%s-%s.html' % (theme, plate))).write_text(
+                '<!DOCTYPE html><html class="theme-%s"><head>'
+                '<link rel="stylesheet" href="celestial.css">%s</head><body>'
+                '<div id="dome-svg"><div class="domefrag" data-dome-palette="%s">'
+                '<svg><text class="cardinal" id="dc">N</text>'
+                '<text class="mono gridlab skylab" id="ds">30</text></svg></div></div>'
+                '<div id="pass-chart"><div class="passfrag" data-pass-palette="%s">'
+                '<div class="passhead"><span class="passname">Iss</span>'
+                '<span class="passwhen mono" id="ph">Sun Jun 22</span></div><svg>'
+                '<text class="cardinal" id="pc">N</text>'
+                '<text class="mono gridlab skylab" id="ps">30</text></svg></div></div>'
+                '</body></html>' % (theme, override.get('%s-%s' % (theme, plate), ''),
+                                    plate, plate))
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    page = b.new_page()\n'
+            '    for name in ("dark-light", "light-night", "dark-night", "light-light"):\n'
+            '        page.goto("file://%s/" + name + ".html")\n'
+            '        out[name] = page.evaluate("[\'dc\', \'ds\', \'pc\', \'ps\'].map(function (i) '
+            '{ return getComputedStyle(document.getElementById(i)).fill; })'
+            '.concat([getComputedStyle(document.getElementById(\'ph\')).color])")\n'
+            '    b.close()\n'
+            'print(json.dumps(out))\n' % tmp_path)
+        res = subprocess.run([pwenv, str(runner)], capture_output=True, text=True, timeout=120)
+        assert res.returncode == 0, res.stderr
+        out = jsonlib.loads(res.stdout)
+        for name, w in want.items():
+            assert out[name] == [w['cardinal'], w['skylab'], w['cardinal'], w['skylab'],
+                                 w['head']], (name, out[name])
+
+    def test_a_panel_in_host_chrome_leaves_the_host_alone(self, tmp_path,
+                                                          wxskyfield_almanac):
+        """A panel embedded in ANOTHER skin's page styles itself and
+        nothing else.
+
+        This is the shape the consumer fixture cannot test, because that
+        fixture is a whole page of its own: it has no titlebar, no nav, no
+        footer and no stylesheet of its own to be trampled.  A real host
+        skin has all four, and 9.0's first consumer found the damage --
+        celestial.css carried `body{background}`, `header{display:flex}`,
+        `section{background;border}` and friends, so loading it repainted
+        the entire site, and its panel class names (.row, .caption, .mono)
+        collided with names a host skin had been using for years.
+
+        Both are fixed structurally -- the page rules live in
+        celestial-page.css, which a consumer does NOT load, and every
+        panel class is prefixed -- and both would regress silently.  So a
+        host page is built here with the surfaces and the colliding class
+        names a real one has, and the assertions are computed styles: the
+        host's chrome must be untouched, the host's own .row must keep its
+        own rules, the panel must still be styled, and the border-box the
+        panels are authored under must not escape into the host.  Skips
+        when the playwright env is absent."""
+        import json as jsonlib
+        import subprocess
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        panel = celestial_page.CelestialPage({}, sky_page=None).geocentric_html(
+            wxskyfield_almanac)
+        assert 'cel-geo-body' in panel and 'cel-row' in panel, 'no panel to embed'
+
+        write_assets(tmp_path)
+        # A host skin's own page: its surfaces, and its own .row/.mono/
+        # .caption -- the names that collided before the prefixing.  It
+        # loads the PANEL sheet only, as a consumer is told to.
+        # The host's own stylesheet comes FIRST and celestial.css after it,
+        # which is the arrangement that can actually show a leak: at equal
+        # specificity the later sheet wins, so anything of celestial's that
+        # reaches a host element overrides the host rather than losing to
+        # it.  (With the host's rules last, every assertion below passes
+        # even with the page rules put back -- measured.)  The surfaces the
+        # host does NOT style are the sensitive ones: they hold browser
+        # defaults unless something leaks onto them.
+        (tmp_path / 'host.html').write_text(
+            '<!DOCTYPE html><html><head>'
+            '<style>'
+            '.hostrow{display:block; color:#0000FF}'
+            '</style>'
+            '<link rel="stylesheet" href="celestial.css">'
+            '</head><body>'
+            '<header><h1 id="hh">Host</h1></header>'
+            '<nav><a href="#">tab</a></nav>'
+            '<section id="hs"><div class="hostrow row" id="hr">host row</div>'
+            '%s</section>'
+            '<footer id="hf">host footer</footer>'
+            '</body></html>' % panel, encoding='utf-8')
+
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    page = b.new_page()\n'
+            '    page.goto("file://%s/host.html")\n'
+            '    out = page.evaluate("""() => {\n'
+            '      const cs = (sel, prop) => getComputedStyle('
+            'document.querySelector(sel))[prop];\n'
+            '      return {\n'
+            '        body_bg:   cs("body", "backgroundColor"),\n'
+            '        body_mg:   cs("body", "marginTop"),\n'
+            '        head_disp: cs("header", "display"),\n'
+            '        head_pad:  cs("header", "paddingTop"),\n'
+            '        h1_font:   cs("#hh", "fontFamily"),\n'
+            '        h1_caps:   cs("#hh", "fontVariantCaps"),\n'
+            '        sec_bg:    cs("#hs", "backgroundColor"),\n'
+            '        sec_border:cs("#hs", "borderTopWidth"),\n'
+            '        foot_col:  cs("#hf", "color"),\n'
+            '        host_row_disp: cs("#hr", "display"),\n'
+            '        host_row_col:  cs("#hr", "color"),\n'
+            '        host_row_box:  cs("#hr", "boxSizing"),\n'
+            '        panel_row_disp: cs(".cel-row", "display"),\n'
+            '        panel_box:      cs(".cel-geo-body", "boxSizing"),\n'
+            '        panel_row_box:  cs(".cel-row", "boxSizing"),\n'
+            '      };\n'
+            '    }""")\n'
+            '    b.close()\n'
+            'print(json.dumps(out))\n' % tmp_path)
+        res = subprocess.run([pwenv, str(runner)], capture_output=True,
+                             text=True, timeout=120)
+        assert res.returncode == 0, res.stderr
+        out = jsonlib.loads(res.stdout)
+
+        # 1. The host's page surfaces keep the BROWSER's defaults, because
+        #    nothing celestial loads reaches them.  Each of these was
+        #    overwritten when the page rules shipped in the panel sheet:
+        #    body{background;margin}, header{display:flex}, h1{Georgia;
+        #    small-caps}, section{background;border}, footer{color}.
+        assert out['body_bg'] == 'rgba(0, 0, 0, 0)', out
+        assert out['body_mg'] == '8px', out
+        assert out['head_disp'] == 'block' and out['head_pad'] == '0px', out
+        assert 'Georgia' not in out['h1_font'], out
+        assert out['h1_caps'] == 'normal', out
+        assert out['sec_bg'] == 'rgba(0, 0, 0, 0)', out
+        assert out['sec_border'] == '0px', out
+        assert out['foot_col'] == 'rgb(0, 0, 0)', out
+
+        # 2. The host's own .row keeps the host's rules even though
+        #    celestial.css is loaded after it: the prefixing is what makes
+        #    that true, and it is invisible to every other test.
+        assert out['host_row_disp'] == 'block', out
+        assert out['host_row_col'] == 'rgb(0, 0, 255)', out
+
+        # 3. The panel is still styled -- the roster's rows are the grid
+        #    celestial draws, not the host's block.
+        assert out['panel_row_disp'] == 'grid', out
+
+        # 4. border-box reaches the panels and stops there: the host is on
+        #    the browser default, as its own page decided.
+        assert out['panel_box'] == 'border-box', out
+        assert out['panel_row_box'] == 'border-box', out
+        assert out['host_row_box'] == 'content-box', out
+
+
+    def test_every_refused_panel_says_so_in_any_order(self, wxskyfield_sat_almanac):
+        """A refused set is reported by every panel that asks -- the dome
+        and the pass panel each carry the line, the rosters render
+        nothing, the predicate says there is something to show -- and no
+        answer depends on which panel asked first or how often: a
+        consumer's template may ask in any order."""
+        import itertools
+        refused = "The page's fragment set is missing or invalid in [CelestialFragments]"
+        sets = {'sp': {'prefix': 'dome-svg-sp'}}
+        alm = wxskyfield_sat_almanac
+        calls = {'dome': lambda p: refused in p.dome_html(alm),
+                 'pass': lambda p: refused in p.pass_html(alm),
+                 'hidden': lambda p: p.pass_panel_hidden(alm) is False,
+                 'rosters': lambda p: (p.dome_roster_html(alm) == ''
+                                       and p.pass_roster_html(alm) == '')}
+        for order in itertools.permutations(calls):
+            page = self.sets_page(make_sky_page(), sets)
+            for name in order + order:      # and asked twice
+                assert calls[name](page), (order, name)
+        # A sky that cannot be drawn is reported before the set: the
+        # almanac is what the owner must fix first.
+        pytest.importorskip('ephem')
+        with saved_almanacs():
+            weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
+            lesser = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                           formatter=weewx.units.get_default_formatter())
+            page = self.sets_page(make_sky_page(), sets)
+            dome = page.dome_html(lesser)
+            assert 'Install' in dome and refused not in dome
+            assert page.pass_html(lesser) == '' and page.pass_panel_hidden(lesser) is True
+
+    def test_one_interval_reader(self, caplog):
+        """The page's search list and the FragmentGenerator read the
+        archive interval through interval_seconds, with one precedence:
+        the engine's record when it is the instant's (no query), else the
+        archive's record within an hour, a read that raises falling to
+        the engine's record with a warning rather than killing the
+        caller -- a locked database once cost the generator its whole
+        cycle while the page quietly took the default."""
+        record = {'interval': 10, 'usUnits': 1, 'dateTime': TIME_TS}
+
+        class Never:
+            def getRecord(self, ts, max_delta):
+                raise AssertionError('queried')
+
+        assert celestial_page.interval_seconds(Never(), TIME_TS, record) == 600
+
+        class Archive:
+            def getRecord(self, ts, max_delta):
+                assert max_delta == 3600
+                return {'interval': 2, 'usUnits': 1}
+
+        assert celestial_page.interval_seconds(Archive(), TIME_TS + 60, record) == 120
+
+        class Broken:
+            def getRecord(self, ts, max_delta):
+                raise RuntimeError('database is locked')
+
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            assert celestial_page.interval_seconds(Broken(), TIME_TS + 60, record) == 600
+        assert 'database is locked' in caplog.text
+        assert celestial_page.interval_seconds(Broken(), TIME_TS + 60, None) is None
+        assert celestial_page.interval_seconds(None, None, {'usUnits': 1}) is None
+        # The record's interval is MINUTES; the reader hands out seconds,
+        # explicitly converted (the page once read it through the
+        # report's group_interval and got 0.0833 for five minutes, issue
+        # #4) -- floating point, so an hour-based station's five minutes
+        # can come back as 299.99988, which dome_slots rounds.
+        assert celestial_page.interval_seconds(None, None, {'interval': 5, 'usUnits': 1}) == 300.0
+        # A record the units code cannot convert is the default too, with
+        # a warning -- the one policy for both readers.
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            assert celestial_page.interval_seconds(None, None, {'interval': 5}) is None
+        assert 'could not be converted' in caplog.text
+        # The archive opener shares it: a raise is None and one warning.
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            assert celestial_page._archive_or_none(lambda: 1 / 0) is None
+        assert 'not readable' in caplog.text
+
+    def test_pass_lines_in_step_with_skyfield(self, wxskyfield_sat_almanac):
+        """The roster's head line is weewx-skyfield's satellite chip line,
+        reckoned by the same rules (_sat_when's minutes/hours/calendar-day
+        ladder, _days_until's floor): pinned to the sibling's own code at
+        the boundary instants, like sky.js, the palette and de.conf, so
+        the next threshold or wording change lands on both pages."""
+        load_wxskyfield()
+        import wxskyfield_sky
+        sp = make_sky_page()
+        page = self.page(sp)
+        so = types.SimpleNamespace(sunlit=True)
+
+        def pass_obj(rise, sset):
+            ord_ = types.SimpleNamespace(ordinal_compass=lambda: 'N')
+            return types.SimpleNamespace(
+                rise=types.SimpleNamespace(raw=rise), set=types.SimpleNamespace(raw=sset),
+                rise_azimuth=ord_, culmination_azimuth=ord_, set_azimuth=ord_,
+                max_altitude=types.SimpleNamespace(raw=40.0),
+                duration=types.SimpleNamespace(raw=600.0), visible=True)
+
+        fall_back = time.mktime((2025, 11, 1, 12, 0, 0, 0, 0, -1))   # the day before DST ends
+        cases = []
+        for now in (TIME_TS, 1750388400, fall_back):
+            for rise, sset in ((now - 60, now + 300), (now + 59 * 60 + 30, None),
+                               (now + 3600, None), (now + 3600 * 23.5, None),
+                               (now + 86400 - 1, None), (now + 86400, None),
+                               (now + 36 * 3600, None), (now + 25 * 3600, None),
+                               (now + 8 * 86400, None)):
+                cases.append((now, rise, sset))
+        for now, rise, sset in cases:
+            alm = types.SimpleNamespace(time_ts=now)
+            line, _sub = page._pass_lines(alm, so, pass_obj(rise, sset), 'x', False)
+            want = '%s %s · %s' % (sp._date(rise), wxskyfield_sky._t_hm(rise),
+                                   sp._sat_when(alm, rise, sset))
+            assert line == want, (now, rise, sset)
+
+    def test_an_empty_pass_wrapper_hides_the_chart_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The pass fragment is always its wrapper, and an EMPTY wrapper is
+        the deliberate empty: a page showing a chart that refetches one
+        hides the chart area (and a section with no roster), exactly as
+        a bare empty did through 8.5 -- while the wrapper's own
+        data-page-theme, in step here, is read and no reload happens.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        skin_dict = {'Extras': {'loop_data_file': ''}, 'lang': 'en', 'REPORT_NAME': REPORT_NAME}
+        page = celestial_page.CelestialPage(skin_dict, make_sky_page())
+        panel = page.pass_html(wxskyfield_sat_almanac)
+        assert ('<div id="pass-wrap" data-celestial="%s">' % celestial.CELESTIAL_VERSION) in panel
+        assert '<svg' in panel
+        (tmp_path / 'index.html').write_text(
+            '<!DOCTYPE html><html class="theme-dark"><head>'
+            '<script src="celestial.js"></script></head><body>%s'
+            '<section id="pass-sec">%s</section></body></html>'
+            % (page.config_script(wxskyfield_sat_almanac), panel))
+        # The empty wrapper exactly as pass_fragment writes it for a sky
+        # with no pass in window (test_pass_chart_fragment_empty_without_
+        # satellites pins that shape).
+        (tmp_path / 'pass-chart.txt').write_text(
+            '<div class="passfrag" data-pass-palette="night" data-page-theme="dark"></div>')
+        write_assets(tmp_path, unwrapped=True)   # the runner calls refreshPass
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors, loads = [], []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    page.on('load', lambda: loads.append(1))\n"
+            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
+            "    page.wait_for_load_state('networkidle')\n"
+            "    before = page.evaluate(\"document.getElementById('pass-wrap').hidden\")\n"
+            "    page.evaluate('refreshPass()')\n"
+            '    page.wait_for_timeout(1500)\n'
+            '    out = {"before": before,\n'
+            "           'wrap_hidden': page.evaluate(\"document.getElementById('pass-wrap').hidden\"),\n"
+            "           'sec_hidden': page.evaluate(\"document.getElementById('pass-sec').hidden\"),\n"
+            "           'chart': page.evaluate(\"document.getElementById('pass-chart').innerHTML\"),\n"
+            "           'loads': len(loads), 'errors': errors}\n"
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % {'port': port})
+        try:
+            res = subprocess.run([pwenv, str(runner)], capture_output=True, text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert res.returncode == 0, res.stderr
+        out = jsonlib.loads(res.stdout)
+        assert out['errors'] == [], out['errors']
+        assert out['before'] is False
+        assert out['wrap_hidden'] is True and out['sec_hidden'] is True
+        assert out['chart'] == ''
+        assert out['loads'] == 1        # in step: no reload
+
+    def test_the_gate_is_skyfields_can_draw(self, wxskyfield_sat_almanac):
+        """The panels beside the dome stand behind weewx-skyfield's own
+        can_draw() when the SkyPage has it (2.3.4): a page showing only a
+        roster or the pass chart draws NO dome to learn whether it
+        could, and its answer is taken, never probed for here.  An
+        older SkyPage without the method -- the real one with the method
+        hidden -- is asked the 8.5 way, by the set's memoized dome."""
+        real = make_sky_page()
+        if hasattr(real, 'can_draw'):        # weewx-skyfield 2.3.4 or later
+            assert real.can_draw() is True
+            page = self.page(real)
+            assert 'id="sat-row-iss"' in page.pass_roster_html(wxskyfield_sat_almanac)
+            assert [k for k in page._memo if k[0] == 'dome'] == []
+
+        class Older(type(real)):             # the real SkyPage, method hidden
+            @property
+            def can_draw(self):
+                raise AttributeError('can_draw')
+
+        page = self.page(Older({}))
+        assert not hasattr(page.sky_page, 'can_draw')
+        assert 'id="sat-row-iss"' in page.pass_roster_html(wxskyfield_sat_almanac)
+        assert len([k for k in page._memo if k[0] == 'dome']) == 1
+
+        class SaysNo:
+            def can_draw(self):
+                return False
+
+            def dome_svg(self, alm, **kw):
+                raise AssertionError('drawn to answer a boolean')
+
+        page = self.page(SaysNo())
+        assert page.pass_roster_html(wxskyfield_sat_almanac) == ''
+        assert page.pass_html(wxskyfield_sat_almanac) == ''
+        assert page.pass_panel_hidden(wxskyfield_sat_almanac) is True
+        assert page.dome_html(wxskyfield_sat_almanac).startswith('<p class="cel-skyhint">Install')
+
+        class SaysYesDrawsNothing:       # can draw, yet the draw comes back empty
+            def can_draw(self):
+                return True
+
+            def dome_svg(self, alm, **kw):
+                return ''
+
+            def pass_chart_html(self, alm, **kw):
+                return ''
+
+            def satellite_names(self):
+                return []
+
+        page = self.page(SaysYesDrawsNothing())
+        dome = page.dome_html(wxskyfield_sat_almanac)
+        assert 'could not be drawn' in dome and 'Install' not in dome
+
+
+    def test_every_panel_root_carries_the_contract_marker(self, wxskyfield_sat_almanac):
+        """The consumer contract: every panel's root element carries
+        data-celestial="<version>" -- the countdown row, the Geocentric,
+        the dome, each roster and the chart -- on the first element it
+        renders, once.  An install hint is a sibling BEFORE a root and
+        carries none; a panel with nothing to show emits no root; the
+        footer is text.  The bundled page therefore carries six."""
+        alm = wxskyfield_sat_almanac
+        page = self.page(make_sky_page())
+        mark = 'data-celestial="%s"' % celestial.CELESTIAL_VERSION
+        for html in (page.countdown_html(alm), page.geocentric_html(alm), page.dome_html(alm),
+                     page.dome_roster_html(alm), page.pass_html(alm), page.pass_roster_html(alm)):
+            first = html.split('>', 1)[0]
+            assert mark in first, first
+            assert html.count(mark) == 1, first
+        bare = self.page(None)
+        assert mark not in bare.dome_html(alm) and bare.dome_roster_html(alm) == ''
+        assert mark not in bare.footer_html(alm)
+        with saved_almanacs():
+            importlib.import_module('weeutil.Sun')   # almanac.py imports it only without ephem
+            weewx.almanac.almanacs[:] = [weewx.almanac.WeeutilAlmanacType()]
+            geo = page.geocentric_html(weewx.almanac.Almanac(
+                TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                formatter=weewx.units.get_default_formatter()))
+        assert geo.startswith('<p class="cel-skyhint">') and geo.count(mark) == 1
+        assert geo.index(mark) > geo.index('</p>')
+        html = TestSampleSkinRenders.render(alm, sky_page=make_sky_page())
+        assert html.count(mark) == 6
+
+    def test_a_consumer_page_says_which_panels_its_report_does_not_declare(
+            self, wxskyfield_sat_almanac, caplog):
+        """A page whose report does not declare a panel's fields carries
+        a line before that panel's root saying so -- the fields the
+        installer never declared would otherwise first-paint and never
+        move, with nothing on the page to say why -- judged by the
+        installer's own question of the same weewx.conf (report_groups
+        on the station config): a panel is declared when every group
+        it reads is among what the named panels read, so `countdown`
+        alone declares everything.  The dome and the chart carry their
+        panel's line; the rosters, parts of the same panel, never do,
+        so a grid shows it once.  An invalid key costs every panel the
+        line, on the Celestial skin too, and so does a key under
+        [[Defaults]] instead of on the stanza; a Celestial report with
+        no key or a valid one gets none; a page with no station config
+        asks nothing.  A panel named but not yet WRITTEN -- the key
+        added, the installer never re-run -- carries the out-of-date
+        line, from the writer's own dry run.  pass_panel_hidden counts
+        any line as something to show.  The weewxd log says it once per
+        panel per page."""
+        alm = wxskyfield_sat_almanac
+        mark = 'data-celestial="%s"' % celestial.CELESTIAL_VERSION
+        missing = 'does not name the %s panel in celestial_panels'
+        stale = 'field declaration is out of date'
+
+        def consumer(skin='Seasons', declared=True, config=None, **keys):
+            stanza = {'skin': skin}
+            stanza.update(keys)
+            cfg = config if config is not None else {'StdReport': {'Stars': stanza}}
+            if declared:
+                celestial.declare_page_fields(cfg)     # what the installer did
+            sd = {'Extras': {'loop_data_file': 'loop.txt'}, 'lang': 'en', 'REPORT_NAME': 'Stars'}
+            return celestial_page.CelestialPage(sd, make_sky_page(), config_dict=cfg)
+
+        def panels(page):
+            return {'countdown': page.countdown_html(alm), 'geocentric': page.geocentric_html(alm),
+                    'dome': page.dome_html(alm), 'dome_roster': page.dome_roster_html(alm),
+                    'pass': page.pass_html(alm), 'pass_roster': page.pass_roster_html(alm)}
+
+        def lines(out):
+            return {name: html.count('skyhint') for name, html in out.items()}
+
+        NONE = {n: 0 for n in ('countdown', 'geocentric', 'dome', 'dome_roster', 'pass', 'pass_roster')}
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            # No key at all: the four panels, once each, before the root;
+            # the rosters render their rows bare.
+            page = consumer()
+            out = panels(page)
+            assert lines(out) == dict(NONE, countdown=1, geocentric=1, dome=1, **{'pass': 1})
+            for name in ('countdown', 'geocentric', 'dome', 'pass'):
+                assert out[name].startswith('<p class="cel-skyhint">'), name
+                assert missing % name in out[name], name
+                assert out[name].index('</p>') < out[name].index(mark), name
+            assert out['dome_roster'].startswith('<div class="cel-roster') and 'sat-any-row-iss' in out['dome_roster']
+            assert page.pass_panel_hidden(alm) is False        # a line is something to show
+            # Two named and written: the other two carry the line.
+            out = panels(consumer(celestial_panels=['dome', 'pass']))
+            assert lines(out) == dict(NONE, countdown=1, geocentric=1)
+            # Judged by GROUPS: countdown reads both, so everything is
+            # declared; geocentric reads comets only, so the three
+            # satellite panels are not.
+            assert lines(panels(consumer(celestial_panels='countdown'))) == NONE
+            assert lines(panels(consumer(celestial_panels='geocentric'))) == dict(
+                NONE, countdown=1, dome=1, **{'pass': 1})
+            # Named but never written (the installer not re-run): the
+            # out-of-date line on the named panels, the other line on the
+            # rest -- and the predicate shows the section for it too.
+            page = consumer(declared=False, celestial_panels=['dome', 'pass'])
+            out = panels(page)
+            assert lines(out) == dict(NONE, countdown=1, geocentric=1, dome=1, **{'pass': 1})
+            assert stale in out['dome'] and stale in out['pass']
+            assert missing % 'countdown' in out['countdown'] and stale not in out['countdown']
+            assert page.pass_panel_hidden(alm) is False
+            # Invalid: every panel, the invalid-key line, one log line --
+            # and on our own skin too (the installer refused it too).
+            for skin in ('Seasons', 'Celestial'):
+                out = panels(consumer(skin=skin, celestial_panels='dial'))
+                assert lines(out) == dict(NONE, countdown=1, geocentric=1, dome=1, **{'pass': 1}), skin
+                assert all('carries an invalid celestial_panels' in out[n]
+                           for n in ('countdown', 'geocentric', 'dome', 'pass')), skin
+            # Misplaced under [[Defaults]]: the same line, the log naming
+            # the place -- what the installer said, in the same words --
+            # on a page whose report carries no key of its own; a report
+            # with its own key is judged by that key alone.
+            out = panels(consumer(config={'StdReport': {'Stars': {'skin': 'Seasons'},
+                                                        'Defaults': {'celestial_panels': 'dome'}}}))
+            assert all('carries an invalid celestial_panels' in out[n]
+                       for n in ('countdown', 'geocentric', 'dome', 'pass'))
+            assert lines(panels(consumer(config={'StdReport': {
+                'Stars': {'skin': 'Seasons', 'celestial_panels': 'countdown'},
+                'Defaults': {'celestial_panels': 'dome'}}}))) == NONE
+            # Ours (no key, or a valid one), or no station config: nothing.
+            assert lines(panels(consumer(skin='Celestial'))) == NONE
+            assert lines(panels(consumer(skin='Celestial', celestial_panels='dome'))) == NONE
+            bare = celestial_page.CelestialPage({'Extras': {}, 'REPORT_NAME': 'x'}, make_sky_page())
+            assert lines(panels(bare)) == NONE
+            # No sky page: the dome's install hint keeps its own line and
+            # the declaration line stands before it; the pass panel
+            # renders nothing and stays hidden, line or no line.
+            nosky = consumer()
+            nosky.sky_page = None
+            assert nosky.dome_html(alm).count('skyhint') == 2
+            assert nosky.dome_roster_html(alm) == '' and nosky.pass_html(alm) == ''
+            assert nosky.pass_panel_hidden(alm) is True
+        msgs = [r.getMessage() for r in caplog.records]
+        # One line per FAULT per page, naming the panels it costs: the
+        # keyless page and the keyless no-sky page (four panels each),
+        # the dome-and-pass page and the stale page (two each), the
+        # geocentric-only page (three); the stale page's one stale line;
+        # the two invalid keys; the misplaced key once.
+        undeclared = [m for m in msgs if 'undeclared -- no named panel reads their fields' in m]
+        assert sorted(m.split('leaves the ')[1].split(' panel')[0] for m in undeclared) == sorted([
+            'countdown, geocentric, dome, pass', 'countdown, geocentric, dome, pass',
+            'countdown, geocentric', 'countdown, geocentric', 'countdown, dome, pass'])
+        assert sum('celestial_panels (absent)' in m for m in undeclared) == 2
+        # The key as its owner wrote it, never a Python list's repr --
+        # the spelling the installer's receipts use (panels_as_written).
+        assert sum('(= dome, pass)' in m for m in undeclared) == 2
+        assert not any("['" in m for m in undeclared)      # no list repr anywhere
+        assert [m for m in msgs if 'not declared under it yet' in m] == [
+            "[StdReport] [[Stars]] names the dome, pass panel(s) this page embeds but their "
+            "fields are not declared under it yet: re-run weectl extension install (or the "
+            "--add-satellite/--add-comet utility) and restart weewxd."]
+        assert sum("names 'dial', which is not a panel" in m for m in msgs) == 2
+        assert sum('[StdReport] [[Defaults]] carries celestial_panels' in m for m in msgs) == 1
+        assert not any('says so where it renders' in m for m in msgs)
+        assert 'Traceback' not in caplog.text
 
 
 class TestI18n:
@@ -5399,16 +8285,19 @@ class TestI18n:
     @classmethod
     def rendered_keys(cls):
         """Every translation key the page can render: the
-        $gettext("...")/$gettext('...') literals in the template and the
-        include (keys are single-line literals by convention), plus the
-        embedded dome's own strings (DOME_TEXT_KEYS)."""
-        keys = set()
-        for name in ('index.html.tmpl', 'realtime_updater.inc'):
-            with open(os.path.join(SKIN_DIR, name), encoding='utf-8') as f:
-                found = re.findall(r'\$gettext\(\s*(?:"([^"]+)"|\'([^\']+)\')\s*\)',
-                                   f.read())
-            assert found, name
-            keys |= {a or b for a, b in found}
+        $gettext("...")/$gettext('...') literals in the template, the
+        _t('...') literals in celestial_page.py and its LIVE_TEXTS (the
+        strings the javascript composes, fed through the config block) --
+        keys are single-line literals by convention -- plus the embedded
+        dome's own strings (DOME_TEXT_KEYS)."""
+        with open(os.path.join(SKIN_DIR, 'index.html.tmpl'), encoding='utf-8') as f:
+            found = re.findall(r'\$gettext\(\s*(?:"([^"]+)"|\'([^\']+)\')\s*\)', f.read())
+        assert found
+        keys = {a or b for a, b in found}
+        with open(PAGE_PY, encoding='utf-8') as f:
+            found = re.findall(r'self\._t\(\s*(?:"([^"]+)"|\'([^\']+)\')', f.read())
+        keys |= {a or b for a, b in found}
+        keys |= set(celestial_page.LIVE_TEXTS)
         return keys | cls.DOME_TEXT_KEYS
 
     def test_dome_text_keys_in_step(self):
@@ -5440,8 +8329,10 @@ class TestI18n:
         # English is the identity translation: every value equals its key
         # (so the file doubles as the untranslated reference).
         assert [k for k, v in shipped.items() if v != k] == []
-        # Every English format string must itself format cleanly: the
-        # javascript's fmt and the template fall back to it.
+        # Every English key must itself be a well-formed format string:
+        # it is what every untranslated report renders, through _t and
+        # the javascript's fmt alike, and an unbalanced brace in it is a
+        # typo nothing would ever fill.
         for k in rendered:
             k.format(**{name: 'x' for name in set(re.findall(r'\{(\w+)\}', k))})
 
@@ -5604,8 +8495,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='de', texts=dict(conf['Texts']),
@@ -5613,14 +8503,18 @@ class TestI18n:
         assert '<html lang="de" class="theme-dark">' in html
         assert 'Die geozentrische Ansicht' in html
         # The roster first-paints German: the sun is up at the solstice
-        # noon, and the distance cells carry the German au unit.
+        # noon, and the distance cells carry the German au unit beside
+        # the report's own distance-unit label (the almanac's formatter,
+        # the same source as the config's dist_label).
         assert 'Höhe ' in html
         assert ' AE<' in html
-        # The javascript feeds: German body names and cardinals (json,
+        assert '<span class="cel-unit"> miles</span>' in html
+        assert TestSampleSkinRenders.config(html)['dist_label'] == ' miles'
+        # The javascript's config: German body names and cardinals (json,
         # non-ASCII \u-escaped), and the composed-string dictionary.
         assert '"moon": "Mond"' in html
         assert '"neptune": "Neptun"' in html
-        assert '["N", "O", "S", "W"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'O', 'S', 'W']
         assert '"below horizon": "unter dem Horizont"' in html
         assert '"approaching": "n\\u00e4hert sich"' in html
         # The footer carries the full German Skyfield credit, naming
@@ -5639,8 +8533,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='fr', texts=dict(conf['Texts']),
@@ -5655,7 +8548,7 @@ class TestI18n:
         # and the composed-string dictionary.
         assert '"moon": "Lune"' in html
         assert '"mercury": "Mercure"' in html
-        assert '["N", "E", "S", "O"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'E', 'S', 'O']
         assert '"below horizon": "sous l\'horizon"' in html
         # Jacques Terrettaz's 2026-08-15 correction: the roster reads
         # "se rapproche a 28 km/s", so the verb carries its preposition.
@@ -5675,8 +8568,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='nl', texts=dict(conf['Texts']),
@@ -5692,7 +8584,7 @@ class TestI18n:
         # is Z, so the cardinal ring proves the ordinates flowed through.
         assert '"moon": "Maan"' in html
         assert '"mercury": "Mercurius"' in html
-        assert '["N", "O", "Z", "W"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'O', 'Z', 'W']
         assert '"below horizon": "onder de horizon"' in html
         assert '"approaching": "nadert"' in html
         # The footer carries the full Dutch Skyfield credit, naming
@@ -5710,8 +8602,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='es', texts=dict(conf['Texts']),
@@ -5727,7 +8618,7 @@ class TestI18n:
         # cardinal ring proves the ordinates flowed through.
         assert '"moon": "Luna"' in html
         assert '"mercury": "Mercurio"' in html
-        assert '["N", "E", "S", "O"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'E', 'S', 'O']
         assert '"below horizon": "bajo el horizonte"' in html
         assert '"approaching": "se acerca"' in html
         # The footer carries the full Spanish Skyfield credit, naming
@@ -5745,8 +8636,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='it', texts=dict(conf['Texts']),
@@ -5762,7 +8652,7 @@ class TestI18n:
         # cardinal ring proves the ordinates flowed through.
         assert '"moon": "Luna"' in html
         assert '"jupiter": "Giove"' in html
-        assert '["N", "E", "S", "O"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'E', 'S', 'O']
         assert '"below horizon": "sotto l\'orizzonte"' in html
         assert '"approaching": "si avvicina"' in html
         # The footer carries the full Italian Skyfield credit, naming
@@ -5780,8 +8670,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='no', texts=dict(conf['Texts']),
@@ -5797,7 +8686,7 @@ class TestI18n:
         # dictionary.
         assert '"moon": "M\\u00e5nen"' in html
         assert '"mercury": "Merkur"' in html
-        assert '["N", "\\u00d8", "S", "V"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'Ø', 'S', 'V']
         assert '"below horizon": "under horisonten"' in html
         assert '"approaching": "n\\u00e6rmer seg"' in html
         # The footer carries the full Norwegian Skyfield credit, naming
@@ -5819,8 +8708,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='da', texts=dict(conf['Texts']),
@@ -5838,7 +8726,7 @@ class TestI18n:
         # ordinates flowed through as well as the body names.
         assert '"moon": "M\\u00e5ne"' in html
         assert '"neptune": "Neptun"' in html
-        assert '["N", "\\u00d8", "S", "V"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'Ø', 'S', 'V']
         assert '"below horizon": "under horisonten"' in html
         assert '"approaching": "n\\u00e6rmer sig"' in html
         # The footer carries the full Danish Skyfield credit, naming
@@ -5856,8 +8744,7 @@ class TestI18n:
             assert mod.register_almanac(wxskyfield_sky)
             alm = weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.Formatter(
-                    ordinate_names=list(conf['Units']['Ordinates']['directions'])),
+                formatter=lang_formatter(conf),
                 texts=dict(conf['Almanac']))
             html = TestSampleSkinRenders.render(
                 alm, lang='sv', texts=dict(conf['Texts']),
@@ -5874,7 +8761,7 @@ class TestI18n:
         # cardinal ring proves the ordinates flowed through.
         assert '"moon": "M\\u00e5nen"' in html
         assert '"mercury": "Merkurius"' in html
-        assert '["N", "O", "S", "V"]' in html
+        assert TestSampleSkinRenders.config(html)['cardinals'] == ['N', 'O', 'S', 'V']
         assert '"below horizon": "under horisonten"' in html
         assert '"approaching": "n\\u00e4rmar sig"' in html
         # The footer carries the full Swedish Skyfield credit, naming
@@ -5972,7 +8859,7 @@ class TestPageFields:
         packet path, a next_pass group expires at the pass's own set
         instant, not at midnight -- the page's "just set" branch is
         visible only between a set and the next loop packet, as its
-        comment in realtime_updater.inc always claimed."""
+        comment in celestial.js always claimed."""
         loopdata = load_loopdata()
         mod, _ = load_wxskyfield()
         with saved_almanacs():
@@ -6185,6 +9072,121 @@ class TestDeclarePageFields:
     def _groups(config, report='CelestialReport'):
         return config['StdReport'][report]['LoopData']['fields']
 
+    @staticmethod
+    def _consumer_station(tmp_path, skin_conf='celestial_panels = dome, pass\n',
+                          stanza_key=None, groups=True, skin='MySkin'):
+        """A station whose report runs a skin of its own: the key in that
+        skin's skin.conf, in the report's stanza, in both or in neither,
+        and the skin.conf present, keyless or absent."""
+        root = tmp_path / 'root'
+        (root / 'skins' / skin).mkdir(parents=True, exist_ok=True)
+        if skin_conf is not None:
+            (root / 'skins' / skin / 'skin.conf').write_text(skin_conf)
+        report = {'skin': skin}
+        if stanza_key is not None:
+            report['celestial_panels'] = stanza_key
+        if groups:
+            report['LoopData'] = {'fields': {'satellites': ['almanac.iss.az'],
+                                             'comets': ['almanac.halley.az']}}
+        return {'WEEWX_ROOT': str(root),
+                'Skyfield': {'Satellites': {'iss': '25544'}, 'Comets': {'halley': '1P'}},
+                'StdReport': {'SKIN_ROOT': 'skins', 'MyReport': report}}
+
+    def test_a_consumer_declares_its_panels_in_its_own_skin_conf(self, tmp_path):
+        """Which panels a page embeds is a property of the skin's
+        templates -- identical on every station, changing only when the
+        skin changes -- so it may be declared in the skin's own
+        skin.conf and deploys with the skin.  Before this, every consumer
+        needed a hand edit of weewx.conf per station, which is the chore
+        weewx-loopdata 7.0 existed to end for the static half."""
+        config = self._consumer_station(tmp_path, groups=False)
+        celestial.declare_page_fields(config)
+        groups = self._groups(config, 'MyReport')
+        # dome and pass read satellites; neither reads comets.
+        assert list(groups) == ['satellites']
+        assert groups['satellites'] == celestial.satellite_fields('iss')
+        assert celestial.panels_source(config, 'MyReport') == 'skin'
+
+    def test_the_report_stanza_overrides_the_skin(self, tmp_path):
+        """Both places, and the report's own stanza wins -- the order
+        WeeWX itself merges in, so a station keeps a per-report override
+        in the file it already looks in, without editing a skin it may
+        not own.  More than one report on one skin is the case this
+        serves: the skin's key reaches every report running it, and a
+        report differs by saying so in its own stanza."""
+        config = self._consumer_station(tmp_path, stanza_key=['geocentric'], groups=False)
+        celestial.declare_page_fields(config)
+        # geocentric reads comets, not satellites: the stanza decided.
+        assert list(self._groups(config, 'MyReport')) == ['comets']
+        assert celestial.panels_source(config, 'MyReport') == 'stanza'
+
+    def test_two_reports_on_one_skin_are_both_declared(self, tmp_path):
+        """A metric twin: two reports, one skin, the key inherited from
+        that skin by both -- and either may override in its own stanza.
+        Nobody's tree exercises this today, which is why it is pinned."""
+        config = self._consumer_station(tmp_path, groups=False)
+        config['StdReport']['MetricReport'] = {'skin': 'MySkin'}
+        config['StdReport']['OddReport'] = {'skin': 'MySkin',
+                                            'celestial_panels': ['geocentric']}
+        celestial.declare_page_fields(config)
+        for report in ('MyReport', 'MetricReport'):
+            assert list(self._groups(config, report)) == ['satellites'], report
+        assert list(self._groups(config, 'OddReport')) == ['comets']
+
+    def test_a_pending_stanza_is_declared_on_a_fresh_install(self, tmp_path):
+        """weectl runs configure() BEFORE it injects the installer's
+        config stanza, so on a FRESH install the consumer's report does
+        not exist yet and the walk would find nothing to declare.  The
+        caller hands over the stanza it is about to have injected; the
+        groups are written under it and weectl's own merge fills the
+        rest in around them.  Without this the station needs a second
+        run, which is the whole defect the parameter removes -- and it
+        would pass any test that did not install from scratch."""
+        config = self._consumer_station(tmp_path, groups=False)
+        del config['StdReport']['MyReport']          # not injected yet
+        pending = {'StdReport': {'MyReport': {'skin': 'MySkin', 'enable': 'true'}}}
+        assert celestial.declare_page_fields(config)['changes'] == {}, 'no pending: nothing'
+        celestial.declare_page_fields(config, pending=pending)
+        assert self._groups(config, 'MyReport')['satellites'] == celestial.satellite_fields('iss')
+
+    def test_groups_are_pruned_only_when_the_skin_is_gone(self, tmp_path):
+        """The seam between the tear-down rules, and what a later
+        refactor would most easily collapse.  weectl has no uninstall
+        hook, so a consumer skin cannot clean up after itself: its
+        skin.conf goes, taking the key, and these two groups would stay
+        for weewx-loopdata to evaluate every packet for panels that no
+        longer exist.  So a report that is not ours, carries our groups
+        and whose skin.conf is ABSENT loses them.
+
+        Absent, never merely unreadable: absence is a statement someone
+        made, while no permission, a mount that is not up, a half-written
+        file or a syntax error is a question nobody can answer, and
+        pruning on a question would let a permission bit look like an
+        uninstall."""
+        # Readable, no key: not ours, the groups stay.  Deleting a key is
+        # a statement about a skin's configuration, not about the skin.
+        config = self._consumer_station(tmp_path / 'a', skin_conf='# no key here\n')
+        celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'MyReport')) == ['satellites', 'comets']
+        # Absent: the skin is gone, and so are the groups.
+        config = self._consumer_station(tmp_path / 'b', skin_conf=None)
+        report = celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'MyReport')) == []
+        assert 'MyReport' in report['changes']
+        # Unreadable for any other reason: kept.
+        config = self._consumer_station(tmp_path / 'c', skin_conf='[unbalanced\n')
+        celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'MyReport')) == ['satellites', 'comets']
+        assert celestial.skin_conf_panels(config, 'MyReport')[1] == 'unreadable'
+        # And a SKIN_ROOT that does not exist is a question, not an
+        # answer: it makes EVERY report's skin look uninstalled, so one
+        # typo there would prune every consumer's groups at once.
+        config = self._consumer_station(tmp_path / 'd')
+        config['StdReport']['SKIN_ROOT'] = 'nosuchdir'
+        celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'MyReport')) == ['satellites', 'comets']
+        assert celestial.skin_conf_panels(config, 'MyReport')[1] == 'unreadable'
+
     def test_no_skyfield_section_declares_the_defaults(self):
         config = {}
         report = celestial.declare_page_fields(config, ensure_default=True)
@@ -6371,6 +9373,196 @@ class TestDeclarePageFields:
         report = celestial.declare_page_fields(again)
         old, new = report['changes']['CelestialReport']['comets']
         assert old == ['almanac.encke.az']
+
+    def test_a_consumer_report_gets_the_groups_its_panels_read(self):
+        """A report running another skin whose stanza names the panels
+        its page embeds (celestial_panels) is declared under too, with
+        exactly the groups those panels read: satellites for the dome
+        and the pass panel, comets for the Geocentric, both for the
+        countdown row (its pass chip and perihelion chips).  Read as
+        ConfigObj hands the value back -- a list, or a bare string for
+        one name -- case and spacing forgiven, in configuration order
+        with the Celestial reports; a report naming none is not ours."""
+        for panels, groups in (('dome', ['satellites']), (['dome', 'pass'], ['satellites']),
+                               ('geocentric', ['comets']),
+                               ('countdown', ['satellites', 'comets']),
+                               (['Geocentric ', 'dome'], ['satellites', 'comets']),
+                               ('', None), ([], None)):
+            config = {'StdReport': {'Stars': {'skin': 'Seasons', 'celestial_panels': panels},
+                                    'CelestialReport': {'skin': 'Celestial'}}}
+            report = celestial.declare_page_fields(config)
+            assert report['refused'] == {}
+            if groups is None:
+                # A key naming nothing: ours, owning nothing -- nothing to
+                # write, nothing to remove here.
+                assert report['reports'] == ['Stars', 'CelestialReport'], panels
+                assert report['groups']['Stars'] == ()
+                assert 'LoopData' not in config['StdReport']['Stars']
+                continue
+            assert report['reports'] == ['Stars', 'CelestialReport'], panels
+            assert list(self._groups(config, 'Stars')) == groups, panels
+            assert report['groups']['Stars'] == tuple(groups)
+            assert list(self._groups(config)) == ['satellites', 'comets']
+            for group in groups:
+                assert self._groups(config, 'Stars')[group] == self._groups(config)[group]
+        config = {'StdReport': {'Stars': {'skin': 'Seasons',
+                                          'celestial_panels': ['Geocentric ', 'dome', 'DOME']},
+                                'CelestialReport': {'skin': 'Celestial', 'celestial_panels': 'dome'}}}
+        assert celestial.parse_panels(config['StdReport']['Stars']['celestial_panels'], 'x') == [
+            'geocentric', 'dome']
+        assert celestial.report_groups(config, 'Stars') == (('satellites', 'comets'), None)
+        # A Celestial report reads every panel: a valid key on it changes
+        # nothing.  A report that is neither owns nothing.
+        assert celestial.report_groups(config, 'CelestialReport') == (('satellites', 'comets'), None)
+        assert celestial.report_groups(config, 'Nope') == (None, None)
+        assert celestial.report_groups({}, 'CelestialReport') == (None, None)
+        assert celestial.report_groups({}, 'CelestialReport', ensure_default=True) == (
+            ('satellites', 'comets'), None)
+        decl = celestial.celestial_reports(config)
+        assert list(decl.groups) == ['Stars', 'CelestialReport'] and decl.refused == {}
+
+    def test_a_consumer_report_renaming_its_panels_drops_the_group(self):
+        """The two group names are this extension's on every report
+        carrying the key: a consumer whose page moves from the dome to
+        the Geocentric loses its satellites group and gains comets on
+        the next run, as an emptied set is removed -- and so does a
+        group of the owner's own under one of the two names, which is
+        why the removal is reported as what it is ('unread': no panel of
+        the report reads it, with the key as written), never as an
+        empty [Skyfield] set.  The Celestial skin's own report reads
+        every panel, whatever a valid key on it says."""
+        config = {'StdReport': {'Stars': {'skin': 'Seasons', 'celestial_panels': 'dome',
+                                          'LoopData': {'fields': {
+                                              'comets': ['almanac.halley.az'],
+                                              'mine': ['current.outTemp']}}}}}
+        report = celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'Stars')) == ['mine', 'satellites']
+        assert report['unread'] == {'Stars': {'comets': 'dome'}}
+        assert report['changes']['Stars']['comets'] == (['almanac.halley.az'], [])
+        config['StdReport']['Stars']['celestial_panels'] = ['geocentric', 'countdown']
+        report = celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'Stars')) == ['mine', 'satellites', 'comets']
+        assert report['unread'] == {}
+        config['StdReport']['Stars']['celestial_panels'] = 'geocentric'
+        report = celestial.declare_page_fields(config)
+        assert list(self._groups(config, 'Stars')) == ['mine', 'comets']
+        assert report['unread'] == {'Stars': {'satellites': 'geocentric'}}
+        assert report['changes']['Stars']['satellites'][1] == []
+        # Idempotent: nothing to report the second time.
+        report = celestial.declare_page_fields(config)
+        assert report['changes'] == {} and report['unread'] == {}
+        config = {'StdReport': {'CelestialReport': {'skin': 'Celestial',
+                                                    'celestial_panels': 'dome'}}}
+        celestial.declare_page_fields(config)
+        assert list(self._groups(config)) == ['satellites', 'comets']
+
+    def test_a_panel_that_is_not_one_is_refused_naming_the_report(self):
+        """A misspelled panel would declare nothing, silently, for a page
+        that then reads BAD DATA.  It is refused -- but the fault's
+        scope is the report's: that section is skipped, nothing written
+        or removed under it, and reported by name with the bad value and
+        the panels there are; every other report is declared as
+        normal.  The same on the Celestial skin's own report (a bad key
+        is refused wherever it is), and a key under [[Defaults]] --
+        which WeeWX merges into every report -- is refused naming the
+        section.  The flat fields line stays a ValueError: loopdata
+        itself refuses to start on it, so that fault IS the station's."""
+        config = {'StdReport': {'CelestialReport': {'skin': 'Celestial'},
+                                'Stars': {'skin': 'Seasons',
+                                          'celestial_panels': ['dome', 'Dial'],
+                                          'LoopData': {'fields': {'comets': ['x']}}}}}
+        report = celestial.declare_page_fields(config)
+        assert report['reports'] == ['CelestialReport']
+        assert list(report['refused']) == ['Stars']
+        why = report['refused']['Stars']
+        assert why.startswith("[StdReport] [[Stars]] celestial_panels names 'Dial', which is not a panel")
+        assert 'countdown, geocentric, dome, pass' in why
+        assert list(self._groups(config)) == ['satellites', 'comets']
+        assert self._groups(config, 'Stars') == {'comets': ['x']}     # untouched
+        decl = celestial.celestial_reports(config)
+        assert list(decl.groups) == ['CelestialReport'] and list(decl.refused) == ['Stars']
+        # On our own report, refused the same way -- and only that one.
+        config = {'StdReport': {'CelestialReport': {'skin': 'Celestial',
+                                                    'celestial_panels': 'dial'},
+                                'Himmel': {'skin': 'Celestial'}}}
+        report = celestial.declare_page_fields(config, ensure_default=True)
+        assert report['reports'] == ['Himmel'] and list(report['refused']) == ['CelestialReport']
+        assert 'LoopData' not in config['StdReport']['CelestialReport']
+        # A key under [[Defaults]], at [StdReport]'s top level, or as a
+        # [[celestial_panels]] section there -- all merged into every
+        # report by WeeWX, or the key written as a section -- is the
+        # STATION's one fault, reported once whatever the other reports
+        # (never per report: Seasons, FTP and RSYNC have no page); a
+        # Celestial report beside it is declared as ever.
+        for placement, where in (({'Defaults': {'celestial_panels': 'dome'}},
+                                  '[StdReport] [[Defaults]] carries celestial_panels'),
+                                 ({'celestial_panels': 'dome'},
+                                  '[StdReport] carries celestial_panels at its top level'),
+                                 ({'celestial_panels': {'dome': '1'}},
+                                  '[StdReport] carries a [[celestial_panels]] section')):
+            config = {'StdReport': dict(placement, CelestialReport={'skin': 'Celestial'},
+                                        Astro={'skin': 'Astro'}, FTP={'skin': 'Ftp', 'enable': 'false'})}
+            report = celestial.declare_page_fields(config)
+            assert report['reports'] == ['CelestialReport'], where
+            assert report['refused'] == {}, where
+            assert report['misplaced'].startswith(where), (where, report['misplaced'])
+            assert 'celestial_panels = countdown, geocentric, dome, pass' in report['misplaced']
+            assert 'LoopData' not in config['StdReport']['Astro']
+            assert celestial.receipts(report) == ['Nothing declared for it: %s.' % report['misplaced']]
+        assert celestial.misplaced_panels_key({'StdReport': {'Astro': {'skin': 'Astro'}}}) is None
+        config = {'StdReport': {'Defaults': {'skin': 'Celestial'},
+                                'CelestialReport': {'skin': 'Celestial'}}}
+        assert celestial.declare_page_fields(config)['reports'] == ['CelestialReport']
+        # A key naming nothing is a statement, not an absence: the report
+        # is ours, owns nothing, and both groups go, reported as unread.
+        config = {'StdReport': {'Astro': {'skin': 'Astro', 'celestial_panels': '',
+                                          'LoopData': {'fields': {
+                                              'satellites': ['almanac.iss.az'],
+                                              'comets': ['almanac.halley.az']}}}}}
+        report = celestial.declare_page_fields(config)
+        assert report['reports'] == ['Astro'] and report['groups']['Astro'] == ()
+        assert self._groups(config, 'Astro') == {}
+        assert report['unread'] == {'Astro': {'satellites': '', 'comets': ''}}
+        assert celestial.report_groups(config, 'Astro') == ((), None)
+        # A section where the line belongs is refused, saying what a
+        # line looks like -- never read as a value.
+        config = {'StdReport': {'Astro': {'skin': 'Astro', 'celestial_panels': {'dome': '1'}}}}
+        report = celestial.declare_page_fields(config)
+        assert report['reports'] == []
+        assert report['refused']['Astro'] == (
+            '[StdReport] [[Astro]] celestial_panels is a section; the key is a line: '
+            'celestial_panels = countdown, geocentric, dome, pass')
+
+    def test_a_quoted_panels_line_is_the_names_it_carries(self):
+        """ConfigObj hands back a LIST for `celestial_panels = dome, pass`
+        and a single STRING for `celestial_panels = "dome, pass"` -- the
+        quoted form, which is also what any tool writing the key as one
+        string produces.  A panel name never contains a comma (a FIELD
+        may, which is why _group_fields never splits one), so that
+        string is those two names and declares what the line says.  The
+        refusal then names the NAME: unsplit it would read "names
+        'dome, dail', which is not a panel; the panels are countdown,
+        geocentric, dome, pass" and leave its reader hunting the
+        difference.  And both writers spell the key one way -- the
+        owner's -- never a Python list's repr."""
+        quoted = {'StdReport': {'Stars': {'skin': 'Seasons',
+                                          'celestial_panels': 'dome, pass'}}}
+        listed = {'StdReport': {'Stars': {'skin': 'Seasons',
+                                          'celestial_panels': ['dome', 'pass']}}}
+        assert (celestial.report_groups(quoted, 'Stars')
+                == celestial.report_groups(listed, 'Stars')
+                == (('satellites',), None))
+        assert celestial.parse_panels('dome, pass', '[x]') == ['dome', 'pass']
+        assert celestial.parse_panels(' Dome , DOME,pass ', '[x]') == ['dome', 'pass']
+        assert celestial.parse_panels('', '[x]') == [] == celestial.parse_panels([], '[x]')
+        with pytest.raises(ValueError) as e:
+            celestial.parse_panels('dome, dail', '[StdReport] [[Stars]]')
+        assert "names 'dail', which is not a panel" in str(e.value)
+        # One spelling, both voices (the installer's receipts and the
+        # page's log line).
+        assert (celestial.panels_as_written(['dome', 'pass'])
+                == celestial.panels_as_written('dome, pass')
+                == celestial.panels_as_written(' dome ,pass') == 'dome, pass')
 
 
 class TestSatelliteUtility:
@@ -6569,7 +9761,8 @@ class TestSatelliteUtility:
         report = celestial.add_satellite_conf(str(conf), str(out), 'zenit23088', '23088')
         assert report['satellites_entry'] == 'added'
         assert report['fields_added'] == [] and report['reports'] == []
-        assert any('No report runs the Celestial skin yet' in h for h in report['hints'])
+        assert any('No report runs the Celestial skin or names a panel reading %s '
+                   'fields with celestial_panels yet' % 'satellite' in h for h in report['hints'])
         import configobj
         assert 'StdReport' not in configobj.ConfigObj(str(out)) or \
             'CelestialReport' not in configobj.ConfigObj(str(out))['StdReport']
@@ -6790,6 +9983,85 @@ class TestSatelliteUtility:
             celestial.add_satellite_conf(str(conf2), str(out), 'halley', '23088')
         assert not out.exists()
 
+    def test_add_declares_under_a_consumer_report_too(self, tmp_path):
+        """A report of another skin naming the panels its page embeds
+        (celestial_panels) takes the same declaration the verbs keep for
+        a Celestial report -- one writer -- and only the groups its
+        panels read."""
+        import configobj
+        conf = self._write_conf(tmp_path, self.BASE_CONF + (
+            '    [[Stars]]\n        skin = Seasons\n        celestial_panels = dome, pass\n'))
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_satellite_conf(str(conf), str(out), 'terra', '25994')
+        assert report['reports'] == ['CelestialReport', 'Stars']
+        stars = configobj.ConfigObj(str(out))['StdReport']['Stars']['LoopData']['fields']
+        assert list(stars) == ['satellites']
+        assert list(stars['satellites']) == self._group(out)
+        assert 'almanac.terra.az' in stars['satellites']
+
+    def test_receipts_name_only_the_reports_this_verb_declared_for(self, tmp_path):
+        """A consumer report owning only the other family's group is
+        declared under by the run (one writer) but is not something
+        this verb's receipt may claim: --add-comet against a station
+        whose only declaring report reads satellites writes no comet
+        field anywhere, says so, and never prints 'already declared';
+        on a mixed station the 'under ...' line names only the reports
+        this verb's group was written under; and a key under
+        [[Defaults]] earns its refusal line BESIDE the no-report hint,
+        never instead of it."""
+        import configobj
+        conf = self._write_conf(tmp_path, (
+            '[Station]\n    location = Test\n'
+            '[StdReport]\n    [[Stars]]\n        skin = Seasons\n'
+            '        celestial_panels = dome\n'))
+        out = tmp_path / 'weewx.conf.new'
+        report = celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
+        assert report['comets_entry'] == 'added'
+        assert report['reports'] == [] and report['fields_added'] == []
+        assert 'almanac.encke' not in open(str(out)).read()
+        assert any('No report runs the Celestial skin' in h for h in report['hints'])
+        assert not any('already declared' in h for h in report['hints'])
+        conf = self._write_conf(tmp_path, self.BASE_CONF + (
+            '    [[Stars]]\n        skin = Seasons\n        celestial_panels = dome\n'))
+        report = celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
+        assert report['reports'] == ['CelestialReport']
+        assert 'Stars' not in report['reports']
+        assert 'LoopData' in configobj.ConfigObj(str(out))['StdReport']['Stars']
+        assert 'comets' not in configobj.ConfigObj(str(out))['StdReport']['Stars']['LoopData']['fields']
+        conf = self._write_conf(tmp_path, (
+            '[Station]\n    location = Test\n'
+            '[StdReport]\n    [[Defaults]]\n        celestial_panels = dome\n'
+            '    [[Astro]]\n        skin = Astro\n'))
+        report = celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
+        assert report['reports'] == []
+        assert any('Nothing declared for it: [StdReport] [[Defaults]] carries celestial_panels'
+                   in h for h in report['hints'])
+        assert any('No report runs the Celestial skin' in h for h in report['hints'])
+        # A refused Celestial report is a report that runs the skin: its
+        # refusal stands alone, never beside the no-report hint.
+        conf = self._write_conf(tmp_path, (
+            '[Station]\n    location = Test\n'
+            '[StdReport]\n    [[CelestialReport]]\n        skin = Celestial\n'
+            '        celestial_panels = dome, geocentrc\n'))
+        report = celestial.add_satellite_conf(str(conf), str(out), 'terra', '25994')
+        assert report['reports'] == []
+        assert any("names 'geocentrc', which is not a panel" in h for h in report['hints'])
+        assert not any('No report runs the Celestial skin' in h for h in report['hints'])
+        # The receipt's entries are the owning reports' alone: a consumer
+        # losing a stale group it does not own is the unread hint's story,
+        # never 'undeclared' under the report that GAINED the fields.
+        conf = self._write_conf(tmp_path, self.BASE_CONF + (
+            '    [[Astro]]\n        skin = Astro\n        celestial_panels = geocentric\n'
+            '        [[[LoopData]]]\n            [[[[fields]]]]\n'
+            '                satellites = almanac.iss.az, almanac.iss.alt\n'))
+        report = celestial.add_satellite_conf(str(conf), str(out), 'terra', '25994')
+        assert report['reports'] == ['CelestialReport']
+        assert report['fields_removed'] == []
+        assert 'almanac.terra.az' in report['fields_added']
+        assert any('No panel of [StdReport] [[Astro]] reads satellite fields (celestial_panels = '
+                   'geocentric), so its satellites group was removed.' == h for h in report['hints'])
+        assert 'satellites' not in configobj.ConfigObj(str(out))['StdReport']['Astro']['LoopData']['fields']
+
 
 class TestCometUtility:
     """The --add-comet / --remove-comet utility: the three weewx.conf
@@ -6935,7 +10207,8 @@ class TestCometUtility:
         report = celestial.add_comet_conf(str(conf), str(out), 'encke', '2P')
         assert report['comets_entry'] == 'added'
         assert report['fields_added'] == [] and report['reports'] == []
-        assert any('No report runs the Celestial skin yet' in h for h in report['hints'])
+        assert any('No report runs the Celestial skin or names a panel reading %s '
+                   'fields with celestial_panels yet' % 'comet' in h for h in report['hints'])
 
     def test_remove_conf_roundtrip(self, tmp_path):
         conf = self._write_conf(tmp_path)
@@ -7202,6 +10475,29 @@ class TestInstallerDeclaresFields:
             self._installer().configure(engine)
             assert 'still carries' not in '\n'.join(engine.printer.lines)
 
+    def test_a_consumer_target_report_shares_like_ours(self):
+        """A consumer report (celestial_panels) is among the declaring
+        reports, and weewx-loopdata shares a legacy entry with any
+        declaring report whose rendering matches -- a consumer declares
+        the satellite and comet groups here and, with the manual's
+        paste, the static set in its skin.conf -- so a target_report
+        pointing at it shares like a Celestial report, and the note is
+        silent (one without the paste shares less: the silent direction,
+        never the false note)."""
+        legacy = ['current.outTemp'] + celestial.static_page_fields()
+        config = {'Skyfield': {'Satellites': {}, 'Comets': {}},
+                  'StdReport': {'CelestialReport': {'skin': 'Celestial'},
+                                'Stars': {'skin': 'Seasons', 'celestial_panels': 'dome'}},
+                  'LoopData': {'Include': {'fields': list(legacy)},
+                               'Formatting': {'target_report': 'Stars'}}}
+        engine = self._engine(config)
+        self._installer().configure(engine)
+        assert 'still carries' not in '\n'.join(engine.printer.lines)
+        config['LoopData']['Formatting']['target_report'] = 'Seasons'     # no declaring report
+        engine = self._engine(config)
+        self._installer().configure(engine)
+        assert 'still carries 50 entries' in '\n'.join(engine.printer.lines)
+
     def test_nothing_is_counted_twice_that_loopdata_renders_once(self):
         """weewx-loopdata renders the legacy line through its
         target_report, so where that IS one of the reports declaring
@@ -7269,6 +10565,84 @@ class TestInstallerDeclaresFields:
         installer.configure(self._engine(config))
         conditional_merge(config, installer['config'])
         assert dict(config['StdReport']['CelestialReport']['LoopData']['fields']) == {}
+
+    def test_declares_for_a_consumer_report(self):
+        """A report of another skin naming the panels its page embeds is
+        declared under by the installer too -- the groups its panels
+        read, the line saying where -- beside the Celestial report.  A
+        group removed because no panel of the report reads it is
+        reported as that, with the key as written, never as an empty
+        [Skyfield] set; a section whose key is invalid, or a key under
+        [[Defaults]], is skipped and named every run, and costs nobody
+        else's declaration."""
+        engine = self._engine({'StdReport': {'Stars': {'skin': 'Seasons',
+                                                        'celestial_panels': 'pass',
+                                                        'LoopData': {'fields': {
+                                                            'comets': ['almanac.halley.az']}}}}})
+        assert self._installer().configure(engine) is True
+        stars = engine.config_dict['StdReport']['Stars']['LoopData']['fields']
+        assert list(stars) == ['satellites']
+        assert list(self._groups(engine.config_dict)) == ['satellites', 'comets']
+        text = '\n'.join(engine.printer.lines)
+        assert ('Declared 38 satellite fields (iss, tiangong) under [StdReport] '
+                '[[Stars]] [[[LoopData]]] [[[[fields]]]] satellites.') in text
+        assert '[[CelestialReport]] [[[LoopData]]] [[[[fields]]]] comets.' in text
+        assert ('Removed [StdReport] [[Stars]] [[[LoopData]]] [[[[fields]]]] comets.') in text
+        assert ('No panel of [StdReport] [[Stars]] reads comet fields (celestial_panels = pass), '
+                'so its comets group was removed.') in text
+        # The receipt follows the line it explains.
+        assert text.index('Removed [StdReport] [[Stars]]') < text.index('No panel of [StdReport] [[Stars]]')
+        assert '[[Comets]] is empty' not in text and 'Nothing declared' not in text
+        # The installer-defaults note belongs to a DECLARED set: it is
+        # printed exactly when there is no [Skyfield] section to follow,
+        # which is also the only way a declared set is non-empty without
+        # one -- so it rides the three groups this bare station declared
+        # and never the removal, whose reason is the receipt below it.
+        # (A group removed because no panel reads it has nothing to do
+        # with the station's [Skyfield] sets, and must not send its owner
+        # off to configure them.)
+        assert text.count("weewx-skyfield's installer defaults") == 3
+        for line, following in zip(engine.printer.lines, engine.printer.lines[1:]):
+            if line.startswith(('Removed ', 'Would remove ')):
+                assert 'installer defaults' not in following, line
+        # A dry run says what WOULD happen, in that tense.
+        engine = self._engine({'StdReport': {'Stars': {'skin': 'Seasons',
+                                                        'celestial_panels': 'pass',
+                                                        'LoopData': {'fields': {
+                                                            'comets': ['almanac.halley.az']}}}}},
+                              dry_run=True)
+        assert self._installer().configure(engine) is False
+        text = '\n'.join(engine.printer.lines)
+        assert 'Would remove [StdReport] [[Stars]] [[[LoopData]]] [[[[fields]]]] comets (dry run).' in text
+        assert 'so its comets group would be removed.' in text and 'was removed' not in text
+        assert engine.config_dict['StdReport']['Stars']['LoopData']['fields']['comets'] == ['almanac.halley.az']
+        engine = self._engine({'StdReport': {'Stars': {'skin': 'Seasons',
+                                                        'celestial_panels': 'dial'},
+                                             'Astro': {'skin': 'Astro'},
+                                             'Defaults': {'celestial_panels': 'dome'}}})
+        assert self._installer().configure(engine) is True
+        text = '\n'.join(engine.printer.lines)
+        assert ("Nothing declared: [StdReport] [[Stars]] "
+                "celestial_panels names 'dial', which is not a panel") in text
+        assert 'Nothing declared for it: [StdReport] [[Defaults]] carries celestial_panels' in text
+        assert text.count('Nothing declared') == 2          # once for the station, once for Stars
+        assert 'Could not declare' not in text
+        assert list(self._groups(engine.config_dict)) == ['satellites', 'comets']
+        assert 'LoopData' not in engine.config_dict['StdReport']['Stars']
+        assert 'LoopData' not in engine.config_dict['StdReport']['Astro']
+        # A removal because no panel reads the group is reported as that
+        # whatever the configured set holds -- an empty [[Satellites]] is
+        # not the reason, and must not be named as one.
+        engine = self._engine({'Skyfield': {'Satellites': {}},
+                               'StdReport': {'MyReport': {'skin': 'Mine',
+                                                          'celestial_panels': 'geocentric',
+                                                          'LoopData': {'fields': {
+                                                              'satellites': ['almanac.iss.az']}}}}})
+        assert self._installer().configure(engine) is True
+        text = '\n'.join(engine.printer.lines)
+        assert ('No panel of [StdReport] [[MyReport]] reads satellite fields (celestial_panels = '
+                'geocentric), so its satellites group was removed.') in text
+        assert '[[Satellites]] is empty' not in text
 
 
 class TestInstallerLoader:
@@ -8174,7 +11548,7 @@ class TestManualInStepWithCode:
 
     # Declared in skin.conf but not a user-facing setting:
     _NOT_A_USER_OPTION = {
-        # The version tag appended to the celestial.css and sky.js URLs
+        # The version tag appended to the celestial.css, celestial.js and sky.js URLs
         # so browsers refetch them after an upgrade.  Bumped by the
         # release process, never by a station.
         'version',
@@ -8211,14 +11585,15 @@ class TestManualInStepWithCode:
         return out
 
     def _read_options(self):
-        """The $Extras keys the shipped templates actually consult."""
+        """The [Extras] keys the shipped template and celestial_page.py
+        (the config block's reads, `extras.get('...')`) actually consult."""
         found = set()
-        for name in ('index.html.tmpl', 'realtime_updater.inc'):
-            path = os.path.join(REPO_ROOT, 'skins', 'Celestial', name)
-            with open(path, encoding='utf-8') as f:
-                text = f.read()
-            found.update(re.findall(r'\$Extras\.has_key\(\s*[\'"]([A-Za-z_]\w*)', text))
-            found.update(re.findall(r'\$Extras\.([A-Za-z_]\w*)', text))
+        with open(os.path.join(SKIN_DIR, 'index.html.tmpl'), encoding='utf-8') as f:
+            text = f.read()
+        found.update(re.findall(r'\$Extras\.has_key\(\s*[\'"]([A-Za-z_]\w*)', text))
+        found.update(re.findall(r'\$Extras\.([A-Za-z_]\w*)', text))
+        with open(PAGE_PY, encoding='utf-8') as f:
+            found.update(re.findall(r"extras\.get\('([A-Za-z_]\w*)'", f.read()))
         return found - {'has_key'}
 
     def _documented_options(self):
