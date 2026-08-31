@@ -6771,8 +6771,8 @@ class TestConfigScript:
         assert celestial_page._number('0', 24) == 0
         assert page.config_dict(wxskyfield_sat_almanac)['expiration_time'] == 0
         # And the script disarms rather than arming a zero-delay timer,
-        # which is what it did through 9.0 -- setTimeout(..., 0) expired
-        # the page at once, so nothing can be relying on the old reading.
+        # which is what it did before 9.0 -- setTimeout(..., 0) expired
+        # the page at once, so nothing could have relied on that.
         with open(JS_PATH, encoding='utf-8') as f:
             js = f.read()
         body = js.split('function setPageExpirationTimer()', 1)[1].split('function ', 1)[0]

@@ -278,7 +278,7 @@ weewx-celestial change history
 - The dark and light plates are keyed on a class rather than on :root,
   so theme_class's answer can go on the container holding the panels as
   well as on the root element: that is how a night dome sits inside a
-  light site.  theme-dark now selects something -- through 9.0 it
+  light site.  theme-dark now selects something -- before 9.0 it
   matched no rule at all, the dark plate working only because :root
   carried it.
 - The panels carry their own box model (scoped to the contract marker)
@@ -356,7 +356,7 @@ weewx-celestial change history
   other's eleven files every cycle for a page that never asked.
 - expiration_time = 0 means never expire, for a page in another skin
   that runs an expiry of its own; two regimes on one page is worse than
-  either.  Through 9.0 that value armed a zero-delay timer and expired
+  either.  Before 9.0 that value armed a zero-delay timer and expired
   the page instantly.
 - Documentation: the manual's "In your own skin" page becomes "Panels in
   your own skin", the embed guide -- the four things a skin arranges, the

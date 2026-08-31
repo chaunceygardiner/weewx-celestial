@@ -160,8 +160,8 @@ var celestial = (function () {
     // 0 means NEVER expire, for a page whose host skin runs an expiry of
     // its own: two regimes on one page is worse than either, and a
     // consumer keeping its own badge has nowhere for CLICK-ME to appear
-    // anyway.  (Through 9.0 this armed setTimeout(..., 0) and expired the
-    // page instantly, so no station can be relying on today's behavior.)
+    // anyway.  (Before 9.0 this armed setTimeout(..., 0) and expired the
+    // page instantly, so no station could have been relying on that.)
     if (expiration_time <= 0) {
       return;
     }
