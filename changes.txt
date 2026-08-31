@@ -1,6 +1,41 @@
 weewx-celestial change history
 ------------------------------
 
+9.0.1 2026/08/31
+----------------
+- FIXED: the LIVE badge's age is read from the serving machine's own
+  clock -- the Date header of the very response that carried the loop
+  record -- instead of being worked out from the page alone.  The two
+  terms it used before are each measured on one clock, which is right as
+  far as it goes, but both of them read zero in one real failure: weewxd
+  takes the report cycle and weewx-loopdata down together.  The last
+  packet written is then NEWER than the page that reads it, so the first
+  term clamps to zero -- correctly, the feed was healthy when the page
+  was generated -- and the stale file is new to whichever browser has
+  just loaded the page, so the second term starts at zero too.  The
+  badge said LIVE over hour-old data, left LIVE six seconds later, and
+  then counted up from the page load rather than from the data: an hour
+  short for as long as the page stood.  It now reads the true age on the
+  first paint.  Any Age a caching proxy adds is added back, so a copy
+  held for an hour is not read as young; a response whose Date cannot be
+  read (a page opened from file:, a cross-origin feed that does not
+  expose the header) falls back to the two terms exactly as before.  The
+  fallback's elapsed term is now measured with a monotonic clock, so an
+  NTP correction arriving mid-session can no longer step the age -- a
+  tablet that syncs an hour after boot used to.  A viewer's clock is
+  still never asked what time it is, which is the rule 8.3.4 set.
+  (weewx-weatherboard's approach, ported.)  Note that the Date header is
+  stamped by whatever web server answers while the record is stamped by
+  the weewx station: both are assumed to keep NTP-grade time, and the
+  skew between them is charged against the badge's six-second LIVE
+  threshold.  The age also counts a step it never used to -- publishing
+  the file, not just writing it -- which costs well under a second, so a
+  working station reads LIVE exactly as before.
+- Because the page's javascript changed, celestial.js is served under a
+  new version in its URL and browsers holding the 9.0 copy will fetch
+  it.  Nothing else on the page changes: same markup, same fields, same
+  configuration.
+
 9.0 2026/08/30
 --------------
 - ACTION ON UPGRADE: the sky dome's ten fragment templates

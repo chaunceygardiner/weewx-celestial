@@ -16,6 +16,24 @@ reads the entries listed in the [Fields reference](fields-reference.md),
 and as of 8.5 it declares them to weewx-loopdata itself — the skin ships
 the fixed ones, the installer writes the satellite and comet ones.
 
+## Upgrading within 9.x
+
+Install over the top and restart WeeWX.  Nothing in `weewx.conf` or the
+skin changes, and no file has to be deleted.  Reload any page you have
+open: the javascript is served with the version in its URL, so a browser
+holding the previous release's copy takes the new one on the next load.
+
+9.0.1 changes where the `LIVE` badge gets its number.  The age of the
+record on show is now read from the clock of the machine that served it
+— the `Date` header of the response that carried the record — rather
+than worked out from the page's own two measures, which both read zero
+in one real case: weewxd taking the report cycle and weewx-loopdata down
+together, leaving a page that said `LIVE` over hour-old data to anyone
+who opened it.  The age therefore counts publishing the file as well as
+writing it, which costs well under a second; if your station and your
+web server are different machines, both should keep NTP-grade time,
+since skew between them lands in that number.
+
 ## Upgrading from 8.x to 9.0
 
 Install over the top and restart WeeWX, as within 8.x.  Then delete the

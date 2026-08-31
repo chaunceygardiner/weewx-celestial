@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.0';
+  var CELESTIAL_JS_VERSION = '9.0.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -516,6 +516,9 @@ var celestial = (function () {
   var latest = null;      // last parsed loop-data object
   var latestTs = 0;       // its current.dateTime.raw; never the browser's time
   var latestRecvTs = 0;   // when THIS BROWSER received it (its own clock)
+  var latestRecvMono = 0; // and the same instant by the browser's monotonic
+                          // stopwatch (performance.now, milliseconds), which
+                          // the badge's age reads: see updateCurrent
   var packets = [];       // [{t, r}] oldest first, pruned to 10 minutes
   var HISTORY_SEC = 600;
   function pushHistory(t, r) {
@@ -945,11 +948,18 @@ var celestial = (function () {
       return;
     }
     if (latestRecvTs > 0 && nowTs - latestRecvTs > DEAD_FEED) {
-      // Both sides of this comparison are the BROWSER's clock -- the
-      // receipt stamp, not the packet's station timestamp.  Mixing them
-      // reintroduced exactly what 8.3.1 removed: a viewer two minutes
-      // ahead of the station would read every healthy packet as a dead
-      // feed, for ever, with no line under the panel to say why.
+      // Both sides of this comparison are the browser's WALL clock --
+      // the receipt stamp, not the packet's station timestamp.  Mixing
+      // them reintroduced exactly what 8.3.1 removed: a viewer two
+      // minutes ahead of the station would read every healthy packet as
+      // a dead feed, for ever, with no line under the panel to say why.
+      //
+      // The wall clock and not the monotonic one, for packetAge's
+      // reason: this asks whether the world has moved on since the last
+      // packet, so time the machine spent SUSPENDED must count.  A
+      // monotonic clock stops during sleep, and a laptop reopened onto
+      // a feed that died while it slept would not call the sky dead
+      // until it had been awake DEAD_FEED seconds.
       //
       // The other input dying is the same lie inverted, and the comment
       // in domeStaleFor used to get this wrong.  When the FEED stops,
@@ -1967,10 +1977,24 @@ var celestial = (function () {
   }
   function packetAge() {
     // How long the current packet has been in hand, by the stopwatch:
-    // both readings are the BROWSER's own clock, so a viewer's skew
+    // both readings are the browser's WALL clock, so a viewer's skew
     // cancels exactly and never reaches the arithmetic.  Capped at
     // EXTRAP_MAX so a feed that dies freezes the page rather than
     // running it on into fiction.
+    //
+    // The wall clock (Date.now) DELIBERATELY, not the monotonic one
+    // (performance.now) the badge's age backstop takes -- the page has
+    // both, and they answer different questions.  This one measures
+    // elapsed REAL time against an anchor computed for the packet's own
+    // instant, and every caller multiplies it by a rate, so time the
+    // machine spent SUSPENDED has to count: a monotonic clock stops
+    // during sleep, so a lid closed for twenty minutes would come back
+    // reading seconds, the EXTRAP_MAX freeze would never engage, and
+    // the dial would draw bodies at a position for a time that never
+    // happened -- the drift this cap exists to prevent, silently.  The
+    // wall clock's own hazard, an NTP correction landing mid-session,
+    // moves this by the step for one packet at most and is what the
+    // badge cannot tolerate and this can.
     return Math.min(Math.max(Date.now() / 1000 - latestRecvTs, 0), EXTRAP_MAX);
   }
   function serverNow() {
@@ -2840,6 +2864,37 @@ var celestial = (function () {
   }
 
   // ---- poll + local tick ---------------------------------------------------
+  // Server-now in milliseconds, from a response's own Date header, or NaN
+  // when the header cannot be read.  Date.parse only decodes the header's
+  // string form -- it never consults the local clock -- so this is the web
+  // server's reading of the time, not the viewer's.  An intermediate cache
+  // preserves the origin's Date and adds Age (RFC 9111), so server-now is
+  // Date + Age; without that a cached hit reports itself as young as it was
+  // when it was stored.  Date is not a CORS-safelisted response header, so
+  // a cross-origin loop_data_file reads NaN unless the server sends
+  // Access-Control-Expose-Headers: Date, and a page opened from file: has
+  // no headers at all -- the caller's own backstop covers both.  getHeader
+  // is passed in because an XHR spells this getResponseHeader(name) and a
+  // fetch Response spells it headers.get(name).  (weewx-weatherboard's,
+  // ported.)
+  // The local is `ms`, NOT `serverNow`: this file already has a
+  // serverNow(), and it is the STATION's clock (the page's own).  Two
+  // clocks, two names -- a local shadowing that function would leave a
+  // later edit in here calling it and silently getting a number.
+  function serverNowFromHeaders(getHeader) {
+    var ms = Date.parse(getHeader('Date'));
+    if (isNaN(ms)) {
+      return NaN;
+    }
+    var cacheAge = Number(getHeader('Age'));
+    if (isFinite(cacheAge) && cacheAge > 0) {
+      ms += cacheAge * 1000;           // a proxy's copy is older than it says
+    }
+    return ms;
+  }
+  function xhrHeaderReader(xhr) {
+    return function (name) { return xhr.getResponseHeader(name); };
+  }
   var lastTickTs = 0;
   function localTick() {
     var nowTs = Date.now() / 1000;
@@ -2975,6 +3030,7 @@ var celestial = (function () {
         // same packet is not news.
         if (latestTs !== prevTs) {
           latestRecvTs = nowTs;
+          latestRecvMono = performance.now();
         }
         // The first packet needs no case of its own any more: every new
         // packet checks the backdrop below, and the first is simply the
@@ -2982,26 +3038,59 @@ var celestial = (function () {
         // the slot the page was generated with, to the station's real
         // time.  A page served from a browser or CDN cache can be hours
         // stale, and that is the packet that repairs it.
-        // How old the data on show is -- two terms, each measured on ONE
-        // clock, never across the two.  How stale this record already was
-        // when the page first found it: its own station time against the
-        // page's generation instant, station against station.  Plus how
-        // long since a fresh record arrived HERE: browser against
-        // browser.  Through 8.3.3 this was Date.now() minus the packet's
-        // station time, which posted a skewed viewer's offset as a
-        // permanent "Ns ago" over a perfectly live feed.
+        // How old the data on show is, from the SERVER's own clock: the
+        // Date header stamped on the very response that carried this
+        // record, against the record's own station time.  Neither operand
+        // is the viewer's, so a viewer whose clock is wrong still reads
+        // the true age -- through 8.3.3 this was Date.now() minus the
+        // packet's station time, which posted a skewed viewer's offset as
+        // a permanent "Ns ago" over a perfectly live feed.
         //
-        // The first term is zero on any healthy feed, whose packets are
-        // newer than the page that reads them, and the six-second LIVE
-        // threshold absorbs a write that lags the archive instant.  It
-        // earns its place on the dead feed a viewer has just loaded:
-        // loopdata stopped an hour ago, the web server still serves the
-        // last file, and the first fetch stamps latestRecvTs -- so the
-        // second term alone reads zero and the badge would call hour-old
-        // data LIVE, resetting on every reload.  Against GEN_TS it reads
-        // the hour.
-        var age = Math.round(Math.max(0, GEN_TS - latestTs)
-                             + (nowTs - latestRecvTs));
+        // CAVEAT: the two operands are stamped by two machines -- the
+        // header by whatever web server answers, the record by the weewx
+        // station -- so both are assumed to keep NTP-grade time, and the
+        // skew between them is charged against the six-second LIVE
+        // threshold below.  (Measured on the author's deployment: one
+        // second between a response's Date and the packet it carried.)
+        //
+        // The backstop, for a response whose header cannot be read (a
+        // page opened from file:, a cross-origin feed that does not
+        // expose Date) -- 8.3.4's pair, each term measured on ONE clock,
+        // never across the two.  How stale this record already was when
+        // the page first found it: its station time against the page's
+        // generation instant, station against station.  Plus how long
+        // since a fresh record arrived HERE, by the browser's stopwatch.
+        // Both terms understate, so their sum is a LOWER bound on the
+        // true age and Math.max is safe: the backstop can only win where
+        // the header reads too young, which is a response served from a
+        // cache that did not add Age.
+        //
+        // What the header buys is the case neither term can see: weewxd
+        // takes the report cycle and loopdata down together.  The last
+        // packet is then NEWER than the page, so the first term clamps to
+        // zero -- correctly, the feed was healthy when the page was made
+        // -- and the first fetch of the stale file is new to this
+        // browser, so the second starts at zero.  An hour later the badge
+        // would leave LIVE within six seconds but count up from the page
+        // load, an hour short for as long as the page stands.  The header
+        // reads the hour on the first paint.
+        //
+        // performance.now(), not Date.now(), for the elapsed term: a
+        // difference of two Date.now() readings cancels a viewer's
+        // standing skew, but not an NTP correction landing mid-session,
+        // which steps the age by however far the clock moved.  A
+        // monotonic stopwatch cannot be stepped.  It can, on some
+        // platforms, fail to ADVANCE while the machine is suspended, so
+        // the backstop can come back short from a sleep; the header
+        // answers on the first poll after the wake, and a page with no
+        // readable header was standing on a lower bound already.
+        var age = Math.max(0, GEN_TS - latestTs)
+                  + (performance.now() - latestRecvMono) / 1000;
+        var serverNowMs = serverNowFromHeaders(xhrHeaderReader(this));
+        if (!isNaN(serverNowMs)) {
+          age = Math.max(age, serverNowMs / 1000 - latestTs);
+        }
+        age = Math.round(Math.max(0, age));
         setHtml("live-label", age <= 6 ? T['LIVE'] : fmt('{age}s ago', {age: age}));
         // Display the time of the last update, in the page's timezone.
         setHtml("last-update", fmtHMS(lastTs));

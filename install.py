@@ -179,7 +179,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.0",
+            version = "9.0.1",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

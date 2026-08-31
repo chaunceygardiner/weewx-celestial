@@ -50,6 +50,22 @@ working has no working live layer at all — the page stands as the report
 drew it, or where the last packet left it, and the LIVE badge is where
 that fault is reported.
 
+One number does come from a third clock, and only that one: the age the
+badge reports.  It is read from the `Date` header of the very response
+that carried the loop record — the serving machine's own reading of the
+time — against the record's own station timestamp, so neither operand is
+the viewer's.  That is what lets the badge tell the truth in the one
+case the page cannot work out for itself: weewxd takes the report cycle
+and the loop feed down together, so the last packet written is newer
+than the page that reads it, and the stale file is new to whichever
+browser has just loaded that page.  Both of the page's own measures read
+zero there; the header reads the real hour.  Where no `Date` can be read
+— a page opened from `file:`, a cross-origin feed that does not expose
+the header — the page falls back on what it can measure itself.  Header
+and record are stamped by two machines, the web server and the weewx
+station, so both are assumed to keep NTP-grade time; the skew between
+them is charged against the badge's six-second `LIVE` threshold.
+
 ## First paint, then live
 
 Every value cell is filled twice.  At report time it is rendered from

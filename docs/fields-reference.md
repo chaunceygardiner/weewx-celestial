@@ -81,7 +81,8 @@ satellites and two comets.  They fall into six kinds.
 `current.dateTime.raw` — the packet's timestamp, and the page's clock:
 the "updated" stamp, every countdown chip, the rosters' "overhead now"
 and the pass chart's verdict are all reckoned against it, rates are
-derived from consecutive stamps, and a record without it is dropped
+derived from consecutive stamps, the `LIVE` badge measures its age
+against the serving machine's clock, and a record without it is dropped
 whole (see [Whose time it is](how-it-stays-live.md#whose-time-it-is)).
 
 ### Body positions (33 entries)

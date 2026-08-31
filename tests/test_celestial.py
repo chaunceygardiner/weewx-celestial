@@ -1643,9 +1643,30 @@ class TestSampleSkinRenders:
         # anything from Date.now() but another Date.now() reading.  Every
         # Date.now() in the file is either that stopwatch or a cache
         # buster; a browser reading may not be stored as the page's time.
+        #
+        # WHICH browser clock is a per-question choice, not an oversight,
+        # and this assertion pins the choice: packetAge and the DEAD_FEED
+        # test take the WALL clock (Date.now) because they measure
+        # elapsed real time and must therefore count time the machine
+        # spent suspended, which a monotonic clock does not advance
+        # through -- converting them for symmetry with the badge below
+        # would leave a reopened laptop extrapolating from a stale anchor
+        # with the EXTRAP_MAX freeze never engaging.  Do not "fix" them.
         assert re.search(r'function packetAge\(\) \{', src)
         assert re.search(r'Date\.now\(\) / 1000 - latestRecvTs', src), \
-            'packetAge must measure the packet age on the browser clock alone'
+            'packetAge must measure the packet age on the wall clock alone'
+        # The badge's age backstop takes the other one, performance.now():
+        # a difference of two Date.now() readings cancels a viewer's
+        # standing skew but is stepped by an NTP correction landing
+        # mid-session, and this elapsed term is the page's last word on a
+        # feed whose response carries no readable Date.  It can afford
+        # the suspend blindness the two above cannot: the Date header
+        # answers on the first poll after a wake.
+        assert re.search(r'latestRecvMono = performance\.now\(\);', src)
+        src_code = '\n'.join(l for l in src.split('\n')
+                             if not l.lstrip().startswith('//'))
+        assert len(re.findall(r'performance\.now\(\)', src_code)) == 2, \
+            'the monotonic clock is the stamp and the badge age, nothing else'
         for gone in ('PAGE_LOAD', 'stationNow', 'stationClock', 'feedFresh',
                      'STALE_PACKET', 'b.over'):
             assert gone not in src, '%s should be gone' % gone
@@ -1756,14 +1777,35 @@ class TestSampleSkinRenders:
         assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
         assert re.search(r'console\.log\(.loop record has no '
                          r'current\.dateTime\.raw; ignored.\)', src)
-        # The LIVE badge's age is two same-clock terms, never a crossing:
-        # how stale the record already was when the page found it (its
-        # station time against the page's, GEN_TS) plus how long since a
-        # fresh one arrived here (browser against browser).  Without the
-        # first term the badge calls an hour-old re-served file LIVE to
-        # anyone who has just loaded the page.
-        assert re.search(r'var age = Math\.round\(Math\.max\(0, GEN_TS - latestTs\)\s*'
-                         r'\+ \(nowTs - latestRecvTs\)\);', src)
+        # The LIVE badge's age is read from the SERVER's clock -- the Date
+        # header on the response that carried the record, against the
+        # record's own station time -- with the two same-clock terms as
+        # the backstop for a response whose header cannot be read: how
+        # stale the record already was when the page found it (its station
+        # time against the page's, GEN_TS) plus how long since a fresh one
+        # arrived here (browser against browser, monotonically).  Both
+        # terms understate, so the greater of the two answers wins.  The
+        # end-to-end proof is
+        # test_badge_age_comes_from_the_server_clock_in_a_real_browser.
+        assert re.search(r'var age = Math\.max\(0, GEN_TS - latestTs\)\s*'
+                         r'\+ \(performance\.now\(\) - latestRecvMono\) / 1000;\s*'
+                         r'var serverNowMs = serverNowFromHeaders\(xhrHeaderReader\(this\)\);\s*'
+                         r'if \(!isNaN\(serverNowMs\)\) \{\s*'
+                         r'age = Math\.max\(age, serverNowMs / 1000 - latestTs\);\s*\}\s*'
+                         r'age = Math\.round\(Math\.max\(0, age\)\);', src)
+        # The header reader is weewx-weatherboard's, ported whole: Date
+        # decoded without consulting the local clock, plus any Age a cache
+        # added (RFC 9111), NaN when there is no readable header.
+        assert re.search(r'function serverNowFromHeaders\(getHeader\) \{\s*'
+                         r"var ms = Date\.parse\(getHeader\('Date'\)\);\s*"
+                         r'if \(isNaN\(ms\)\) \{\s*return NaN;\s*\}\s*'
+                         r"var cacheAge = Number\(getHeader\('Age'\)\);\s*"
+                         r'if \(isFinite\(cacheAge\) && cacheAge > 0\) \{\s*'
+                         r'ms \+= cacheAge \* 1000;', src)
+        # ...and its local does not shadow serverNow(), the page's own
+        # (station) clock: one name, one clock.
+        assert 'var serverNow =' not in src, \
+            'a local named serverNow shadows the page clock function'
 
     def test_light_pass_chart_fragment(self, wxskyfield_sat_almanac):
         """The Next Visible Pass chart follows the page's plate too --
@@ -4749,6 +4791,136 @@ class TestSampleSkinRenders:
         # act is to remove one, so no attribute read could tell the two
         # apart.)
         assert st['badge'].startswith('NO DATA (HTTP 404)'), st['badge']
+
+    def test_badge_age_comes_from_the_server_clock_in_a_real_browser(
+            self, wxskyfield_almanac, tmp_path):
+        """The badge's age is read from the SERVER's clock -- the Date
+        header on the very response that carried the record -- so it is
+        true on the one failure the page's own two terms cannot see:
+        weewxd takes the report cycle and loopdata down together, so the
+        last packet is NEWER than the page (the GEN_TS term clamps to
+        zero, correctly) and the stale file is new to this browser (the
+        elapsed term starts at zero).  Four legs, one browser:
+
+        live    a fresh packet, Date stamped now                LIVE
+        dead    the station died an hour ago, Date now          ~3600s ago
+        cached  a proxy holding an hour-old response, Age: 3600 ~3600s ago
+        nodate  the same dead feed, no Date header at all       LIVE
+
+        The last is not a wish -- it is the backstop alone, and what it
+        reads is exactly why the header is consulted first.  The third
+        proves the Age term: without it the proxy's frozen Date reads the
+        response as young as it was when it was stored, and the badge
+        would say LIVE over an hour-old sky.  Skips when the playwright
+        env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
+        write_assets(tmp_path)
+        STALE = 3600
+
+        def body(age_s):
+            """A minimal record, stamped age_s seconds ago on the STATION's
+            clock (the harness's machine is both)."""
+            return loop_file({
+                'current.dateTime.raw': int(time.time()) - age_s,
+                'almanac.sun.next_setting.unix_epoch.raw': int(time.time() + 3000),
+                'almanac.sun.next_rising.unix_epoch.raw': int(time.time() + 40000),
+            }).encode()
+
+        # The three dead legs serve ONE file, unchanging, which is what a
+        # station that stopped writing leaves behind -- so the elapsed
+        # term is stamped once, on the first poll, and every later poll
+        # repaints the badge from a record that never advances.
+        DEAD_BODY = body(STALE)
+
+        class Feed(http.server.SimpleHTTPRequestHandler):
+            mode = 'live'
+
+            def do_GET(self):
+                if not self.path.startswith('/gauge-data/loop-data.txt'):
+                    return super().do_GET()
+                out = body(0) if self.mode == 'live' else DEAD_BODY
+                if self.mode in ('cached', 'nodate'):
+                    # send_response_only writes no Date and no Server of
+                    # its own, so this leg controls both: an intermediate
+                    # cache preserves the origin's Date and adds Age, and
+                    # a server that sends no Date at all leaves the page
+                    # its backstop.
+                    self.send_response_only(200)
+                    if self.mode == 'cached':
+                        self.send_header('Date', self.date_time_string(
+                            time.time() - STALE))
+                        self.send_header('Age', str(STALE))
+                else:
+                    self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(out)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(out)
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        MODES = ('live', 'dead', 'cached', 'nodate')
+        servers = {}
+        for mode in MODES:
+            handler = type('Feed_' + mode, (Feed,), {'mode': mode})
+            httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), handler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            servers[mode] = httpd
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'PORTS = %r\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    for mode, port in PORTS:\n'
+            '        page = browser.new_page()\n'
+            '        errors = []\n'
+            "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "        page.goto('http://127.0.0.1:%%d/index.html' %% port)\n"
+            "        page.wait_for_selector('#live-label:not(:empty)', timeout=15000)\n"
+            '        page.wait_for_timeout(500)\n'
+            "        out[mode] = {'errors': errors,\n"
+            "                     'badge': page.inner_text('#live-label')}\n"
+            '        page.close()\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % ([(m, servers[m].server_address[1]) for m in MODES],))
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=180)
+        finally:
+            for httpd in servers.values():
+                httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        for mode in MODES:
+            assert out[mode]['errors'] == [], (mode, out[mode]['errors'])
+        assert out['live']['badge'] == 'LIVE', out['live']['badge']
+        for mode in ('dead', 'cached'):
+            m = re.match(r'^(\d+)s ago$', out[mode]['badge'])
+            assert m is not None, (mode, out[mode]['badge'])
+            assert abs(int(m.group(1)) - STALE) < 60, (mode, out[mode]['badge'])
+        assert out['nodate']['badge'] == 'LIVE', \
+            ('the backstop alone cannot see this failure -- which is what '
+             'the Date header is for', out['nodate']['badge'])
 
     def test_comet_dial_mark_renders_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):

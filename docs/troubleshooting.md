@@ -2,7 +2,7 @@
 title: Troubleshooting
 layout: default
 nav_order: 12
-description: Symptom-first fixes for the Celestial page — the badge's error states, panels showing install hints, missing chips and roster rows, a light theme that did not take, an unstyled page, weewxd refusing to start, and translations that did not take.
+description: Symptom-first fixes for the Celestial page — the badge's error states, a badge that never reads LIVE, panels showing install hints, missing chips and roster rows, a light theme that did not take, an unstyled page, weewxd refusing to start, and translations that did not take.
 ---
 
 # Troubleshooting
@@ -124,6 +124,19 @@ ls -l --time-style=full-iso /home/weewx/public_html/loopdata/loop-data.txt   # y
 If the timestamp is advancing but the page's age is not resetting, the
 browser is being served a cached copy — check for a caching proxy between
 you and the file.
+
+## The badge reads a few seconds and never `LIVE`
+
+A number that stands rather than climbs — `8s ago`, steady, while the
+page plainly updates — means the packets are arriving but each one
+reaches the web server that many seconds after the station wrote it.
+The badge says `LIVE` up to six seconds, and publishing `loop-data.txt`
+costs well under one, so any standing number at all means the publish
+path is in trouble: an rsync running on a schedule instead of on every
+packet, a transfer that cannot finish before the next packet, or a
+station and web server whose clocks disagree.  Check the clocks first —
+the record is stamped by the station and read against the web server's
+clock, so skew between them lands here whatever the transfer is doing.
 
 ## The badge says `CLICK-ME`
 
