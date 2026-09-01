@@ -125,10 +125,15 @@ for the light plate, which is the paper those charts are drawn on.**
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)
-   and install it:
+   and install it.  On a pip install `weectl` lives in the virtual
+   environment, so activate it first; on a Debian or Red Hat package
+   install it is already on the path, and neither needs `sudo`:
 
    ```
+   source ~/weewx-venv/bin/activate                      # pip install
    weectl extension install weewx-celestial.zip
+
+   weectl extension install weewx-celestial.zip          # package install
    ```
 
    The page declares the loop-data fields it reads to weewx-loopdata

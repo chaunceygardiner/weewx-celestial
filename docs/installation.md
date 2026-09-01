@@ -33,11 +33,28 @@ separately.
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases),
-   then:
+   then install it with `weectl`.  On a pip install, `weectl` lives in
+   the virtual environment, so activate that first (yours may sit
+   elsewhere; `~/weewx-venv` is the usual place):
+
+   ```
+   source ~/weewx-venv/bin/activate
+   weectl extension install weewx-celestial.zip
+   ```
+
+   On a Debian or Red Hat package install there is no environment to
+   activate and `weectl` is already on the path:
 
    ```
    weectl extension install weewx-celestial.zip
    ```
+
+   No `sudo`: that install put your account in the `weewx` group, which
+   owns the files.  If you installed WeeWX in this same login session,
+   log out and back in first so the group membership takes effect.
+
+   The rest of this manual writes `weectl` bare; run it whichever of
+   those two ways your station calls for.
 
 1. There is no fields line to edit.  The page declares the loop-data
    fields it reads to weewx-loopdata itself: the fields that never
