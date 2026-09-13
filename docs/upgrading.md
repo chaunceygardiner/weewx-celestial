@@ -23,6 +23,16 @@ skin changes, and no file has to be deleted.  Reload any page you have
 open: the javascript is served with the version in its URL, so a browser
 holding the previous release's copy takes the new one on the next load.
 
+9.3 requires **weewx-skyfield 2.5** if you run it: upgrade weewx-skyfield
+first, since the installer refuses an older one, naming the version it
+found.  Having none at all is not a refusal.  2.5 moves the dome's
+cardinals, ring figures and pass-arc times to the top of the drawing on
+every page, so a star no longer prints over a "30°"; nothing to do, but
+you will see it.  9.3 also adds two keys to a consumer skin's
+`[CelestialFragments]` sets, `narrow_label_scale` and `narrow_media`, for
+one page that serves desktops and phones; a skin that declares neither is
+untouched.
+
 9.1 takes Pluto off the Geocentric dial, so the dial ends at Neptune
 before the jump to Proxima Centauri and the roster loses a row.  The
 bundled skin needs nothing from you: it ships its own field declaration
@@ -90,7 +100,7 @@ the page — static, with `celestial is not defined` in the browser
 console and nothing in the WeeWX log — never goes live either.  Add
 `celestial.js` to it, or drop the line.
 
-Upgrade **weewx-skyfield to 2.4** before you upgrade this: 9.1 is pinned
+Upgrade **weewx-skyfield to 2.5** before you upgrade this: 9.3 is pinned
 to it and the installer refuses an older one.  On 2.3.x the Next Visible
 Pass dot would stand as drawn through a pass instead of going hollow in
 the earth's shadow, and the light theme's accent would disagree with the
@@ -248,7 +258,7 @@ chips and the comets (8.1) included — the fixed ones from the skin, the
 satellite and comet ones written by the installer for your `[Skyfield]`
 sets.  Your old fields line is neither needed nor touched.
 
-Run weewx-skyfield 2.4: 9.1 is pinned to it and the installer refuses an
+Run weewx-skyfield 2.5: 9.3 is pinned to it and the installer refuses an
 older one.  It is what serves the sky dome, the satellite layer, the Next
 Visible Pass chart, the comets and the shower and supermoon chips — the
 sunset, darkness and pass chips are the page's own arithmetic and count
@@ -313,7 +323,7 @@ that through 8.4; it is gone).  The sequence:
 
 1. **Upgrade weewx-loopdata to 7.0 or later** (and install
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.4+ if you have not already).  This extension's installer refuses
+   2.5+ if you have not already).  This extension's installer refuses
    to run beside an older weewx-loopdata, so do it first — before the
    uninstall below leaves you without a page.
 

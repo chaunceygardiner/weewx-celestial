@@ -118,6 +118,7 @@ import datetime
 import functools
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -160,6 +161,36 @@ DEFAULT_PREFIX = 'dome-svg'
 # letters, digits, - _ . -- never a slash, a quote or a leading dot.
 _PLAIN_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
 _DIRECTORY_RE = re.compile(r'%s(/%s)*/?' % (_PLAIN_NAME_RE.pattern, _PLAIN_NAME_RE.pattern))
+
+# What weewx-skyfield 2.5 accepts as a label layer's media query, checked
+# here too so a bad one is refused when [CelestialFragments] is read,
+# naming the set, like every other bad value in that section -- rather
+# than raising inside every dome and chart draw, which leaves the
+# generator writing nothing and the page saying only "could not be
+# drawn".  The query is written into the chart's own <style> inside an
+# SVG inside HTML, where `<` and `&` are markup (so Level 4 range syntax
+# is out), and an unbalanced `(` would swallow every later rule.  A copy
+# of skyfield's rule, held to it by an in-step test that sweeps inputs
+# through both.
+_MEDIA_QUERY_RE = re.compile(r'^[A-Za-z0-9 :(),.-]+$')
+
+
+def _media_query_usable(query: str) -> bool:
+    """Whether weewx-skyfield would accept `query` (already stripped) as a
+    label layer's media query: its characters, and balanced parentheses."""
+    if not _MEDIA_QUERY_RE.match(query):
+        return False
+    depth = 0
+    for ch in query:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
 # The default set's pass fragment keeps the name every 8.x page fetches.
 DEFAULT_PASS_NAME = 'pass-chart.txt'
 
@@ -500,13 +531,27 @@ class FragmentSet(NamedTuple):
     that puts the dome on one page and the chart on another, at
     different label scales, needs a set for each; without `kind` each of
     them would write the other's fragments every cycle for nobody to
-    fetch."""
+    fetch.
+
+    A set may carry a second label scale for narrow screens (9.3):
+    `narrow_label_scale` and `narrow_media`, the CSS media query that
+    selects it -- `(max-width: 600px)` for a phone.  Both go to
+    weewx-skyfield 2.5's `label_layers`, which lays the labels out once
+    per scale INSIDE the one drawing (the collision layout depends on
+    the size, which is why a CSS rescale would not do) and switches
+    layers with a media rule in the chart's own style block; the dots,
+    markers and rings are drawn once, since label_scale reaches only
+    the text.  One fragment serves every screen; nothing is refetched
+    for it.  9.3 requires weewx-skyfield 2.5 (the installer refuses an
+    older one), so the layer goes straight through."""
     name: str
     prefix: str
     label_scale: float
     theme: Optional[str]
     directory: str = ''
     kind: str = 'both'
+    narrow_label_scale: float = 0.0
+    narrow_media: str = ''
 
 
 DEFAULT_SET = FragmentSet('', DEFAULT_PREFIX, 1.0, None)
@@ -592,7 +637,7 @@ def fragment_sets(skin_dict: Any) -> List[FragmentSet]:
             label_scale = float(sub.get('label_scale', 1.0))
         except (TypeError, ValueError):
             label_scale = 0.0
-        if not label_scale > 0:
+        if not (math.isfinite(label_scale) and label_scale > 0):
             # skyfield multiplies every label's size by it: zero or less
             # is a dome with no labels, silently.
             raise ValueError('[CelestialFragments] [[%s]] label_scale = %r is not a positive number'
@@ -614,8 +659,46 @@ def fragment_sets(skin_dict: Any) -> List[FragmentSet]:
         if kind not in ('both', 'dome', 'pass'):
             raise ValueError('[CelestialFragments] [[%s]] kind = %r is not both, dome or pass'
                              % (name, sub.get('kind')))
+        # The narrow-screen label layer: both keys or neither, each judged
+        # here exactly as weewx-skyfield will judge it at draw time (see
+        # _MEDIA_QUERY_RE), so nothing this accepts fails there.  An
+        # unquoted comma is caught first: ConfigObj turns it into a list.
+        # The scale must be a finite positive number that PRINTS
+        # differently from label_scale -- skyfield names a layer by its
+        # scale in %g form, so 1 and 1.0000001 are one layer twice, and it
+        # refuses them.
+        narrow_raw = sub.get('narrow_label_scale', '')
+        media_raw = sub.get('narrow_media', '')
+        if isinstance(media_raw, (list, tuple)):
+            raise ValueError('[CelestialFragments] [[%s]] narrow_media = %r is a list; a media '
+                             'query containing a comma must be quoted' % (name, media_raw))
+        narrow_media = str(media_raw or '').strip()
+        narrow_scale = 0.0
+        if narrow_raw not in ('', None):
+            try:
+                narrow_scale = float(narrow_raw)
+            except (TypeError, ValueError):
+                narrow_scale = 0.0
+            if not (math.isfinite(narrow_scale) and narrow_scale > 0):
+                raise ValueError('[CelestialFragments] [[%s]] narrow_label_scale = %r is not a '
+                                 'positive number' % (name, narrow_raw))
+            if '%g' % narrow_scale == '%g' % label_scale:
+                raise ValueError('[CelestialFragments] [[%s]] narrow_label_scale = %r is the '
+                                 "set's label_scale; a second layer needs a different scale"
+                                 % (name, narrow_raw))
+        if bool(narrow_scale) != bool(narrow_media):
+            raise ValueError('[CelestialFragments] [[%s]] declares %s without %s; the narrow '
+                             'layer takes both, the scale and the media query that selects it'
+                             % (name, 'narrow_label_scale' if narrow_scale else 'narrow_media',
+                                'narrow_media' if narrow_scale else 'narrow_label_scale'))
+        if narrow_media and not _media_query_usable(narrow_media):
+            raise ValueError('[CelestialFragments] [[%s]] narrow_media = %r is not a usable media '
+                             "query: it is written into the chart's own <style>, so it may "
+                             'contain only letters, digits, spaces and : ( ) , . -, with its '
+                             "parentheses balanced -- for example '(max-width: 600px)'"
+                             % (name, media_raw))
         sets.append(FragmentSet(str(name), prefix, label_scale, theme,
-                                directory.rstrip('/'), kind))
+                                directory.rstrip('/'), kind, narrow_scale, narrow_media))
     if not sets:
         return [DEFAULT_SET]
     # Compare the FILES, not the prefixes: dome-svg beside dome-svg-1, or
@@ -1479,6 +1562,18 @@ class CelestialPage:
             self._memo[key] = self._draw_dome(alm, fs, palette)
         return self._memo[key]
 
+    def _label_kwargs(self, fs: FragmentSet) -> Dict[str, Any]:
+        """The label arguments a set passes to a skyfield chart method:
+        `label_scale` always, and `label_layers=[(scale, query)]` for a
+        set with a narrow layer.  9.3 requires weewx-skyfield 2.5, which
+        takes that argument, so there is no fallback: a skyfield
+        downgraded below it after install raises inside the guarded draw
+        like any other skyfield failure, and the log says so."""
+        kwargs: Dict[str, Any] = {'label_scale': fs.label_scale}
+        if fs.narrow_label_scale:
+            kwargs['label_layers'] = [(fs.narrow_label_scale, fs.narrow_media)]
+        return kwargs
+
     @_panel_guard(label='weewx-skyfield dome_svg')
     def _draw_dome(self, alm: Any, fs: FragmentSet, palette: str) -> str:
         """skyfield's dome for the page, '' when it raises (skyfield's own
@@ -1492,7 +1587,7 @@ class CelestialPage:
         sp = self.sky_page
         if sp is None:
             return ''
-        return str(sp.dome_svg(alm, palette=palette, label_scale=fs.label_scale))
+        return str(sp.dome_svg(alm, palette=palette, **self._label_kwargs(fs)))
 
     def _can_draw(self, alm: Any, fs: FragmentSet) -> bool:
         """Whether the sky can be drawn -- the gate the pass panel and both
@@ -1905,7 +2000,8 @@ class CelestialPage:
         ts = int(alm.time_ts) + offset
         if palette is None:
             palette = self.palette(alm, fs)
-        svg = sp.dome_svg(alm(almanac_time=ts), palette=palette, label_scale=fs.label_scale)
+        svg = sp.dome_svg(alm(almanac_time=ts), palette=palette,
+                          **self._label_kwargs(fs))
         return self._dome_wrapper(alm, ts, k, step, count, interval, palette, svg)
 
     def pass_fragment(self, alm: Any, fs: FragmentSet = DEFAULT_SET,
@@ -1923,7 +2019,8 @@ class CelestialPage:
             return ''
         if palette is None:
             palette = self.palette(alm, fs)
-        chart = str(sp.pass_chart_html(alm, palette=palette, label_scale=fs.label_scale))
+        chart = str(sp.pass_chart_html(alm, palette=palette,
+                                       **self._label_kwargs(fs)))
         # Wrapped like a dome fragment: the set's plate, which celestial.css
         # styles the chart's labels by, and the report's theme, which the
         # javascript checks for a flip -- so a chart refetched across

@@ -20,13 +20,13 @@ separately.
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    7.0 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.4 or later, both per their instructions, in that order.
+   2.5 or later, both per their instructions, in that order.
    weewx-loopdata **must** come first: this extension's installer refuses
    to run beside an older weewx-loopdata, or none, because the page's
    live values reach it only through 7.0's per-report field declaration
    (below), and an older weewx-loopdata never reads one — the page would
    say `BAD DATA` for ever with nothing in any log to explain it.  It
-   refuses a weewx-skyfield older than 2.4 as well, which 9.1 is pinned
+   refuses a weewx-skyfield older than 2.5 as well, which 9.3 is pinned
    to; having no weewx-skyfield at all is not a refusal.
    weewx-skyfield's installer configures its default satellites — the ISS
    and Tiangong — and its default comets — Halley and Hale-Bopp — which

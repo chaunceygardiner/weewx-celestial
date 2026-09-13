@@ -100,19 +100,24 @@ def loader():
         # own charts about brass -- neither says anything in any log.  So
         # a skyfield that IS there and is too old refuses, here, where the
         # user is reading.  Gated on installing() for the same reason as
-        # the weewx-loopdata check above.
+        # the weewx-loopdata check above.  9.3 raises the floor to 2.5: a
+        # fragment set's narrow label layer is drawn by 2.5's
+        # label_layers, and keeping an older skyfield working would mean a
+        # fallback that logs on every report cycle, on exactly the station
+        # that should upgrade.
         try:
             from user.wxskyfield import WXSKYFIELD_VERSION
         except Exception:
             WXSKYFIELD_VERSION = None      # absent, or broken: not ours to judge
         if (WXSKYFIELD_VERSION is not None
-                and version_compare(str(WXSKYFIELD_VERSION), '2.4') < 0):
-            sys.exit("weewx-celestial 9.1 requires weewx-skyfield 2.4 or later, "
+                and version_compare(str(WXSKYFIELD_VERSION), '2.5') < 0):
+            sys.exit("weewx-celestial requires weewx-skyfield 2.5 or later, "
                      "found %s.  Upgrade weewx-skyfield first, then install "
                      "weewx-celestial.  (weewx-skyfield is optional -- the page "
-                     "renders without it -- but an older one is no longer kept "
-                     "in step: the Next Visible Pass dot would not flip and the "
-                     "light theme's accent would disagree with the charts.)"
+                     "renders without it -- but an older one is not kept in "
+                     "step: a skin's narrow label layers need 2.5, and before "
+                     "2.4 the Next Visible Pass dot would not flip and the light "
+                     "theme's accent would disagree with the charts.)"
                      % WXSKYFIELD_VERSION)
 
     return CelestialInstaller()
@@ -196,7 +201,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.2",
+            version = "9.3",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

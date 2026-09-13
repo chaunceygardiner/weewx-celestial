@@ -288,6 +288,8 @@ directory — declares them:
 | `theme` | `dark`, `light` or `auto`, spelled exactly as the report option is; default the report's own.  A set on a plate of its own is drawn on that plate and keeps its own label colors — that is how a night dome sits inside a light page |
 | `directory` | Where under `HTML_ROOT` the set is written; default `HTML_ROOT` itself.  A plain relative path — no leading slash, nothing that could leave `HTML_ROOT` |
 | `kind` | Which fragments the set is for: `dome` (the ten backdrops), `pass` (the chart) or `both`, the default.  A skin with the dome on one page and the chart on another, at different label scales, wants a set for each — and without this each writes the other's files every cycle for a page that never asks.  A call for the panel a set does not write is **refused**, with the line below and the reason in the log, rather than pointed at a file nothing will ever write |
+| `narrow_label_scale` | A second label scale for narrow screens (9.3, weewx-skyfield 2.5): the labels are laid out again at this scale inside the same drawing and a media rule in the chart's own style block picks the layout.  With `narrow_media`, or neither; positive; not the set's `label_scale` |
+| `narrow_media` | The query that selects the narrow layout, `"(max-width: 600px)"`, **quoted**; only letters, digits, spaces and `: ( ) , . -`, parentheses balanced, since it is written into the chart's own style block |
 
 The page then names the set it embeds, and gets that set's scale, plate
 and file names in one:
@@ -297,10 +299,37 @@ and file names in one:
     $celestial.pass_html($almanac, set='astro')
 ```
 
-A skin with two label scales chooses its set per page rather than naming
-one literally, and `set=` takes a Cheetah variable — **unquoted**, since
-Cheetah does not interpolate inside a quoted string.  `set='$dome_set'`
-passes the literal text `$dome_set`; what that case wants is:
+A skin with two label scales for two screen sizes — a desktop column
+and a phone — does not need two sets or two pages.  Give the set a
+narrow layer:
+
+```
+[CelestialFragments]
+    [[stars]]
+        label_scale = 0.8
+        narrow_label_scale = 2.2
+        narrow_media = "(max-width: 600px)"
+```
+
+```
+    $celestial.dome_html($almanac, set='stars')
+```
+
+Every backdrop and chart the set writes then carries both label layouts
+— weewx-skyfield lays the labels out once per scale, because the
+collision layout depends on the size, which is why a CSS rescale would
+not do — and a media rule inside the chart's own style block shows the
+one the viewer's width calls for.  A phone paints its own labels at
+first paint; nothing is fetched that a desktop does not fetch.  The
+scale reaches only the text: dots, markers and rings are drawn once.
+Hold the query in `skin.conf` to the breakpoint in your stylesheet with a
+test of your own; the browser cannot report a mistyped query, it simply
+never matches.  The keys need weewx-skyfield 2.5, which 9.3 requires.
+
+A skin may still choose its set per page if it wants to, and `set=`
+takes a Cheetah variable — **unquoted**, since Cheetah does not
+interpolate inside a quoted string.  `set='$dome_set'` passes the literal
+text `$dome_set`; what that case wants is:
 
 ```
     #set $dome_set = 'stars_sp' if $smartphone else 'stars'
@@ -585,7 +614,12 @@ surface is **additive only**: the DOM ids, the config keys, the fragment
 wrapper's data-attributes, the field group names, the
 `[CelestialFragments]` keys, the `celestial.css` token names and the
 public call signatures above never change meaning or disappear.  A panel
-may gain marks, keys and classes; `changes.txt` names each one.
+may gain marks, keys and classes; `changes.txt` names each one.  9.3
+added two optional set keys, `narrow_label_scale` and `narrow_media`,
+and nothing on the page's own markup; the label layers inside a chart
+(`g.dome-labels`, `data-label-scale`, and `data-label-layers` and
+`data-label-media` on the svg root) are weewx-skyfield 2.5's contract,
+documented there.
 
 What is **not** contract: the internals of `celestial.js`, the shape of
 the SVG the dial builds, and the roster's inner spans.  A page that

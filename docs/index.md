@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **9.2**, the current release.
+This manual documents weewx-celestial **9.3**, the current release.
 
 ## Start here
 
@@ -211,7 +211,7 @@ What installs:
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.4 everything, and less at each tier below it, down to
+weewx-skyfield 2.5 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -232,7 +232,7 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
   7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-  **2.4 or later** if you run it at all — 9.1 is pinned to it and the
+  **2.5 or later** if you run it at all — 9.3 is pinned to it and the
   installer refuses an older one.  It is what the sky dome, the Next
   Visible Pass chart, the comets, the meteor showers, the full countdown
   row and Proxima Centauri all come from, so without it the page is the

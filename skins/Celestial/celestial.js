@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.2';
+  var CELESTIAL_JS_VERSION = '9.3';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -863,6 +863,16 @@ var celestial = (function () {
     var wrap = document.getElementById('dome-svg');
     return wrap === null ? null : wrap.querySelector('svg');
   }
+  // A mark's labels, plural: weewx-skyfield 2.5 lays the labels out once
+  // per label scale inside the one chart (a layer per scale, one shown
+  // by a media rule in the chart's own style), so a body's label is one
+  // element per layer, and every copy must move with its mark -- the
+  // hidden layer becomes the visible one the moment the viewer turns a
+  // phone.  On an older chart the array holds one.
+  function labelsFor(svg, key) {
+    return Array.prototype.slice.call(
+      svg.querySelectorAll('text[data-body="' + key + '"]'));
+  }
   function hasKey(key) {
     return latest !== null && Object.prototype.hasOwnProperty.call(latest, key);
   }
@@ -900,7 +910,7 @@ var celestial = (function () {
         return;
       }
       domeBase[key] = {g: g,
-                       lab: svg.querySelector('text[data-body="' + key + '"]'),
+                       labs: labelsFor(svg, key),
                        x: parseFloat(c.getAttribute('cx')),
                        y: parseFloat(c.getAttribute('cy'))};
     });
@@ -994,17 +1004,15 @@ var celestial = (function () {
       if (altNow <= 0) {
         // Set since generation: hide rather than pin to the rim.
         setShown(b.g, false);
-        setShown(b.lab, false);
+        b.labs.forEach(function(l) { setShown(l, false); });
         return;
       }
       setShown(b.g, true);
-      setShown(b.lab, true);
+      b.labs.forEach(function(l) { setShown(l, true); });
       var p = domeXY(azNow, altNow);
       var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
       b.g.setAttribute('transform', tr);
-      if (b.lab !== null) {
-        b.lab.setAttribute('transform', tr);
-      }
+      b.labs.forEach(function(l) { l.setAttribute('transform', tr); });
     });
     renderSats(svg);
   }
@@ -1255,10 +1263,7 @@ var celestial = (function () {
       if (stat !== null) {
         stat.setAttribute('display', 'none');
       }
-      var statLab = svg.querySelector('text[data-body="' + name + '"]');
-      if (statLab !== null) {
-        statLab.setAttribute('display', 'none');
-      }
+      labelsFor(svg, name).forEach(function(l) { l.setAttribute('display', 'none'); });
       if (m === undefined) {
         return;
       }
@@ -2197,7 +2202,7 @@ var celestial = (function () {
     }
     var ds = g.getAttribute('data-sunlit');
     passBase = {tag: tag, g: g, c: c,
-                lab: svg.querySelector('text[data-body="' + tag + '"]'),
+                labs: labelsFor(svg, tag),
                 x: parseFloat(c.getAttribute('cx')),
                 y: parseFloat(c.getAttribute('cy')),
                 cls: c.getAttribute('class'),
@@ -2294,7 +2299,7 @@ var celestial = (function () {
       b.asDrawn = false;
     }
     setShown(b.g, shown);
-    setShown(b.lab, shown);
+    b.labs.forEach(function(l) { setShown(l, shown); });
   }
   function passStandsAsDrawn(b) {
     // The chart is a prediction: the dot at its generated position, in
@@ -2314,9 +2319,7 @@ var celestial = (function () {
     b.asDrawn = true;
     b.g.removeAttribute('transform');
     passDotLit(b, b.genLit);
-    if (b.lab !== null) {
-      b.lab.removeAttribute('transform');
-    }
+    b.labs.forEach(function(l) { l.removeAttribute('transform'); });
     passMarkShown(b, true);
   }
   function passDotLit(b, lit) {
@@ -2457,9 +2460,7 @@ var celestial = (function () {
     // passStandsAsDrawn, which needs to know it has work to do.
     b.asDrawn = false;
     b.g.setAttribute('transform', tr);
-    if (b.lab !== null) {
-      b.lab.setAttribute('transform', tr);
-    }
+    b.labs.forEach(function(l) { l.setAttribute('transform', tr); });
   }
   function refreshPass() {
     if (pageTimedOut) {

@@ -173,6 +173,13 @@ but the open page keeps them current by refetching small fragments:
   the next chart shows the finished arc without a satellite on it, rather
   than a mark parked somewhere it no longer is.
 
+A skin that serves phones from the same page as desktops gives its
+fragment set a narrow label layer (see
+[`[CelestialFragments]`](configuration.md#panels-in-another-skin)); the
+backdrops and the chart then carry two label layouts and the browser
+shows the one its width calls for.  Nothing about the refetching above
+changes: the same files, at the same cadence, on every screen.
+
 Satellites are the exception to all of this: their markers move at loop
 rates, continuously, because they are the one class of thing overhead
 that genuinely moves fast.

@@ -6112,6 +6112,112 @@ class TestFragmentGenerator:
                 'p': {'prefix': 'sky', 'kind': 'pass'}}})
         assert 'both use prefix = sky' in str(e.value)
 
+    def test_a_narrow_label_layer_is_declared_on_the_set(self):
+        """A set may carry a second label scale for narrow screens (9.3):
+        narrow_label_scale and narrow_media, both or neither; the scale
+        positive and not the set's own label_scale (one layout twice);
+        the query taken as written -- skyfield judges it -- except that
+        an unquoted comma, which ConfigObj turns into a list, is refused
+        naming the key.  Absent, the set is exactly what it was."""
+        sets = celestial_page.fragment_sets({'CelestialFragments': {
+            'stars': {'prefix': 'dome-svg', 'label_scale': '0.8', 'kind': 'dome',
+                      'narrow_label_scale': '2.2', 'narrow_media': ' (max-width: 600px) '},
+            'plain': {'prefix': 'plain'}}})
+        assert sets[0].narrow_label_scale == 2.2 and sets[0].narrow_media == '(max-width: 600px)'
+        assert sets[1].narrow_label_scale == 0.0 and sets[1].narrow_media == ''
+        assert celestial_page.DEFAULT_SET.narrow_label_scale == 0.0
+        assert celestial_page.DEFAULT_SET.narrow_media == ''
+        bad = {
+            'declares narrow_label_scale without narrow_media': {'narrow_label_scale': '2.2'},
+            'declares narrow_media without narrow_label_scale': {'narrow_media': '(max-width: 600px)'},
+            'narrow_label_scale = \'huge\' is not a positive number': {
+                'narrow_label_scale': 'huge', 'narrow_media': '(max-width: 600px)'},
+            'narrow_label_scale = \'0\' is not a positive number': {
+                'narrow_label_scale': '0', 'narrow_media': '(max-width: 600px)'},
+            "narrow_label_scale = '1.0' is the set's label_scale": {
+                'narrow_label_scale': '1.0', 'narrow_media': '(max-width: 600px)'},
+            'narrow_media = [\'(max-width: 600px)\', \'print\'] is a list': {
+                'narrow_label_scale': '2.2', 'narrow_media': ['(max-width: 600px)', 'print']},
+            # What weewx-skyfield would refuse at every draw, refused here
+            # instead: an infinite scale, a scale that PRINTS as the base
+            # (skyfield names layers by %g), Level 4 range syntax, and an
+            # unclosed parenthesis.
+            'narrow_label_scale = \'inf\' is not a positive number': {
+                'narrow_label_scale': 'inf', 'narrow_media': '(max-width: 600px)'},
+            "narrow_label_scale = '1.0000001' is the set's label_scale": {
+                'narrow_label_scale': '1.0000001', 'narrow_media': '(max-width: 600px)'},
+            "narrow_media = '(width < 600px)' is not a usable media query": {
+                'narrow_label_scale': '2.2', 'narrow_media': '(width < 600px)'},
+            "narrow_media = '(max-width: 600px' is not a usable media query": {
+                'narrow_label_scale': '2.2', 'narrow_media': '(max-width: 600px'},
+        }
+        for why, keys in bad.items():
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': {'s': dict(keys)}})
+            assert '[[s]]' in str(e.value) and why in str(e.value), (why, str(e.value))
+        # An empty media string is unset, as it is for every other key.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {
+                's': {'narrow_label_scale': '2.2', 'narrow_media': '  '}}})
+        assert 'without narrow_media' in str(e.value)
+        # And label_scale itself: infinity is not a scale skyfield draws.
+        with pytest.raises(ValueError) as e:
+            celestial_page.fragment_sets({'CelestialFragments': {'s': {'label_scale': 'inf'}}})
+        assert "[[s]] label_scale = 'inf' is not a positive number" in str(e.value)
+        # A query skyfield accepts is accepted here, compound forms too.
+        for ok in ('(max-width: 600px)', 'screen and (max-width: 37.5em)',
+                   '(min-width: 400px) and (max-width: 600px)', 'not print'):
+            assert celestial_page.fragment_sets({'CelestialFragments': {
+                's': {'narrow_label_scale': '2.2', 'narrow_media': ok}}})[0].narrow_media == ok
+
+    def test_narrow_layer_checks_agree_with_skyfield(self):
+        """celestial refuses a narrow layer exactly when weewx-skyfield's
+        own validator would, swept over the inputs rather than sampled:
+        every printable character appended to a good query and set
+        inside parentheses, every string of up to four parentheses and
+        spaces, and scales around the base including ones that print
+        alike, non-finite and non-numeric.  A rule skyfield adds (as it
+        added balanced parentheses) and celestial lacks fails here, not
+        on a station as a panel that could not be drawn.  Skips without
+        a sibling skyfield that has label layers."""
+        import itertools
+        import string
+        load_wxskyfield()
+        import wxskyfield_sky as sky
+        if not hasattr(sky, '_label_layers'):
+            pytest.skip('the sibling weewx-skyfield has no label layers yet')
+
+        def skyfield_ok(base, scale, query):
+            try:
+                sky._label_layers(base, [(scale, query)])
+            except sky.SkyPageUsageError:
+                return False
+            return True
+
+        def celestial_ok(base, scale, query):
+            try:
+                celestial_page.fragment_sets({'CelestialFragments': {'s': {
+                    'label_scale': base, 'narrow_label_scale': scale,
+                    'narrow_media': query}}})
+            except ValueError:
+                return False
+            return True
+
+        queries = ['(max-width: 600px)' + ch for ch in string.printable]
+        queries += ['(' + ch + ')' for ch in string.printable]
+        queries += [''.join(p) for n in range(1, 5) for p in itertools.product('() ', repeat=n)]
+        scales = ['2.2', '0.8', '0.80000001', '0.8000001', '1', 'inf', '-inf', 'nan',
+                  '1e400', '-1', '0', 'big']
+        disagree = []
+        for q in queries:
+            if celestial_ok('0.8', '2.2', q) != skyfield_ok('0.8', '2.2', q):
+                disagree.append(('query', q))
+        for sc in scales:
+            if celestial_ok('0.8', sc, '(max-width: 600px)') != \
+                    skyfield_ok('0.8', sc, '(max-width: 600px)'):
+                disagree.append(('scale', sc))
+        assert disagree == [], disagree
+
 
     def test_generator_writes_every_declared_set(self, wxskyfield_sat_almanac, tmp_path):
         """Two sets, one on a plate of its own: twenty-two files, each
@@ -7610,6 +7716,192 @@ class TestPanels:
         skin_dict = {'Extras': {'loop_data_file': 'loop.txt'}, 'lang': 'en',
                      'REPORT_NAME': REPORT_NAME, 'CelestialFragments': sets}
         return celestial_page.CelestialPage(skin_dict, sky_page, interval_s)
+
+    def test_the_script_moves_every_layer_of_a_label(self):
+        """weewx-skyfield 2.5 draws a label once per label layer, so a
+        mark's label is one <text data-body> per layer and every copy
+        must move with the mark: the three sites that find a label by
+        its data-body read them all (labelsFor, querySelectorAll), never
+        the first.  Source-pinned here; the browser test with layered
+        fragments proves the motion."""
+        js = open(JS_PATH, encoding='utf-8').read()
+        code = '\n'.join(l for l in js.split('\n') if not l.lstrip().startswith('//'))
+        assert "querySelector('text[data-body" not in code, 'a label read takes the first copy'
+        assert code.count('labelsFor(svg, ') == 3 + 1, code.count('labelsFor(svg, ')   # + the definition
+        assert 'svg.querySelectorAll(\'text[data-body="\' + key + \'"]\')' in code
+        # The baseline records (b.*) hold every layer; the dial's and the
+        # live satellites' own labels (m.lab) are drawn by the script,
+        # one each, and are not skyfield's.
+        assert not re.search(r'\bb\.lab\b', code), 'a baseline still holds one label'
+
+    def test_a_narrow_layer_reaches_skyfield(self, wxskyfield_sat_almanac):
+        """The narrow layer goes to weewx-skyfield as label_layers on the
+        dome AND the chart, page and fragments alike; a set without a
+        layer passes no label_layers at all.  9.3 requires skyfield 2.5,
+        so there is no probe and no fallback to test."""
+        calls = []
+
+        class Sky:
+            def can_draw(self):
+                return True
+
+            def dome_svg(self, alm, palette='night', label_scale=1.0, label_layers=None):
+                calls.append(('dome_svg', label_scale, label_layers))
+                return '<svg>%s</svg>' % label_layers
+
+            def pass_chart_html(self, alm, palette='night', label_scale=1.0, label_layers=None):
+                calls.append(('pass_chart_html', label_scale, label_layers))
+                return '<svg>%s</svg>' % label_layers
+
+            def theme(self):
+                return 'dark'
+
+        sets = {'stars': {'prefix': 'dome-svg', 'label_scale': 0.8,
+                          'narrow_label_scale': 2.2, 'narrow_media': '(max-width: 600px)'},
+                'plain': {'prefix': 'plain', 'label_scale': 1.35}}
+        alm = wxskyfield_sat_almanac
+        page = self.sets_page(Sky(), sets, interval_s=300)
+        page.dome_html(alm, set='stars')
+        page.pass_html(alm, set='stars')
+        page.dome_fragment(alm, 3, 300, page._set('stars', 't'))
+        page.pass_fragment(alm, page._set('stars', 't'))
+        assert calls == [('dome_svg', 0.8, [(2.2, '(max-width: 600px)')]),
+                         ('pass_chart_html', 0.8, [(2.2, '(max-width: 600px)')]),
+                         ('dome_svg', 0.8, [(2.2, '(max-width: 600px)')]),
+                         ('pass_chart_html', 0.8, [(2.2, '(max-width: 600px)')])], calls
+        del calls[:]
+        page.dome_html(alm, set='plain')
+        page.pass_html(alm, set='plain')
+        assert calls == [('dome_svg', 1.35, None), ('pass_chart_html', 1.35, None)], calls
+
+    def test_a_narrow_layer_shows_by_width_and_moves_with_its_mark_in_a_real_browser(
+            self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
+        """One page, two screens, one fragment set (9.3 with weewx-skyfield
+        2.5).  The dome and the chart carry two label layouts -- the
+        set's own scale and its narrow one -- and the browser shows the
+        one its width calls for: at 1200 px the 0.8 layer alone, at 390
+        px the 2.2 layer alone, on both charts, and turning the one page
+        from one to the other swaps layers with NOTHING fetched, since
+        no second set exists.  A body nudged by the live layer carries
+        the same transform on its mark and on EVERY layer's label, so the
+        hidden layout is right the moment it becomes the visible one.
+        Skips when the playwright env is absent, or when the sibling
+        skyfield has no label layers."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        sky_page = make_sky_page()
+        import inspect as inspectlib
+        if 'label_layers' not in inspectlib.signature(sky_page.dome_svg).parameters:
+            pytest.skip('the sibling weewx-skyfield has no label layers yet')
+
+        alm = wxskyfield_sat_almanac
+        sets = {'stars': {'prefix': 'dome-svg', 'label_scale': 0.8,
+                          'narrow_label_scale': 2.2, 'narrow_media': '(max-width: 600px)'}}
+        page = self.sets_page(sky_page, sets, interval_s=300)
+        html = ('<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width">'
+                '<script src="celestial.js"></script></head><body>%s'
+                '<section>%s</section><section id="pass-sec">%s</section></body></html>'
+                % (page.config_script(alm), page.dome_html(alm, set='stars'),
+                   page.pass_html(alm, set='stars')))
+        # The root attribute on each chart (the same string also appears
+        # in skyfield's scoped rules, which are keyed on it).
+        assert len(re.findall(r'<svg[^>]*data-label-layers="0.8 2.2"', html)) == 2, \
+            'both charts carry the layer set'
+        assert html.count('class="dome-labels" data-label-scale="0.8"') == 2
+        assert html.count('class="dome-labels" data-label-scale="2.2"') == 2
+        assert 'data-dome-alt' not in html and 'data-pass-alt' not in html
+        (tmp_path / 'index.html').write_text(html, encoding='utf-8')
+        fs = page._set('stars', 't')
+        domes, pass_name = celestial_page.fragment_names(fs)
+        for k, name in enumerate(domes):
+            (tmp_path / name).write_text(page.dome_fragment(alm, k, 300, fs), encoding='utf-8')
+        (tmp_path / pass_name).write_text(page.pass_fragment(alm, fs), encoding='utf-8')
+        # One packet with every body's live position, stamped ten seconds
+        # after the page's instant: the walk's want is the slot the page
+        # holds (nothing to fetch) and the nudge has positions to move to.
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            packet = sat_feed_packets(TIME_TS + 10)[0]
+        (tmp_path / 'loop.txt').write_bytes(packet)
+        write_assets(tmp_path)          # the shipped build
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'URL = "http://127.0.0.1:%d/index.html"\n'
+            'PROBE = """() => {\n'
+            '  const layers = root => Array.from(document.querySelectorAll(root + " g.dome-labels"))\n'
+            '      .map(g => [g.getAttribute("data-label-scale"), getComputedStyle(g).display]);\n'
+            '  const moved = Array.from(document.querySelectorAll("#dome-svg g.dome-body[transform]"));\n'
+            '  const nudge = moved.map(g => {\n'
+            '    const key = g.getAttribute("data-body");\n'
+            '    const labs = Array.from(document.querySelectorAll(\'#dome-svg text[data-body="\' + key + \'"]\'));\n'
+            '    return [key, g.getAttribute("transform"), labs.map(t => t.getAttribute("transform"))];\n'
+            '  });\n'
+            '  return {dome: layers("#dome-svg"), pass: layers("#pass-chart"), nudge: nudge};\n'
+            '}"""\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    for name, w in (("desktop", 1200), ("phone", 390)):\n'
+            '        page = browser.new_page(viewport={"width": w, "height": 800})\n'
+            '        errors, fetched = [], []\n'
+            "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "        page.on('response', lambda r: fetched.append(r.url.split('/')[-1].split('?')[0]) if '.txt' in r.url and 'loop' not in r.url else None)\n"
+            '        page.goto(URL)\n'
+            '        page.wait_for_timeout(3000)\n'
+            '        leg = {"errors": errors, "fetched": fetched, "before": page.evaluate(PROBE)}\n'
+            '        page.set_viewport_size({"width": 1590 - w, "height": 800})\n'
+            '        page.wait_for_timeout(1500)\n'
+            '        leg["after"] = page.evaluate(PROBE)\n'
+            '        out[name] = leg\n'
+            '        page.close()\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=240)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        wide = [['0.8', 'inline'], ['2.2', 'none']]
+        narrow = [['0.8', 'none'], ['2.2', 'inline']]
+        for name, first, then in (('desktop', wide, narrow), ('phone', narrow, wide)):
+            leg = out[name]
+            assert leg['errors'] == [], (name, leg['errors'])
+            # Nothing fetched, on either screen or on the turn: the one
+            # set's files are the ones the page already holds.
+            assert leg['fetched'] == [], (name, leg['fetched'])
+            assert leg['before']['dome'] == first and leg['before']['pass'] == first, leg['before']
+            assert leg['after']['dome'] == then and leg['after']['pass'] == then, leg['after']
+            # The first packet nudged the bodies above the horizon (the
+            # sun at noon among them); every layer's label rode along.
+            nudge = leg['before']['nudge']
+            assert nudge and any(key == 'sun' for key, _, _ in nudge), nudge
+            for key, tr, labs in nudge:
+                assert tr.startswith('translate('), (key, tr)
+                assert len(labs) == 2 and labs == [tr, tr], (key, tr, labs)
 
     def test_dome_and_pass_panels_first_paint_the_set_they_name(self, wxskyfield_sat_almanac):
         """A page names the fragment set it embeds and gets that set's
@@ -11785,28 +12077,27 @@ class TestInstallerLoader:
         assert 'weewx-loopdata 7.0 or later' in message
         assert 'none is installed' in message
 
-    # ---- the weewx-skyfield 2.4 floor (9.1) ----------------------------
+    # ---- the weewx-skyfield 2.5 floor (9.3) ----------------------------
     #
     # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or the
-    # built-in almanac -- so ABSENCE must not refuse.  But 9.1 is pinned
-    # to 2.4: the pass dot flips by exchanging the role classes 2.4
-    # introduced, and the light plate's brass is 2.4's value.  On an
-    # older one the dot silently stands as drawn and the paper page
-    # disagrees with its own charts, neither of which says anything in
-    # any log -- so a skyfield that IS there and is too old refuses.
+    # built-in almanac -- so ABSENCE must not refuse.  But 9.3 is pinned
+    # to 2.5, whose label_layers draw a set's narrow label scale (9.1
+    # pinned 2.4 for the pass dot's role classes and the light plate's
+    # brass; 2.5 carries both).  A skyfield that IS there and is too old
+    # refuses, rather than a fallback logging on every report cycle.
 
-    @pytest.mark.parametrize('version', ['2.4', '2.4.1', '2.5', '3.0', '2.4a1', '2.4b1'])
-    def test_loads_with_skyfield_2_4(self, monkeypatch, version):
+    @pytest.mark.parametrize('version', ['2.5', '2.5.1', '2.6', '3.0', '2.5a1', '2.5b1'])
+    def test_loads_with_skyfield_2_5(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
         monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
         assert load_installer().loader()['name'] == 'celestial'
 
-    # '2.4b1' is NOT here: WeeWX's version_compare reads a dev build of
-    # 2.4 as 2.4, exactly as the weewx-loopdata floor above reads
+    # '2.5b1' is NOT here: WeeWX's version_compare reads a dev build of
+    # 2.5 as 2.5, exactly as the weewx-loopdata floor above reads
     # '7.0a1' as 7.0.  A pre-release of the version BELOW the floor
-    # ('2.3.9b1') is what must refuse.
-    @pytest.mark.parametrize('version', ['2.3.5', '2.3.4', '2.1', '1.16', '2.3.9b1'])
+    # ('2.4.9b1') is what must refuse.
+    @pytest.mark.parametrize('version', ['2.4', '2.4.1', '2.3.5', '2.1', '1.16', '2.4.9b1'])
     def test_refuses_an_older_skyfield(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
@@ -11814,7 +12105,7 @@ class TestInstallerLoader:
         with pytest.raises(SystemExit) as info:
             load_installer().loader()
         message = str(info.value)
-        assert 'weewx-skyfield 2.4 or later' in message
+        assert 'weewx-skyfield 2.5 or later' in message
         assert 'found %s' % version in message
 
     def test_no_skyfield_at_all_still_installs(self, monkeypatch):

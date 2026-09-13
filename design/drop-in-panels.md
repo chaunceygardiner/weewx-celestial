@@ -817,3 +817,49 @@ kept so the reasons are not lost.
 
 Nothing else in this document is open.  The next thing to do is step 1
 of the sequencing above.
+
+## 9.3 addendum: one page, every screen
+
+Liveseasons' one-URL pages (its `design/one-url-pages.md`) dropped the
+`*_smartphone.html` twins, which left the dome and the pass chart as the
+one piece CSS alone could not serve: skyfield sizes and places labels at
+render time, so a phone needs its own label layout.  Two designs were
+tried on 2026-09-12:
+
+- First, VARIANT FRAGMENT SETS here: a second set per screen, the page
+  refetching the other set's files by matchMedia, with a fetch state
+  machine (owed, fallen back, in-flight hook, reply identity) that six
+  medium code-review rounds kept finding edges in.  Abandoned on the
+  sixth round's finding that the deeper change belongs in skyfield:
+  `label_scale` reaches only the text (dots, markers, rings, gradient
+  and viewBox are the same at every scale -- verified in the code and
+  by liveseasons on bambi's served files, 806 identical circles), and
+  the labels are ~8 KB of a 147 KB dome fragment.
+- Then LABEL LAYERS in weewx-skyfield 2.5, the design ruled: the chart
+  methods take `label_layers=[(scale, media_query), ...]`, the label
+  pass runs once per scale into `<g class="dome-labels"
+  data-label-scale>` groups (the base too, one emission path), the svg
+  root carries `data-label-layers` (and, with an extra layer,
+  `data-label-media`, a digest of its queries), and skyfield's scoped
+  <style> switches layers under the query, scoped to both so two
+  same-plate charts with different scales or queries on one page cannot
+  switch each other's labels.  Celestial's whole contribution is two set keys
+  (`narrow_label_scale`, `narrow_media`) passed straight through --
+  9.3 requires skyfield 2.5, since a fallback for an older one would
+  log on every report cycle on exactly the station that should upgrade
+  -- and three script sites that move every layer's label with
+  its mark.  Nothing is refetched; no markup of celestial's changes.
+  Visible on every page: skyfield moves the cardinals, ring figures and
+  track times to the top of the drawing.
+
+The lesson, recorded here so it is not re-learned: the liveseasons
+proposal rejected a CSS rescale because "it moves the collisions", and
+the collision layout is skyfield's knowledge -- the answer was to ask
+skyfield to lay the labels out twice in the file, not to fetch a second
+file that carries the same marks again.  Put the change where the
+knowledge lives.  Measured while the variant design lived, and still
+true: `matchMedia('')` matches ALWAYS, `'(max-width 600px'` is a
+never-true query rather than an error, and `'foo bar'` serializes as
+`'not all'` -- a browser cannot report a mistyped query, so a consumer's
+in-step test of its query against its stylesheet's breakpoint is the
+defense.

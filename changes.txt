@@ -1,6 +1,34 @@
 weewx-celestial change history
 ------------------------------
 
+9.3 2026/09/12
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.5 first.
+  9.3 is pinned to 2.5, whose label layers draw the narrow label scale
+  below.  The installer REFUSES to install beside an older
+  weewx-skyfield, naming the version it found.  Having none at all is
+  not a refusal -- the page still renders on PyEphem or the built-in
+  almanac, with less on it.
+
+- A fragment set may carry a second label scale for narrow screens, so
+  that one page serves desktops and phones: two new keys on a set in a
+  consumer skin's [CelestialFragments], `narrow_label_scale` and
+  `narrow_media` (the CSS media query that selects it, quoted).  They
+  go to weewx-skyfield 2.5's label_layers, which lays the chart's
+  labels out once per scale INSIDE the one drawing -- the collision
+  layout depends on the size, which is why a CSS rescale would not do
+  -- and switches layouts with a media rule in the chart's own style
+  block.  The dots, markers and rings are drawn once, since the scale
+  reaches only the text.  A phone paints its own labels at first paint;
+  nothing is fetched that a desktop does not fetch, and nothing on the
+  page's own markup changes.  Nothing changes for a skin that declares
+  neither key, and the bundled page declares none.  celestial.js moves
+  every layer's copy of a label with its mark, so the nudged bodies and
+  the pass sweep are right on whichever layer is showing.  Visible with
+  weewx-skyfield 2.5 on every page, phone or not: the cardinals, ring
+  figures and pass-arc times are drawn on top of the stars, where
+  through 2.4 a star dot could print over a ring figure.
+
 9.2 2026/09/10
 --------------
 - ACTION REQUIRED: the time_zone option is gone.  Every time on the page

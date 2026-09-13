@@ -265,17 +265,17 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.4** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
-| **weewx-skyfield 2.4**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
+| **weewx-skyfield 2.5** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.5**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |
 
-**Older than 2.4 is not a tier.**  9.1 is pinned to weewx-skyfield 2.4 and
-the installer refuses an older one, naming the version it found: the light
-plate's brass is 2.4's value, and the Next Visible Pass chart's sunlit dot
-flips by exchanging the role classes 2.4 introduced, so on an older chart it
-would simply stand as drawn through a pass.  Having no weewx-skyfield at all
-is not a refusal — that is the PyEphem or built-in row above.
+**Older than 2.5 is not a tier.**  9.3 is pinned to weewx-skyfield 2.5 and
+the installer refuses an older one, naming the version it found: a fragment
+set's narrow label layer is drawn by 2.5, the light plate's brass is 2.4's
+value, and the Next Visible Pass chart's sunlit dot flips by exchanging the
+role classes 2.4 introduced.  Having no weewx-skyfield at all is not a
+refusal — that is the PyEphem or built-in row above.
 
 The plate follows the same shape.  `theme` is read by weewx-skyfield, and
 the light plate is the paper its charts are drawn on: on the PyEphem and
@@ -409,9 +409,27 @@ the files kept in a subdirectory:
 | `theme` | `dark`, `light` or `auto`, spelled exactly as the report option is; default the report's own |
 | `directory` | Where under the report's `HTML_ROOT` the set is written; default `HTML_ROOT` itself.  A plain relative path — nothing that could leave `HTML_ROOT` |
 | `kind` | Which fragments the set is for — `dome`, `pass` or `both` (the default).  A skin showing the dome on one page and the chart on another, at different label scales, declares a set for each; without this each would write the other's files every cycle for a page that never fetches them |
+| `narrow_label_scale` | A second label scale for narrow screens (9.3, needs weewx-skyfield 2.5): the chart's labels are laid out again at this scale inside the same drawing, and a media rule in the chart's own style picks which layout shows.  Both this and `narrow_media`, or neither; positive, and not the set's `label_scale` |
+| `narrow_media` | The CSS media query that selects the narrow layout — `"(max-width: 600px)"`, **quoted**, or an unquoted comma splits it into a list.  It is written into the chart's own style block, so it may contain only letters, digits, spaces and `: ( ) , . -`, with its parentheses balanced; anything else is refused when the section is read, naming the set |
 
 The page names the set it embeds in the call
 (`$celestial.dome_html($almanac, set='astro')`), so scale, plate, file
 names and directory all follow from the one declaration.  The bundled
 Celestial skin declares no section at all: one set, `dome-svg`, at scale
 1.0 on the report's own plate, in `HTML_ROOT`.
+
+A skin that serves phones from the same page as desktops gives its set a
+narrow layer rather than a second set:
+
+```
+[CelestialFragments]
+    [[stars]]
+        label_scale = 0.8
+        narrow_label_scale = 2.2
+        narrow_media = "(max-width: 600px)"
+```
+
+Every dome backdrop and pass chart the set writes then carries both
+label layouts, and a phone shows the narrow one from first paint with
+nothing extra fetched.  The scale reaches only the text: the star dots,
+markers and rings are drawn once, the same at every scale.
