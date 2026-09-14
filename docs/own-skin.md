@@ -498,6 +498,12 @@ is exactly the skin that will reuse them without thinking.  Rename yours
 goes through a null-safe path, there is no console noise, and no panel
 is affected.
 
+The countdown chips are the same collision on a larger scale.  If your
+skin draws a countdown row of its own and keeps it current itself, pass
+`countdown=False` to `config_script` (see
+[the config block](#3-the-assets-and-the-config-block)), and this script
+leaves every chip alone.
+
 {: .important }
 **A host with its own expiry wants `expiration_time = 0`.**  The script
 runs an expiry of its own — after `expiration_time` hours it stops
@@ -571,9 +577,9 @@ reaches the dark page and is silently lost on the light one.  Write both:
 Declaring the whole token set on an element *between* `:root` and the
 panels — a `body.night-page`, say — also works, and silently pins you to
 today's palette: your copies shadow this extension's inside its own
-panels, so a value changed in a later release (weewx-skyfield retuned
-Mars once already) reaches the charts and not the dial, putting two
-shades of one thing on one page.  If you do keep a copy of the values,
+panels, so a value changed in a later release (weewx-skyfield 2.6
+retuned the whole night palette) reaches the charts and not the dial,
+putting two shades of one thing on one page.  If you do keep a copy of the values,
 pin it with a test against `celestial.css` rather than trusting it to
 stay true.
 
@@ -632,7 +638,8 @@ added two optional set keys, `narrow_label_scale` and `narrow_media`,
 and nothing on the page's own markup; the label layers inside a chart
 (`g.dome-labels`, `data-label-scale`, and `data-label-layers` and
 `data-label-media` on the svg root) are weewx-skyfield 2.5's contract,
-documented there.
+documented there.  9.4 added the config key `countdown` and the token
+`--tail-below-op`.
 
 What is **not** contract: the internals of `celestial.js`, the shape of
 the SVG the dial builds, and the roster's inner spans.  A page that

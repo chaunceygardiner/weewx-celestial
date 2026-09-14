@@ -155,7 +155,7 @@ install beside an older one.  Having none at all is not a refusal.
 The full procedure — including where the loop-data file goes, and how to
 verify the feed afterwards — is in
 **[the manual's Installation page](https://chaunceygardiner.github.io/weewx-celestial/installation.html)**.
-Upgrading from 8.x, 7.x, 6.x or 5.x is covered in
+Upgrading from an earlier 9.x, or from 8.x, 7.x, 6.x or 5.x, is covered in
 **[Upgrading](https://chaunceygardiner.github.io/weewx-celestial/upgrading.html)**.
 
 ## Where to find things

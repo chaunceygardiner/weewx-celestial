@@ -398,7 +398,9 @@ Vantage driver) rather than being much shorter than it.
 
 The countdown chips and the satellite rosters are not this symptom: they
 advance on each loop packet — every `refresh_rate` seconds, not every
-second — by design.
+second — by design.  On a page of your own that passes `countdown=False`
+to `config_script`, this extension's chips do not advance at all: that
+switch is for a countdown row your own script keeps current.
 
 ## Times are in the wrong zone
 

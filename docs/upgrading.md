@@ -33,7 +33,12 @@ and dial label in the secondary text color instead of fading them.
 Nothing to do.  A stylesheet of your own that overrides the tokens keeps
 its values, but on the dark plate an override of `--muted` now also
 colors the sky charts' ring and star labels, which through 9.3 kept a
-fixed color there, as they always have on the light plate.
+fixed color there, as they always have on the light plate.  Two fixes
+you will see as well: the countdown chips no longer flicker on every
+loop packet, and the odometers' changed digits flash brass again.  A
+skin of your own that draws countdown chips under this extension's ids
+can now pass `countdown=False` to `config_script`; see
+[Panels in your own skin](own-skin.md).
 
 9.3 requires **weewx-skyfield 2.5** if you run it: upgrade weewx-skyfield
 first, since the installer refuses an older one, naming the version it

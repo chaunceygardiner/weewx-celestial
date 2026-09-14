@@ -171,13 +171,14 @@ Each row is one body: a colored chip and its name, then the headline
 **distance odometer** in your report's distance unit, then a sub-line
 carrying three things — whether the body is **approaching or receding**,
 the raw distance in **astronomical units**, and the current **altitude**
-(`alt 34.7°`, or `below horizon`, in which case the whole row dims to
-match the dial).
+(`alt 34.7°`, or `below horizon`, in which case the body's name and
+distance step down to the secondary text color, matching its label on
+the dial).
 
 The odometer is the page's party trick: between loop packets it ticks at
 the body's true radial rate, so Mercury can visibly recede about 28 km
 every second while Saturn closes at the same pace.  Each packet
-re-anchors it to truth.
+re-anchors it to truth, and the digits that change flash brass.
 
 ## The sky dome
 
