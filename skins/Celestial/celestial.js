@@ -66,6 +66,8 @@ var celestial = (function () {
   var PAGE_THEME;         // the theme the page was generated on, 'dark' or
                           // 'light' -- what a refetched fragment's own
                           // report theme is compared with (pageThemeFlip)
+  var COUNTDOWN;          // false on a page that drives its own countdown
+                          // chips: renderCountdown is then never called
   // (The fragment files the dome and the pass chart refetch are named
   // by the panels' own markup -- data-dome-prefix on #dome-svg,
   // data-pass-fragment on #pass-chart -- from the fragment set each
@@ -198,7 +200,9 @@ var celestial = (function () {
     // against latestRecvTs, a stopwatch reading -- while the chips, the
     // rosters and the pass verdict take the station's from serverNow
     // themselves.
-    renderCountdown();
+    if (COUNTDOWN) {
+      renderCountdown();
+    }
     renderSatRosters();
     renderGeo();
     renderDome(nowTs);
@@ -257,10 +261,21 @@ var celestial = (function () {
   function numberWithCommas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
+  // Scratch for setHtml's comparison: never attached to the document.
+  var htmlProbe = document.createElement('div');
   function setHtml(id, html) {
     var el = document.getElementById(id);
     if (el && html !== undefined && html !== null) {
-      el.innerHTML = html;
+      // Every packet re-renders every cell, and most are unchanged.  An
+      // innerHTML write replaces the children even when the markup is
+      // identical, and the page repaints -- the chips flickered on every
+      // packet.  So write only on a difference, judged by the browser's
+      // own serialization of the new markup: the raw string would never
+      // match once the browser has normalized an entity such as &nbsp;.
+      htmlProbe.innerHTML = html;
+      if (htmlProbe.innerHTML !== el.innerHTML) {
+        el.innerHTML = html;
+      }
     }
   }
   function num(r, key) {
@@ -583,7 +598,7 @@ var celestial = (function () {
     if (text.length !== prev.length) {
       i = 0;
     }
-    el.innerHTML = text.slice(0, i) + '<span class="chg">' + text.slice(i) + '</span>';
+    el.innerHTML = text.slice(0, i) + '<span class="cel-chg">' + text.slice(i) + '</span>';
     prevOdometer[id] = text;
   }
   function setRowBelow(key, below) {
@@ -647,7 +662,7 @@ var celestial = (function () {
       if (auRate !== null) {
         var perSec = Math.abs(auRate) * PER_AU;
         setHtml('geo-rate-' + key,
-                '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
+                '<span class="cel-arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
                 T[auRate >= 0 ? 'receding' : 'approaching'] + ' ' +
                 perSec.toFixed(2) + DIST_LABEL + '/s');
       }
@@ -740,7 +755,7 @@ var celestial = (function () {
       if (auRate !== null) {
         var perSec = Math.abs(auRate) * PER_AU;
         setHtml('geo-rate-' + key,
-                '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
+                '<span class="cel-arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
                 T[auRate >= 0 ? 'receding' : 'approaching'] + ' ' +
                 perSec.toFixed(2) + DIST_LABEL + '/s');
       }
@@ -3281,6 +3296,9 @@ var celestial = (function () {
     // check loop_data_file, naming the option, once the label has parsed.
     LOOP_DATA_FILE = config.loop_data_file;
     PAGE_THEME = config.theme;
+    // False when the page's own script drives the countdown chips: this
+    // one then never touches them, so the two cannot overwrite each other.
+    COUNTDOWN = config.countdown;
     DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
 
     // The timers, load handlers and listeners, in one place and in this

@@ -236,6 +236,19 @@ knowing by name: `gen_ts` is the instant the page was generated for, the
 page's clock until the first loop packet arrives — if your own code or
 tests reach for a generation instant, that is where it now lives.
 
+If your page draws a countdown row of its own and your own script keeps
+it current, pass `countdown=False`:
+
+```
+    $celestial.config_script($almanac, $filename, countdown=False)
+```
+
+`celestial.js` then never touches a countdown chip, so a row of yours that
+uses the same element ids (`chip-sun`, `chip-eclipse` and the rest) has
+one writer, not two taking turns on every packet.  The default is `True`,
+and a row from `$celestial.countdown_html` wants it: with it off, that row
+keeps its generation-time first paint and never counts.
+
 `$filename` is core WeeWX's own tag: the page's path under `HTML_ROOT`.
 Passing it is what lets the page **sit anywhere** — in a subdirectory,
 beside a dozen other pages — because the block turns it into the route
@@ -379,7 +392,7 @@ and the rest of the page and the rest of the live layer carry on.
 | `$celestial.pass_panel_hidden($almanac, set='')` | True when the pass panel has nothing at all to show, so your own section chrome can hide with it; the javascript unhides `#pass-sec` by that id when a pass enters the window |
 | `$celestial.footer_html($almanac)` | The credit line, true for whichever almanac actually served the page |
 | `$celestial.theme_class($almanac)` | `theme-dark` or `theme-light` — the report's `theme` resolved at generation, `auto` included.  Put it on your root element, or on the container holding the panels: both plates are keyed on the class, so a dark panel box inside a light site is a matter of putting `theme-dark` on that box |
-| `$celestial.config_script($almanac, $filename)` | The config block and the `celestial.start` call |
+| `$celestial.config_script($almanac, $filename)` | The config block and the `celestial.start` call.  Add `countdown=False` when your page drives countdown chips of its own |
 
 The rosters are separate calls so you can place them where you like; the
 bundled page puts each beside its chart in a two-column grid, which is

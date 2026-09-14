@@ -39,6 +39,22 @@ weewx-celestial change history
 - The dial's rings, ticks and rim stay deliberately faint: they are the
   scale, not something to find, and the one exception to the marks bar.
 
+- The distance odometers flash their changed digits brass again, and the
+  roster's approaching/receding arrow is brass again.  The script had
+  been writing both under class names the stylesheet no longer styled.
+
+- The countdown chips no longer flicker.  Every loop packet rewrote each
+  chip's text even when it had not changed, and the browser repainted it;
+  the script now writes a cell only when its content differs.
+
+- A page that drives countdown chips of its own can turn celestial's off:
+  `$celestial.config_script($almanac, $filename, countdown=False)`.
+  celestial.js then never touches a countdown chip, so a row of the
+  page's own under the same element ids has one writer instead of two
+  taking turns on every packet, which showed as chips blinking out and
+  back.  The config block gains the key `countdown`, True by default; a
+  value that is not a boolean is logged and leaves the chips live.
+
 9.3 2026/09/12
 --------------
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.5 first.

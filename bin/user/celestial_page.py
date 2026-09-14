@@ -1334,7 +1334,8 @@ class CelestialPage:
 
     # -- the script ----------------------------------------------------------
 
-    def config_dict(self, alm: Any, filename: Any = None) -> Dict[str, Any]:
+    def config_dict(self, alm: Any, filename: Any = None,
+                    countdown: Any = True) -> Dict[str, Any]:
         """What celestial.js is started with: every per-report value the
         8.5 include baked into the script, as one dict (config_script
         serializes it).  The keys are contract -- additive only inside a
@@ -1348,13 +1349,23 @@ class CelestialPage:
         HTML_ROOT ('astro/index.html'), from which `root` is the page's
         route up to HTML_ROOT ('../' per level), where every fragment
         set is written.  None (a page that passes nothing) is '' --
-        fetch relative to the page."""
+        fetch relative to the page.  `countdown` False is for a page whose
+        own script drives the countdown chips: celestial.js then never
+        touches them."""
         extras = self.skin_dict.get('Extras', {})
         if not isinstance(extras, dict):
             extras = {}
         texts = almanac_texts(alm)
         ords = alm.formatter.ordinate_names
         per_au, dist_label = distance_unit(alm)
+        try:
+            countdown_on = True if countdown is None else to_bool(countdown)
+        except ValueError:
+            # A typo must not cost the page its whole live layer (the
+            # guard's price for a raise): the chips stay live, and say so.
+            log.warning("config_script: countdown = %r is not a boolean; "
+                        "the countdown chips stay live" % (countdown,))
+            countdown_on = True
         return {
             'version': CELESTIAL_VERSION,
             'page_update_pwd': str(extras.get('page_update_pwd', 'foo')),
@@ -1393,17 +1404,23 @@ class CelestialPage:
             # + the file name, so the page may sit anywhere under
             # HTML_ROOT.
             'root': page_root(filename),
+            # False on a page whose own script drives the countdown chips
+            # (under the same ids): celestial.js then leaves every chip
+            # alone, so two writers cannot fight over them on each packet.
+            'countdown': countdown_on,
         }
 
     @_panel_guard()
-    def config_script(self, alm: Any, filename: Any = None) -> str:
+    def config_script(self, alm: Any, filename: Any = None,
+                      countdown: Any = True) -> str:
         """The page-level <script> block: the config, through json.dumps
         (which backslash-u-escapes non-ASCII, so the report's html_entities
         encoding can never touch a label), and the celestial.start call.
         json.dumps leaves '/' alone, so '</' is escaped by hand: no string
         in the config -- a report name, a password -- can close the block
         early.  Guarded: a failure costs the live layer, never the page."""
-        cfg = json.dumps(self.config_dict(alm, filename), sort_keys=True, indent=2)
+        cfg = json.dumps(self.config_dict(alm, filename, countdown),
+                         sort_keys=True, indent=2)
         return '<script>\ncelestial.start(%s);\n</script>' % cfg.replace('</', '<\\/')
 
     # -- the sky page and the plate ----------------------------------------

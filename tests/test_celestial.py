@@ -1825,9 +1825,11 @@ class TestSampleSkinRenders:
         # the list drifted apart in two copies once already -- and the
         # load handler's call is GUARDED: addLoadEvent chains handlers
         # with no try of its own, and this one runs before the backdrop's
-        # deferred refetch.
+        # deferred refetch.  The countdown paint is behind the page's
+        # `countdown` switch, off where a consumer drives its own chips.
         assert re.search(r'function renderPacket\(nowTs\) \{(?:\s*//[^\n]*\n)*'
-                         r'\s*renderCountdown\(\);\s*renderSatRosters\(\);'
+                         r'\s*if \(COUNTDOWN\) \{\s*renderCountdown\(\);\s*\}'
+                         r'\s*renderSatRosters\(\);'
                          r'\s*renderGeo\(\);\s*renderDome\(nowTs\);\s*renderPass\(\);\s*\}',
                          src), 'the five packet paints are not in one place'
         assert re.search(r'function renderOnLoad\(\) \{(?:\s*//[^\n]*\n)*\s*if \(renderWanted && latest !== null\) \{\s*renderWanted = false;'
@@ -2143,6 +2145,15 @@ class TestSampleSkinRenders:
             "            '#pass-chart g.dome-body[transform]', 'els => els.length'),\n"
             "        'passdot': page.get_attribute(\n"
             "            '#pass-chart g.dome-body[data-body=iss]', 'display'),\n"
+            "        'flash': page.evaluate(\n"
+            "            \"() => { var s = document.querySelector('.cel-odo .cel-chg');\"\n"
+            "            \"         return s ? getComputedStyle(s).animationName : null; }\"),\n"
+            "        'arrow': page.evaluate(\n"
+            "            \"() => { var a = document.querySelector('#geo-rate-mercury .cel-arr');\"\n"
+            "            \"         var b = document.createElement('span');\"\n"
+            "            \"         b.style.color = 'var(--brass)'; document.body.appendChild(b);\"\n"
+            "            \"         return [a ? getComputedStyle(a).color : null,\"\n"
+            "            \"                 getComputedStyle(b).color]; }\"),\n"
             '    }\n'
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -2195,6 +2206,13 @@ class TestSampleSkinRenders:
         # visible.
         assert 'Jun 21' in out['anyline']
         assert 'not visible' in out['anysub']
+        # The classes the script writes are the ones the stylesheet styles:
+        # the odometer's changed digits flash brass, and the roster's
+        # approach arrow is brass.  Both were written unprefixed ('chg',
+        # 'arr') against the stylesheet's cel- rules, so neither showed,
+        # and nothing said so.
+        assert out['flash'] == 'chgflash', out['flash']
+        assert out['arrow'][0] is not None and out['arrow'][0] == out['arrow'][1], out['arrow']
 
     def test_pass_countdown_day_count_in_a_real_browser(self, wxskyfield_almanac,
                                                         tmp_path):
@@ -4697,6 +4715,133 @@ class TestSampleSkinRenders:
         assert out['peri_mcnaught_k'] == 'McNaught perihelion'
         assert out['peri_halley_hidden'] is True   # ~3 years: honestly out
 
+    def test_countdown_off_and_identical_writes_in_a_real_browser(
+            self, wxskyfield_comet_almanac, tmp_path):
+        """Two pages on one feed.  With `countdown` on, packets repaint
+        the chips but never rewrite a chip or roster cell with the markup it
+        already holds -- that rewrite replaced the children and repainted,
+        the chips' flicker on every packet.  With it off, nothing touches
+        any chip element at all, which is what a consumer page drawing its
+        own chips under these ids needs.  A MutationObserver armed before
+        the page's scripts run counts both.  Skips when the playwright env
+        is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        now = time.time()
+        html = self.render(wxskyfield_comet_almanac, sky_page=make_sky_page())
+        assert html.count('"countdown": true') == 1
+        (tmp_path / 'on.html').write_text(html)
+        (tmp_path / 'off.html').write_text(html.replace('"countdown": true', '"countdown": false'))
+        write_assets(tmp_path)
+
+        def packet():
+            # The station clock advances per request; every event instant
+            # stands still, so a chip's label and detail stay the same
+            # from packet to packet while its countdown value moves.
+            return loop_file({
+                'current.dateTime.raw': time.time(),
+                'almanac.sun.next_setting.unix_epoch.raw': now + 4000,
+                'almanac.sun.next_rising.unix_epoch.raw': now + 40000,
+                'almanac.next_meteor_shower.peak.unix_epoch.raw': now + 3 * 86400,
+                'almanac.next_meteor_shower.label': 'Perseids',
+                'almanac.next_supermoon.unix_epoch.raw': now + 10 * 86400,
+                'almanac.next_eclipse.unix_epoch.raw': now + 40 * 86400,
+                'almanac.next_eclipse_kind': 'lunar',
+            }).encode()
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packet()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        observer = (
+            "window.__mut = {chip: 0, identical: []};"
+            "document.addEventListener('DOMContentLoaded', function () {"
+            "  var snap = new Map();"
+            "  document.querySelectorAll('[id]').forEach(function (e) { snap.set(e, e.innerHTML); });"
+            "  new MutationObserver(function (recs) {"
+            "    var seen = new Set();"
+            "    recs.forEach(function (r) {"
+            "      var t = r.target.nodeType === 1 ? r.target : r.target.parentElement;"
+            "      if (t && t.closest('[id^=\"chip-\"]')) { window.__mut.chip++; }"
+            "      if (r.type === 'childList' && t && t.id && !seen.has(t)) {"
+            "        seen.add(t);"
+            "        if (snap.has(t) && snap.get(t) === t.innerHTML) { window.__mut.identical.push(t.id); }"
+            "        snap.set(t, t.innerHTML);"
+            "      }"
+            "    });"
+            "  }).observe(document.body, {subtree: true, childList: true, attributes: true,"
+            "                             characterData: true});"
+            "});")
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    for name in ("on", "off"):\n'
+            '        page = browser.new_page()\n'
+            '        errors = []\n'
+            "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '        page.add_init_script(%r)\n'
+            "        page.goto('http://127.0.0.1:%d/' + name + '.html')\n"
+            "        page.wait_for_load_state('networkidle')\n"
+            '        # Four packets past the first: the "updated" stamp moves on each.\n'
+            '        for _ in range(4):\n'
+            "            u = page.inner_text('#last-update')\n"
+            '            page.wait_for_function("(u) => document.getElementById(\'last-update\')'
+            '.textContent !== u", arg=u, timeout=15000)\n'
+            "        m = page.evaluate('window.__mut')\n"
+            "        out[name] = {'errors': errors, 'chip': m['chip'],\n"
+            "                     'identical': [i for i in m['identical']\n"
+            "                                   if i.startswith(('chip-', 'geo-'))],\n"
+            "                     'sun_v': page.inner_text('#chip-sun-v')}\n"
+            '        page.close()\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n' % (observer, port))
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=180)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        for name in ('on', 'off'):
+            assert out[name]['errors'] == [], (name, out[name]['errors'])
+        # On: the chips really were repainted (the observer sees them), and
+        # never with the markup a cell already held.
+        assert out['on']['chip'] > 0, out['on']
+        assert out['on']['identical'] == [], out['on']['identical']
+        # Off: four packets, and not one mutation under any chip.
+        assert out['off']['chip'] == 0, out['off']
+
     def test_viewer_clock_skew_changes_nothing_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
         """8.3.5's rule, where it can be broken: the browser's clock is
@@ -7161,7 +7306,8 @@ class TestConfigScript:
     KEYS = {'version', 'page_update_pwd', 'refresh_rate', 'expiration_time',
             'time_zone', 'station_lat', 'gen_ts', 'per_au', 'dist_label',
             'locale', 'body_labels', 'cardinals', 'texts', 'sat_names',
-            'comet_names', 'report_name', 'loop_data_file', 'theme', 'root'}
+            'comet_names', 'report_name', 'loop_data_file', 'theme', 'root',
+            'countdown'}
 
     @staticmethod
     def page(extras=None, texts=None, sky_page=None, **skin):
@@ -7191,6 +7337,35 @@ class TestConfigScript:
 
     def test_config_keys_are_the_contract(self):
         assert set(self.page().config_dict(self.almanac())) == self.KEYS
+
+    def test_countdown_defaults_on_and_a_consumer_turns_it_off(self):
+        """A page drawing its own countdown chips passes countdown=False,
+        and the config carries a real boolean either way -- from Python
+        or from a template's string."""
+        page, alm = self.page(), self.almanac()
+        assert page.config_dict(alm)['countdown'] is True
+        assert page.config_dict(alm, None, None)['countdown'] is True
+        for off in (False, 'false', 'False', 0):
+            assert page.config_dict(alm, None, off)['countdown'] is False, off
+        assert '"countdown": false' in page.config_script(alm, None, countdown=False)
+        assert '"countdown": true' in page.config_script(alm)
+
+    def test_countdown_through_a_template_keyword(self):
+        """The consumer's spelling, compiled and run by Cheetah under the
+        page's own error catcher."""
+        from Cheetah.Template import Template
+        page, alm = self.page(), self.almanac()
+        out = str(Template('#errorCatcher Echo\n'
+                           '$p.config_script($a, $f, countdown=False)',
+                           searchList=[{'p': page, 'a': alm, 'f': 'index.html'}]))
+        assert '"countdown": false' in out
+
+    def test_a_countdown_that_is_not_a_boolean_keeps_the_chips_live(self, caplog):
+        """A typo is logged and costs nothing: the guard would otherwise
+        take the whole live layer with it."""
+        cfg = self.page().config_dict(self.almanac(), None, 'sometimes')
+        assert cfg['countdown'] is True
+        assert "countdown = 'sometimes'" in caplog.text
 
     def test_expiration_time_zero_reaches_the_script_and_disarms_it(
             self, wxskyfield_sat_almanac):
