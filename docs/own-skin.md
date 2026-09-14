@@ -324,7 +324,7 @@ first paint; nothing is fetched that a desktop does not fetch.  The
 scale reaches only the text: dots, markers and rings are drawn once.
 Hold the query in `skin.conf` to the breakpoint in your stylesheet with a
 test of your own; the browser cannot report a mistyped query, it simply
-never matches.  The keys need weewx-skyfield 2.5, which 9.3 requires.
+never matches.  The keys arrived with weewx-skyfield 2.5; 9.4 requires 2.6.
 
 A skin may still choose its set per page if it wants to, and `set=`
 takes a Cheetah variable — **unquoted**, since Cheetah does not

@@ -31,8 +31,8 @@
   --night:#0A0F22;   /* page background */
   --vault:#111834;   /* cards and chips */
   --ink:#E9E4D4;     /* primary text */
-  --muted:#8B93B8;   /* secondary text */
-  --brass:#D3A94C;   /* accent */
+  --muted:#C0C5D9;   /* secondary text */
+  --brass:#E0C27F;   /* accent */
   --line:#2A3358;    /* borders, hairlines */
   /* Chart furniture -- the dial's rings, ticks and rim.  NOT --line: that
    * is the color of a section border, and the dial is drawn ON the surface
@@ -43,20 +43,15 @@
    * stays exactly as it is for the borders and hairlines it is for. */
   --grid:#6E7DBA;
   /* The sky charts' small labels (skyfield's sky.css values, kept in
-   * step by test -- see the .skylab rules for why they are not --muted). */
-  --skylab:#9FA5C4; --conlab:#9DABD7;
+   * step by test).  The star and ring labels are --muted on both plates;
+   * the constellation names carry their own value. */
+  --skylab:var(--muted); --conlab:#BBC5E3;
   /* Per-body identity colors (weewx-skyfield's night-plate values --
    * the traditional astronomy scheme: yellow sun, silver moon, gray
    * Mercury, pearly Venus).  Earth (the dial's center) and Proxima
-   * (silver, like the stars) are celestial's own.  Mars follows
-   * skyfield 2.2's lift (was #C04F36, the one body dot under 3:1 on the
-   * night dome): the embedded dome emits its dot color inline, so the two
-   * agree from 2.2 on.  On a station still running 2.1 the dome keeps the
-   * darker Mars until it is upgraded -- one release of two shades on one
-   * page, accepted deliberately: the alternative is holding the dial at a
-   * value skyfield has already retired. */
+   * (silver, like the stars) are celestial's own. */
   --c-sun:#FFD75E; --c-moon:#C9D0DA; --c-mercury:#9CA0AC; --c-venus:#F0E3BE;
-  --c-mars:#CE6750; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
+  --c-mars:#D06C56; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
   --c-uranus:#35A8BE; --c-neptune:#5F85E6;
   --c-earth:#7FB4A2; --c-proxima:#C9D0DA;
   /* The halo: the color a mark is outlined in so it stays separate from
@@ -77,9 +72,15 @@
   --geo-ring-sun:var(--halo); --geo-ring-venus:var(--halo);
   --moon-dark:#1E2745; --moon-lit:#DDD8C4;
   --moon-rim:var(--c-moon); --moon-rim-op:.55;
+  /* A comet below the horizon dims its tail no further than the plate
+   * lets a mark stay findable (3.0:1 and APCA Lc 30 on the card). */
+  --tail-below-op:.6;
   /* The three pale bodies need no edge on the night plate: their own
-   * color IS the bright mark.  On paper they do -- see the light block. */
-  --e-sun:#FFD75E; --e-moon:#C9D0DA; --e-venus:#F0E3BE; --e-earth:#7FB4A2;
+   * color IS the bright mark.  On paper they do -- see the light block.
+   * Earth's --e- value is its center LABEL, text, so it is lifted from the
+   * dot's green in the same hue: the dot's value is WCAG 7.44 but APCA
+   * Lc -54.5 on the card, and text needs Lc 60 (8.56 / Lc -61.3 here). */
+  --e-sun:#FFD75E; --e-moon:#C9D0DA; --e-venus:#F0E3BE; --e-earth:#92BFB0;
 }
 /* The light theme (theme = light, or auto with the sun up): the
  * paper-atlas plate, matching the 'light' palette the dome and the Next
@@ -128,8 +129,9 @@
    * rim goes full strength because its lit limb is nearly the page. */
   --chip-ring:1.5px;
   --geo-ring-sun:var(--e-sun); --geo-ring-venus:var(--e-venus);
+  --tail-below-op:.75;
   --moon-dark:#26314F; --moon-lit:#F2ECD8;
-  --moon-rim:#888888; --moon-rim-op:1;
+  --moon-rim:#868686; --moon-rim-op:1;
   /* Pale on paper: sun 1.53:1, moon 1.40, venus 1.27 against the white
    * panel -- as fills they are nearly not there.  skyfield's light
    * palette answers this with a `ring` per pale body, a darker edge in
@@ -198,7 +200,9 @@
 .cel-bname{font-variant-caps:small-caps; letter-spacing:.1em; white-space:nowrap}
 .cel-bname .cel-chip{display:inline-block; width:.62em; height:.62em; border-radius:50%;
              margin-right:.5em}
-.cel-row.cel-below .cel-bname, .cel-row.cel-below .cel-odo{opacity:.55}
+/* A body below the horizon steps down to the muted tier.  A color, not
+ * opacity: every opacity that looks dimmed puts text under APCA Lc 60. */
+.cel-row.cel-below .cel-bname, .cel-row.cel-below .cel-odo{color:var(--muted)}
 .cel-odo{text-align:right; font-size:.9em; letter-spacing:.02em}
 .cel-odo .cel-unit{color:var(--muted); font-size:.8667em}
 .cel-rsub{grid-column:1 / -1; display:flex; justify-content:space-between; gap:.45em;
@@ -280,8 +284,14 @@
 .cel-moon-lit{fill:var(--moon-lit)}
 .cel-moon-rim{fill:none; stroke:var(--moon-rim); stroke-opacity:var(--moon-rim-op);
               stroke-width:1}
-.cel-geomoon.cel-below{opacity:.55}
-.cel-geomoon.cel-below .cel-moon-rim{stroke-dasharray:2.5 2.5; stroke-opacity:.7}
+/* Below the horizon the disc dims and the rim goes dashed.  The rim keeps
+ * its plate's own strength (--moon-rim-op): it is what carries a down moon,
+ * and dimming the whole mark would take it past findable on either plate.
+ * The opacity sits on the disc's own group, so the dark disc and its lit
+ * limb dim as one image -- on the two shapes separately, the lit limb
+ * would show the dark disc through it. */
+.cel-geomoon.cel-below .cel-moon-disc{opacity:.55}
+.cel-geomoon.cel-below .cel-moon-rim{stroke-dasharray:2.5 2.5}
 /* Motion trails: per-segment opacity is set by the javascript, which ramps
  * it from a visible floor (the old ramp started from nothing: the oldest
  * segment landed at 1.02:1, ink spent where no eye can find it). */
@@ -295,7 +305,7 @@
 .cel-cometdot.cel-faint{fill:var(--halo); stroke:var(--brass); stroke-width:2}
 .cel-cometdot.cel-below{fill-opacity:.45; stroke-dasharray:2.5 2.5}
 .cel-comet-tail{stroke:var(--brass)}
-.cel-geocomet.cel-below .cel-comet-tail{opacity:.5}
+.cel-geocomet.cel-below .cel-comet-tail{opacity:var(--tail-below-op)}
 .cel-stroke-comet{stroke:var(--brass)}
 .cel-chip-comet{background:var(--brass)}
 
@@ -305,7 +315,7 @@ svg{width:100%; height:auto; display:block}
 svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .cardinal{font-size:14px; fill:var(--brass); letter-spacing:.1em}
 .bodylab{font-size:11px; fill:var(--ink); font-family:Georgia, serif}
-.bodylab.cel-dim{opacity:.55}
+.bodylab.cel-dim{fill:var(--muted)}
 .gridlab{font-size:10px; fill:var(--muted)}
 .cel-earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
           letter-spacing:.12em; text-anchor:middle}
@@ -328,19 +338,16 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 /* Dome typography borrowed from weewx-skyfield's sky.css -- names and
  * values kept in step, same cross-repo rule as cardinal/bodylab/gridlab
  * above -- the light-theme variants included, as of 8.3.
- * These small labels are their own value, not --muted: --muted is set for
- * body copy on the panel SURFACE, and the dome and next-visible-pass charts
- * put them on the dome gradient instead, whose rim is much lighter -- there
- * --muted reached only 3.70:1 (skyfield 2.2 lifted all three).  .skylab is
+ * The dome and next-visible-pass charts put these small labels on the
+ * dome gradient, whose rim is lighter than the panel surface.  .skylab is
  * the dome's scoped opt-in, worn by the ring-degree labels as
  * "mono gridlab skylab"; the axis labels on every other panel sit on the
  * panel surface and keep plain .gridlab.  Equal specificity, so .skylab
  * MUST stay after .gridlab above -- source order is all that makes it win.
- * The light values are sky.css's: the paper plate needs no lift and
- * hands two of the three straight back to --muted (4.94:1 on that
- * dome); only .conlab needs a value of its own -- the constellation
- * names were the worst mark on either plate before 2.2, and #57637B is
- * what clears 4.5:1 at the 0.95 opacity the chart draws them with.
+ * The values are sky.css's: --muted clears the dome's rim on both plates,
+ * so the ring and star labels take it, and only .conlab carries a value
+ * of its own.  The constellation names draw at full strength; opacity is
+ * part of a text color and would put them under the text bars.
  * Both plates' values are the --skylab/--conlab tokens in the two token
  * blocks above (sky.css writes them as literals plus a :root.theme-light
  * rule; the test resolves both to the same values), so that a fragment
@@ -362,9 +369,11 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
    dome marker (hollow ring, background fill so hover still lands). */
 .cel-satdot.cel-shadow{fill:var(--halo); stroke:var(--brass); stroke-width:2}
 /* In a bright sky (sun >= -6): dimmed but drawn.  Whole-element opacity so
-   the hollow ring dims too (fill-opacity would leave its stroke bright). */
-.cel-satdot.cel-faint{opacity:.35}
-.satlab.cel-faint{opacity:.45}
+   the hollow ring dims too (fill-opacity would leave its stroke bright);
+   .8 is the least that stays findable on the light dome's rim.  The name
+   steps to the muted tier instead: text takes no opacity. */
+.cel-satdot.cel-faint{opacity:.8}
+.satlab.cel-faint{fill:var(--muted)}
 
 /* The Next Visible Pass panel (weewx-skyfield's pass_chart_html embedded beside
  * the visible-pass roster): the same two-column shape as the dome panel

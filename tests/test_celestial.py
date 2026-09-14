@@ -8287,11 +8287,11 @@ class TestPanels:
             assert 'data-dome-palette="night"] .%s' % cls not in css, cls
         night_block = re.search(r'^:root, .*?\{(.*?)\n\}', css, re.M | re.S).group(1)
         light_block = re.search(r'^\.theme-light, .*?\{(.*?)\n\}', css, re.M | re.S).group(1)
-        assert '--skylab:#' in night_block and '--conlab:#' in night_block
-        # The paper plate hands the ring and star labels back to --muted
-        # (sky.css's rule), so a consumer's light --muted override reaches
-        # them: a token, not a copied value.
-        assert '--skylab:var(--muted)' in light_block and '--conlab:#' in light_block
+        # Both plates hand the ring and star labels to --muted (sky.css's
+        # rule), so a consumer's --muted override reaches them: a token,
+        # not a copied value.
+        for block in (night_block, light_block):
+            assert '--skylab:var(--muted)' in block and '--conlab:#' in block
 
     def test_fragment_plate_wins_in_a_real_browser(self, tmp_path):
         """The computed fill of a dome label inside a LIGHT fragment on a
@@ -8323,9 +8323,9 @@ class TestPanels:
         # :root.
         want = {'dark-light': {'cardinal': tok('brass', light_block), 'skylab': tok('muted', light_block),
                                'head': tok('brass', css)},
-                'light-night': {'cardinal': tok('brass', css), 'skylab': rgb('#9FA5C4'),
+                'light-night': {'cardinal': tok('brass', css), 'skylab': tok('muted', css),
                                 'head': tok('brass', light_block)},
-                'dark-night': {'cardinal': rgb('#367BA3'), 'skylab': rgb('#9FA5C4'),
+                'dark-night': {'cardinal': rgb('#367BA3'), 'skylab': tok('muted', css),
                                'head': rgb('#367BA3')},
                 # A light page's --muted override reaches the ring and
                 # star labels: --skylab is a token on that plate.  (On the
@@ -8470,7 +8470,7 @@ class TestPanels:
         assert out['paper']['chip'] != 'none'
         assert ' 0px 0px 0px 0px ' not in out['paper']['chip'], out['paper']['chip']
         assert out['paper']['ringSun'] == 'rgb(188, 120, 0)'      # --e-sun on paper
-        assert out['paper']['moonRim'] == 'rgb(136, 136, 136)'    # #888888
+        assert out['paper']['moonRim'] == 'rgb(134, 134, 134)'    # #868686
         assert out['paper']['rimOp'] == '1'
 
     def test_celestial_never_paints_skyfields_marks_in_a_real_browser(self, tmp_path):
@@ -8503,7 +8503,7 @@ class TestPanels:
         # skyfield 2.4's own shape: the plate's values as zero-specificity
         # defaults scoped to a palette class on the <svg> itself.
         defaults = ('<style>:where(svg.sky-night) :where(.sky-fill-ink){fill:#E9E4D4}'
-                    ':where(svg.sky-night) :where(.sky-fill-brass){fill:#D3A94C}</style>')
+                    ':where(svg.sky-night) :where(.sky-fill-brass){fill:#E0C27F}</style>')
         (tmp_path / 'mismatch.html').write_text(
             '<!DOCTYPE html><html class="theme-light"><head>'
             '<link rel="stylesheet" href="celestial.css"></head><body>'
@@ -8541,10 +8541,10 @@ class TestPanels:
         # The marks: skyfield's night defaults, untouched by our stylesheet
         # on a light page.
         assert mark_ink == 'rgb(233, 228, 212)'      # #E9E4D4, the night ink
-        assert mark_brass == 'rgb(211, 169, 76)'     # #D3A94C, the night brass
+        assert mark_brass == 'rgb(224, 194, 127)'    # #E0C27F, the night brass
         # The labels beside them: ours, and on the fragment's plate.
-        assert cardinal == 'rgb(211, 169, 76)'       # night --brass
-        assert skylab == 'rgb(159, 165, 196)'        # night --skylab
+        assert cardinal == 'rgb(224, 194, 127)'      # night --brass
+        assert skylab == 'rgb(192, 197, 217)'        # night --skylab (--muted)
 
     def test_a_panel_in_host_chrome_leaves_the_host_alone(self, tmp_path,
                                                           wxskyfield_almanac):
@@ -9077,6 +9077,152 @@ class TestPanels:
         assert sum('[StdReport] [[Defaults]] carries celestial_panels' in m for m in msgs) == 1
         assert not any('says so where it renders' in m for m in msgs)
         assert 'Traceback' not in caplog.text
+
+
+def load_contrast():
+    """tools/contrast.py -- the one copy of the contrast arithmetic, shared
+    verbatim with every sibling that measures text on its ground."""
+    spec = importlib.util.spec_from_file_location(
+        '_celestial_contrast', os.path.join(REPO_ROOT, 'tools', 'contrast.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestContrast:
+    """Every piece of text clears WCAG 2 >= 4.5 AND APCA |Lc| >= 60; every
+    mark a reader must find clears 3.0 AND Lc 30.  Opacity is part of the
+    color and is applied before scoring."""
+
+    def test_arithmetic_matches_the_oracle_points(self):
+        c = load_contrast()
+        assert round(c.apca((0, 0, 0), (255, 255, 255)), 2) == 106.04
+        assert round(c.apca((255, 255, 255), (0, 0, 0)), 2) == -107.88
+        assert round(c.wcag((0, 0, 0), (255, 255, 255)), 2) == 21.0
+
+    # The grounds under the panels.  The card and the page are the token
+    # blocks' --vault and --night; the dome is weewx-skyfield's dome_stops,
+    # all three, because a label near the horizon sits on the rim stop.
+    DOME_STOPS = {'night': ('#161F3D', '#1B2749', '#2A3A63'),
+                  'light': ('#FFFFFF', '#F3F1EA', '#EFECE2')}
+    TEXT, MARK = (4.5, 60), (3.0, 30)
+    BODIES = ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn',
+              'uranus', 'neptune', 'proxima_centauri')
+    # A pair allowed to miss, with its reason.  One that starts passing is
+    # an error too, so a stale exception cannot linger.
+    EXCEPTIONS = {
+        'dial rim': 'scale furniture, deliberately recessive (the 8.2 dL* ruling)',
+        'dial ring inside 10 au': 'scale furniture, deliberately recessive',
+        'dial ring and tick outside 10 au': 'scale furniture, deliberately recessive',
+    }
+
+    def _sheet(self):
+        with open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8') as f:
+            css = f.read()
+        blocks = {'night': re.search(r'^:root, .*?\{(.*?)\n\}', css, re.M | re.S).group(1),
+                  'light': re.search(r'^\.theme-light, .*?\{(.*?)\n\}', css, re.M | re.S).group(1)}
+        blocks = {k: re.sub(r'/\*.*?\*/', '', v, flags=re.S) for k, v in blocks.items()}
+        return css, blocks
+
+    def _value(self, text, plate, blocks):
+        """A declaration value with every var() resolved on `plate`; the
+        light block overrides the night one, as the cascade does."""
+        text = text.strip()
+        while text.startswith('var('):
+            name = text[6:-1]
+            m = (re.search(r'--%s:\s*([^;]+)' % re.escape(name), blocks[plate])
+                 or re.search(r'--%s:\s*([^;]+)' % re.escape(name), blocks['night']))
+            assert m is not None, (name, plate)
+            text = m.group(1).strip()
+        return text
+
+    def _prop(self, css, selector, prop):
+        rule = re.search(r'(?:^|\}[ \t]*)' + re.escape(selector) + r'\{([^}]*)\}', css, re.M)
+        assert rule is not None, selector
+        m = re.search(r'(?:^|;)\s*%s:\s*([^;]+)' % re.escape(prop), rule.group(1))
+        assert m is not None, (selector, prop)
+        return m.group(1).strip()
+
+    def _pairs(self):
+        """(name, plate, color, opacity, grounds, bars) for every piece of
+        text and every must-find mark the panels paint, read from the
+        stylesheet so a changed rule is measured."""
+        css, blocks = self._sheet()
+        out = []
+        for plate in ('night', 'light'):
+            def v(text):
+                return self._value(text, plate, blocks)
+
+            def p(selector, prop):
+                return v(self._prop(css, selector, prop))
+            card = (v('var(--vault)'), v('var(--night)'))
+            dome = self.DOME_STOPS[plate]
+            text = [
+                ('primary text', v('var(--ink)'), 1, card),
+                ('secondary text', p('.cel-sub', 'color'), 1, card),
+                ('eyebrow', p('.cel-eyebrow', 'color'), 1, card),
+                ('body below the horizon',
+                 p('.cel-row.cel-below .cel-bname, .cel-row.cel-below .cel-odo', 'color'), 1, card),
+                ('dimmed dial label', p('.bodylab.cel-dim', 'fill'), 1, card),
+                ('Earth label', p('.cel-earthlab', 'fill'), 1, card),
+                ('ring label', p('.skylab', 'fill'), 1, dome),
+                ('star label', p('.starlab', 'fill'), 1, dome),
+                ('constellation label', p('.conlab', 'fill'), 1, dome),
+                ('cardinal', p('.cardinal', 'fill'), 1, dome),
+                ('satellite name', p('.satlab', 'fill'), 1, dome),
+                ('faint satellite name', p('.satlab.cel-faint', 'fill'), 1, dome),
+                ('now label', p('.nowlab', 'fill'), 1, dome),
+                ('chip label', p('.cel-count .cel-k', 'color'), 1, card),
+                ('odometer unit', p('.cel-odo .cel-unit', 'color'), 1, card),
+                ('approach arrow', p('.cel-rsub .cel-arr', 'color'), 1, card),
+                ('axis label', p('.gridlab', 'fill'), 1, card),
+                ('install hint', p('.cel-skyhint', 'color'), 1, card),
+                ('stale-dome line', p('.cel-stalehint', 'color'), 1, card),
+                ('pass time', p('.passwhen', 'color'), 1, card),
+                ('tap tooltip', p('.skytip', 'color'), 1, (p('.skytip', 'background'),)),
+            ]
+            marks = [
+                ('faint satellite dot', p('.cel-satdot', 'fill'),
+                 float(p('.cel-satdot.cel-faint', 'opacity')), dome),
+                ('moon rim below the horizon', p('.cel-moon-rim', 'stroke'),
+                 float(p('.cel-moon-rim', 'stroke-opacity')), card),
+                ('comet tail below the horizon', p('.cel-comet-tail', 'stroke'),
+                 float(p('.cel-geocomet.cel-below .cel-comet-tail', 'opacity')), card),
+                ('Earth dot', p('.cel-fill-earth', 'fill'), 1, card),
+                ('dial rim', p('.cel-geo-rim', 'stroke'),
+                 float(p('.cel-geo-rim', 'stroke-opacity')), card),
+                # The ring opacities are set by the javascript (0.5 inside
+                # 10 au, 0.4 outside); the outer ticks carry 0.4 here.
+                ('dial ring inside 10 au', p('.cel-geo-ring', 'stroke'), .5, card),
+                ('dial ring and tick outside 10 au', p('.cel-geo-tick', 'stroke'),
+                 float(p('.cel-geo-tick', 'stroke-opacity')), card),
+            ]
+            # A body below the horizon is carried by its dashed outline at
+            # full strength (the fill dims), in its stroke class's color.
+            for body in self.BODIES:
+                marks.append(('%s outline' % body, p('.cel-stroke-%s' % body, 'stroke'), 1, card))
+            out += [(n, plate, c, o, g, self.TEXT) for n, c, o, g in text]
+            out += [(n, plate, c, o, g, self.MARK) for n, c, o, g in marks]
+        return out
+
+    def test_every_pair_clears_its_bars_on_both_plates(self):
+        c = load_contrast()
+        misses, passing_exceptions = [], set(self.EXCEPTIONS)
+        for name, plate, color, opacity, grounds, (ratio_bar, lc_bar) in self._pairs():
+            r, g, b, a = c.parse(color)
+            for ground in grounds:
+                under = c.flatten(ground)
+                over = c.flatten((r, g, b, a * opacity), under + (1.0,))
+                ratio, lc = c.wcag(over, under), c.apca(over, under)
+                if ratio < ratio_bar or abs(lc) < lc_bar:
+                    if name in self.EXCEPTIONS:
+                        passing_exceptions.discard(name)
+                    else:
+                        misses.append('%s (%s) %s at %.2f on %s: %.2f / Lc %.1f'
+                                      % (name, plate, color, opacity, ground, ratio, lc))
+        assert not misses, '\n'.join(misses)
+        assert not passing_exceptions, (
+            'these exceptions pass now; remove them: %s' % sorted(passing_exceptions))
 
 
 class TestAmericanEnglish(unittest.TestCase):
@@ -12077,27 +12223,28 @@ class TestInstallerLoader:
         assert 'weewx-loopdata 7.0 or later' in message
         assert 'none is installed' in message
 
-    # ---- the weewx-skyfield 2.5 floor (9.3) ----------------------------
+    # ---- the weewx-skyfield 2.6 floor (9.4) ----------------------------
     #
     # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or the
-    # built-in almanac -- so ABSENCE must not refuse.  But 9.3 is pinned
-    # to 2.5, whose label_layers draw a set's narrow label scale (9.1
-    # pinned 2.4 for the pass dot's role classes and the light plate's
-    # brass; 2.5 carries both).  A skyfield that IS there and is too old
-    # refuses, rather than a fallback logging on every report cycle.
+    # built-in almanac -- so ABSENCE must not refuse.  But 9.4 is pinned
+    # to 2.6, whose contrast palette the panels copy (2.5 brought the
+    # label_layers that draw a set's narrow label scale, and 2.4 the pass
+    # dot's role classes; 2.6 carries all of them).  A skyfield that IS
+    # there and is too old refuses, rather than a fallback logging on
+    # every report cycle.
 
-    @pytest.mark.parametrize('version', ['2.5', '2.5.1', '2.6', '3.0', '2.5a1', '2.5b1'])
-    def test_loads_with_skyfield_2_5(self, monkeypatch, version):
+    @pytest.mark.parametrize('version', ['2.6', '2.6.1', '2.7', '3.0', '2.6a1', '2.6b1'])
+    def test_loads_with_skyfield_2_6(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
         monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
         assert load_installer().loader()['name'] == 'celestial'
 
-    # '2.5b1' is NOT here: WeeWX's version_compare reads a dev build of
-    # 2.5 as 2.5, exactly as the weewx-loopdata floor above reads
+    # '2.6b1' is NOT here: WeeWX's version_compare reads a dev build of
+    # 2.6 as 2.6, exactly as the weewx-loopdata floor above reads
     # '7.0a1' as 7.0.  A pre-release of the version BELOW the floor
-    # ('2.4.9b1') is what must refuse.
-    @pytest.mark.parametrize('version', ['2.4', '2.4.1', '2.3.5', '2.1', '1.16', '2.4.9b1'])
+    # ('2.5.9b1') is what must refuse.
+    @pytest.mark.parametrize('version', ['2.5', '2.5.1', '2.4', '2.3.5', '1.16', '2.5.9b1'])
     def test_refuses_an_older_skyfield(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
@@ -12105,7 +12252,7 @@ class TestInstallerLoader:
         with pytest.raises(SystemExit) as info:
             load_installer().loader()
         message = str(info.value)
-        assert 'weewx-skyfield 2.5 or later' in message
+        assert 'weewx-skyfield 2.6 or later' in message
         assert 'found %s' % version in message
 
     def test_no_skyfield_at_all_still_installs(self, monkeypatch):

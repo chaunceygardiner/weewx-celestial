@@ -100,24 +100,27 @@ def loader():
         # own charts about brass -- neither says anything in any log.  So
         # a skyfield that IS there and is too old refuses, here, where the
         # user is reading.  Gated on installing() for the same reason as
-        # the weewx-loopdata check above.  9.3 raises the floor to 2.5: a
-        # fragment set's narrow label layer is drawn by 2.5's
-        # label_layers, and keeping an older skyfield working would mean a
-        # fallback that logs on every report cycle, on exactly the station
-        # that should upgrade.
+        # the weewx-loopdata check above.  9.4 raises the floor to 2.6: the
+        # panels' colors are 2.6's contrast palette, copied in step, and
+        # beside 2.5 the dial and the dome would disagree about them.  Before
+        # that, 9.3's floor of 2.5: a fragment set's narrow label layer is
+        # drawn by 2.5's label_layers, and keeping an older skyfield working
+        # would mean a fallback that logs on every report cycle, on exactly
+        # the station that should upgrade.
         try:
             from user.wxskyfield import WXSKYFIELD_VERSION
         except Exception:
             WXSKYFIELD_VERSION = None      # absent, or broken: not ours to judge
         if (WXSKYFIELD_VERSION is not None
-                and version_compare(str(WXSKYFIELD_VERSION), '2.5') < 0):
-            sys.exit("weewx-celestial requires weewx-skyfield 2.5 or later, "
+                and version_compare(str(WXSKYFIELD_VERSION), '2.6') < 0):
+            sys.exit("weewx-celestial requires weewx-skyfield 2.6 or later, "
                      "found %s.  Upgrade weewx-skyfield first, then install "
                      "weewx-celestial.  (weewx-skyfield is optional -- the page "
                      "renders without it -- but an older one is not kept in "
-                     "step: a skin's narrow label layers need 2.5, and before "
-                     "2.4 the Next Visible Pass dot would not flip and the light "
-                     "theme's accent would disagree with the charts.)"
+                     "step: the panels' colors are 2.6's, a skin's narrow label "
+                     "layers need 2.5, and before 2.4 the Next Visible Pass dot "
+                     "would not flip and the light theme's accent would disagree "
+                     "with the charts.)"
                      % WXSKYFIELD_VERSION)
 
     return CelestialInstaller()
@@ -201,7 +204,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.3",
+            version = "9.4",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

@@ -1,6 +1,44 @@
 weewx-celestial change history
 ------------------------------
 
+9.4 2026/09/14
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6 first.
+  9.4 is pinned to 2.6, whose palette the panels copy.  The installer
+  REFUSES to install beside an older weewx-skyfield, naming the version
+  it found.  Having none at all is not a refusal -- the page still
+  renders on PyEphem or the built-in almanac, with less on it.
+
+- Every piece of text on the page is readable against what is actually
+  painted under it, on both plates, by two measures: a WCAG 2 contrast
+  ratio of at least 4.5 and an APCA lightness contrast of at least
+  Lc 60, with no allowance for large or bold text.  Marks a reader has
+  to find -- the bodies' outlines, the moon's rim, a comet's tail, a
+  satellite's dot -- clear 3.0 and Lc 30.  Opacity counts as part of a
+  color.  On the dark plate that lightens the secondary text (--muted,
+  #C0C5D9), the brass accent (--brass, #E0C27F), the sky charts' ring
+  and star names (now --muted) and the constellation names (--conlab,
+  #BBC5E3), all of them weewx-skyfield 2.6's values; Mars is #D06C56 and
+  Earth's label #92BFB0.  The light plate's moon rim is #868686.  A
+  skin that overrides these tokens keeps its own values -- and on the
+  dark plate an override of --muted now reaches the sky charts' ring
+  and star labels too, which were a fixed color there through 9.3 (the
+  light plate has always worked that way).
+
+- A body below the horizon no longer fades its roster row and its dial
+  label to 55% opacity, which put that text under both measures on both
+  plates: they take the secondary text color instead.  A satellite in a
+  bright sky names itself in that color too, and its dot dims to 80%
+  rather than 35%.  Below the horizon the moon's rim keeps its plate's
+  strength while the disc dims, and a comet's tail dims to 60% on the
+  dark plate and 75% on the light one rather than 50%.  Two additions to
+  the panels' surface carry this: the moon's dark disc and lit limb sit
+  in their own group, `cel-moon-disc`, and the tail's dimming is a token,
+  `--tail-below-op`, set per plate.
+
+- The dial's rings, ticks and rim stay deliberately faint: they are the
+  scale, not something to find, and the one exception to the marks bar.
+
 9.3 2026/09/12
 --------------
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.5 first.

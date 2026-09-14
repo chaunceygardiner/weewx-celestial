@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.3';
+  var CELESTIAL_JS_VERSION = '9.4';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -399,9 +399,12 @@ var celestial = (function () {
         m.dot = svgEl('circle', {r: 8, 'class': 'cel-geodot cel-fill-sun'}, g);
       } else if (key === 'moon') {
         // True-phase disc: dark disc, lit limb/terminator path, silver rim
-        // (the rim keeps a new moon visible against the card).
-        m.dot = svgEl('circle', {r: 8, 'class': 'cel-moon-dark'}, g);
-        m.lit = svgEl('path', {'class': 'cel-moon-lit'}, g);
+        // (the rim keeps a new moon visible against the card).  The disc
+        // has its own group so it can dim as one image below the horizon
+        // while the rim, outside it, stays strong enough to find.
+        var disc = svgEl('g', {'class': 'cel-moon-disc'}, g);
+        m.dot = svgEl('circle', {r: 8, 'class': 'cel-moon-dark'}, disc);
+        m.lit = svgEl('path', {'class': 'cel-moon-lit'}, disc);
         m.rim = svgEl('circle', {r: 8, 'class': 'cel-moon-rim', fill: 'none'}, g);
       } else {
         m.dot = svgEl('circle', {r: 6.5, 'class': 'cel-geodot cel-fill-' + key}, g);
