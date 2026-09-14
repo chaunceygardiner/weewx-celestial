@@ -4718,9 +4718,9 @@ class TestSampleSkinRenders:
     def test_countdown_off_and_identical_writes_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):
         """Two pages on one feed.  With `countdown` on, packets repaint
-        the chips but never rewrite a chip or roster cell with the markup it
-        already holds -- that rewrite replaced the children and repainted,
-        the chips' flicker on every packet.  With it off, nothing touches
+        the chips but never rewrite a chip, a roster cell, a dial label or a
+        hover title with what it already holds -- that rewrite replaced the
+        children and repainted, the chips' flicker on every packet.  With it off, nothing touches
         any chip element at all, which is what a consumer page drawing its
         own chips under these ids needs.  A MutationObserver armed before
         the page's scripts run counts both.  Skips when the playwright env
@@ -4745,9 +4745,20 @@ class TestSampleSkinRenders:
 
         def packet():
             # The station clock advances per request; every event instant
-            # stands still, so a chip's label and detail stay the same
-            # from packet to packet while its countdown value moves.
+            # and every position stands still, so a chip's label and detail,
+            # and each dial mark's label and <title>, stay the same from
+            # packet to packet while a countdown value moves.
             return loop_file({
+                'almanac.mars.az': 120.0, 'almanac.mars.alt': 30.0,
+                'almanac.mars.earth_distance': 1.7,
+                'almanac.jupiter.az': 200.0, 'almanac.jupiter.alt': -10.0,
+                'almanac.jupiter.earth_distance': 6.0,
+                'almanac.proxima_centauri.az': 180.0,
+                'almanac.proxima_centauri.alt': -40.0,
+                'almanac.proxima_centauri.earth_distance': 268000.0,
+                'almanac.halley.az': 90.0, 'almanac.halley.alt': 20.0,
+                'almanac.halley.earth_distance': 35.0, 'almanac.halley.mag': 25.0,
+                'almanac.halley.label': 'Halley',
                 'current.dateTime.raw': time.time(),
                 'almanac.sun.next_setting.unix_epoch.raw': now + 4000,
                 'almanac.sun.next_rising.unix_epoch.raw': now + 40000,
@@ -4781,7 +4792,7 @@ class TestSampleSkinRenders:
         port = httpd.server_address[1]
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         observer = (
-            "window.__mut = {chip: 0, identical: []};"
+            "window.__mut = {chip: 0, titles: 0, identical: []};"
             "document.addEventListener('DOMContentLoaded', function () {"
             "  var snap = new Map();"
             "  document.querySelectorAll('[id]').forEach(function (e) { snap.set(e, e.innerHTML); });"
@@ -4790,9 +4801,13 @@ class TestSampleSkinRenders:
             "    recs.forEach(function (r) {"
             "      var t = r.target.nodeType === 1 ? r.target : r.target.parentElement;"
             "      if (t && t.closest('[id^=\"chip-\"]')) { window.__mut.chip++; }"
-            "      if (r.type === 'childList' && t && t.id && !seen.has(t)) {"
+            "      var named = t && (t.id || t.tagName === 'title' || t.tagName === 'text');"
+            "      if (r.type === 'childList' && named && !seen.has(t)) {"
             "        seen.add(t);"
-            "        if (snap.has(t) && snap.get(t) === t.innerHTML) { window.__mut.identical.push(t.id); }"
+            "        if (t.tagName === 'title') { window.__mut.titles++; }"
+            "        var where = t.parentElement && t.parentElement.closest('[id]');"
+            "        var name = t.id || t.tagName + '@' + (where ? where.id : '');"
+            "        if (snap.has(t) && snap.get(t) === t.innerHTML) { window.__mut.identical.push(name); }"
             "        snap.set(t, t.innerHTML);"
             "      }"
             "    });"
@@ -4819,9 +4834,9 @@ class TestSampleSkinRenders:
             '            page.wait_for_function("(u) => document.getElementById(\'last-update\')'
             '.textContent !== u", arg=u, timeout=15000)\n'
             "        m = page.evaluate('window.__mut')\n"
-            "        out[name] = {'errors': errors, 'chip': m['chip'],\n"
+            "        out[name] = {'errors': errors, 'chip': m['chip'], 'titles': m['titles'],\n"
             "                     'identical': [i for i in m['identical']\n"
-            "                                   if i.startswith(('chip-', 'geo-'))],\n"
+            "                                   if i.startswith(('chip-', 'geo-', 'title@', 'text@'))],\n"
             "                     'sun_v': page.inner_text('#chip-sun-v')}\n"
             '        page.close()\n'
             '    browser.close()\n'
@@ -4838,6 +4853,10 @@ class TestSampleSkinRenders:
         # On: the chips really were repainted (the observer sees them), and
         # never with the markup a cell already held.
         assert out['on']['chip'] > 0, out['on']
+        # The dial really drew its marks, so their labels and <title>s
+        # were re-rendered on every packet and tick -- and never rewritten
+        # with the text they already held.
+        assert out['on']['titles'] > 0, out['on']
         assert out['on']['identical'] == [], out['on']['identical']
         # Off: four packets, and not one mutation under any chip.
         assert out['off']['chip'] == 0, out['off']

@@ -45,7 +45,8 @@ weewx-celestial change history
 
 - The countdown chips no longer flicker.  Every loop packet rewrote each
   chip's text even when it had not changed, and the browser repainted it;
-  the script now writes a cell only when its content differs.
+  the script now writes a cell, a dial label or a mark's hover title only
+  when its content differs.
 
 - A page that drives countdown chips of its own can turn celestial's off:
   `$celestial.config_script($almanac, $filename, countdown=False)`.

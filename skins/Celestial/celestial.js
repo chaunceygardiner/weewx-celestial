@@ -278,6 +278,14 @@ var celestial = (function () {
       }
     }
   }
+  function setText(el, text) {
+    // The same rule for plain text -- a dial label or a mark's <title>,
+    // re-rendered every packet and every tick -- compared exactly, since
+    // there is no markup for the browser to normalize.
+    if (el.textContent !== text) {
+      el.textContent = text;
+    }
+  }
   function num(r, key) {
     // The guarded read: a missing or non-numeric field skips its own cell.
     return (typeof r[key] === 'number') ? r[key] : null;
@@ -709,15 +717,15 @@ var celestial = (function () {
         m.glow.setAttribute('display', below ? 'none' : '');
       }
       m.lab.setAttribute('class', below ? 'bodylab cel-dim' : 'bodylab');
-      m.title.textContent = m.label + ' \u00B7 ' +
+      setText(m.title, m.label + ' \u00B7 ' +
           (below ? T['below horizon']
                  : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)})) +
           ' \u00B7 ' +
           fmt('{dist} au',
-              {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)});
+              {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)}));
       if (key === 'proxima_centauri') {
-        m.lab.textContent = m.label + ' \u00B7 ' +
-                            fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)});
+        setText(m.lab, m.label + ' \u00B7 ' +
+                       fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)}));
       }
       placeBodyLabel(m.lab, azNow, r);
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
@@ -770,7 +778,7 @@ var celestial = (function () {
         return;
       }
       m.label = satLabel(key);
-      m.lab.textContent = m.label;
+      setText(m.lab, m.label);
       if (azNow === null || altNow === null || auNow === null) {
         m.g.setAttribute('display', 'none');
         m.lab.setAttribute('display', 'none');
@@ -830,7 +838,7 @@ var celestial = (function () {
       if (mag !== null) {
         tip += ' \u00B7 ' + fmt('mag {mag}', {mag: mag.toFixed(1)});
       }
-      m.title.textContent = tip;
+      setText(m.title, tip);
       placeBodyLabel(m.lab, azNow, r);
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
@@ -1311,7 +1319,7 @@ var celestial = (function () {
                                            + (daylight ? ' cel-faint' : ''));
       m.lab.setAttribute('class',
                          (shadowed || daylight) ? 'satlab cel-faint' : 'satlab');
-      m.lab.textContent = satLabel(name);
+      setText(m.lab, satLabel(name));
       m.lab.setAttribute('x', (p[0] + 8).toFixed(1));
       m.lab.setAttribute('y', (p[1] - 6).toFixed(1));
     });
