@@ -182,7 +182,9 @@ changes: the same files, at the same cadence, on every screen.
 
 Satellites are the exception to all of this: their markers move at loop
 rates, continuously, because they are the one class of thing overhead
-that genuinely moves fast.
+that genuinely moves fast.  A live marker's name is drawn in every label
+layer the dome carries, at that layer's size, so it switches with the
+names around it.
 
 Both fragments arrive as SVG with their colors already inside them, which
 is why the page's plate — dark or light — is settled when the report is

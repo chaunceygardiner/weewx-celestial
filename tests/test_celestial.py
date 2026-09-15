@@ -3212,9 +3212,10 @@ class TestSampleSkinRenders:
         Pins: no mark keeps a transform, NO MARK KEEPS A display -- a
         body the live layer hid must come back, or the frozen plate shows
         a daytime sky with no sun in it -- and no live satellite marker
-        survives.  The display half was found by the liveseasons port's
-        review of this same function.  Skips when the playwright env is
-        absent."""
+        survives, dot or name (the name sits in the chart's label layers,
+        apart from its dot, so each is removed on its own).  The display
+        half was found by the liveseasons port's review of this same
+        function.  Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
         import re as relib
@@ -3299,6 +3300,8 @@ class TestSampleSkinRenders:
             "            '#dome-svg g.dome-body[display]', 'els => els.length'),\n"
             "        'live_satdots': page.eval_on_selector_all(\n"
             "            '#dome-svg .cel-satdot', 'els => els.length'),\n"
+            "        'live_satnames': page.eval_on_selector_all(\n"
+            "            '#dome-svg text.satlab:not([data-body])', 'els => els.length'),\n"
             '    }\n'
             '    # ...and then the station clock leaps and the freeze engages.\n'
             "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=20000)\n"
@@ -3311,6 +3314,8 @@ class TestSampleSkinRenders:
             "        'els => els.length')\n"
             "    out['satdots'] = page.eval_on_selector_all(\n"
             "        '#dome-svg .cel-satdot', 'els => els.length')\n"
+            "    out['satnames'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg text.satlab:not([data-body])', 'els => els.length')\n"
             "    out['errors'] = errors\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -3326,10 +3331,12 @@ class TestSampleSkinRenders:
         assert out['live_nudged'] >= 1, out
         assert out['live_hidden'] >= 1, out
         assert out['live_satdots'] >= 1, out
+        assert out['live_satnames'] >= 1, out
         # And the freeze undid every one of them.
         assert out['nudged'] == 0, out
         assert out['hidden'] == 0, out
         assert out['satdots'] == 0, out
+        assert out['satnames'] == 0, out
 
     def test_stalled_feed_restores_the_drawn_sky_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -3424,7 +3431,9 @@ class TestSampleSkinRenders:
             "    out = {'live_nudged': page.eval_on_selector_all(\n"
             "        '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
             "        'live_satdots': page.eval_on_selector_all(\n"
-            "            '#dome-svg .cel-satdot', 'els => els.length')}\n"
+            "            '#dome-svg .cel-satdot', 'els => els.length'),\n"
+            "        'live_satnames': page.eval_on_selector_all(\n"
+            "            '#dome-svg text.satlab:not([data-body])', 'els => els.length')}\n"
             '    # Now the feed repeats itself while the clock runs past\n'
             '    # EXTRAP_MAX.  Every poll still answers 200.  Stepped, not\n'
             '    # leapt: each step needs the event loop back to deliver the\n'
@@ -3440,6 +3449,8 @@ class TestSampleSkinRenders:
             "        'els => els.length')\n"
             "    out['satdots'] = page.eval_on_selector_all(\n"
             "        '#dome-svg .cel-satdot', 'els => els.length')\n"
+            "    out['satnames'] = page.eval_on_selector_all(\n"
+            "        '#dome-svg text.satlab:not([data-body])', 'els => els.length')\n"
             "    out['errors'] = errors\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -3453,11 +3464,13 @@ class TestSampleSkinRenders:
         assert out['errors'] == []
         assert out['live_nudged'] >= 1, out       # the live layer really ran
         assert out['live_satdots'] >= 1, out
+        assert out['live_satnames'] >= 1, out
         assert served['n'] > len(packets), out    # and the feed kept answering
         # The stall was noticed even though every poll succeeded.
         assert out['nudged'] == 0, out
         assert out['hidden'] == 0, out
         assert out['satdots'] == 0, out
+        assert out['satnames'] == 0, out
 
     @pytest.mark.parametrize('serve_fragment,reason', [
         # Fetches succeed and the file they return is old: the station
@@ -7978,7 +7991,10 @@ class TestPanels:
         from one to the other swaps layers with NOTHING fetched, since
         no second set exists.  A body nudged by the live layer carries
         the same transform on its mark and on EVERY layer's label, so the
-        hidden layout is right the moment it becomes the visible one.
+        hidden layout is right the moment it becomes the visible one.  A
+        live satellite's name is drawn in each layer at that layer's
+        body-label size, shows only in the layer the width shows, and
+        hides with its dot when the satellite sets.
         Skips when the playwright env is absent, or when the sibling
         skyfield has no label layers."""
         import http.server
@@ -8026,7 +8042,17 @@ class TestPanels:
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
             packet = sat_feed_packets(TIME_TS + 10)[0]
+        # The ISS overhead, so the live layer draws its own marker and
+        # its name in each label layer.
+        record = jsonlib.loads(packet)[REPORT_NAME]
+        record['almanac.iss.az'], record['almanac.iss.alt'] = 120.0, 45.0
+        packet = loop_file(record).encode()
         (tmp_path / 'loop.txt').write_bytes(packet)
+        # Four seconds later the ISS has set: the runner swaps this in.
+        gone = dict(record)
+        gone['current.dateTime.raw'] += 4
+        gone['almanac.iss.alt'] = -10.0
+        (tmp_path / 'loop-set.txt').write_bytes(loop_file(gone).encode())
         write_assets(tmp_path)          # the shipped build
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -8041,8 +8067,11 @@ class TestPanels:
         runner = tmp_path / 'runner.py'
         runner.write_text(
             'import json\n'
+            'import shutil\n'
             'from playwright.sync_api import sync_playwright\n'
             'URL = "http://127.0.0.1:%d/index.html"\n'
+            'SET_FILE = %r\n'
+            'LOOP_FILE = %r\n'
             'PROBE = """() => {\n'
             '  const layers = root => Array.from(document.querySelectorAll(root + " g.dome-labels"))\n'
             '      .map(g => [g.getAttribute("data-label-scale"), getComputedStyle(g).display]);\n'
@@ -8052,7 +8081,13 @@ class TestPanels:
             '    const labs = Array.from(document.querySelectorAll(\'#dome-svg text[data-body="\' + key + \'"]\'));\n'
             '    return [key, g.getAttribute("transform"), labs.map(t => t.getAttribute("transform"))];\n'
             '  });\n'
-            '  return {dome: layers("#dome-svg"), pass: layers("#pass-chart"), nudge: nudge};\n'
+            '  const sats = Array.from(document.querySelectorAll("#dome-svg text.satlab:not([data-body])"))\n'
+            '      .map(t => [t.parentNode.getAttribute("data-label-scale"), getComputedStyle(t).fontSize,\n'
+            '                 t.getBoundingClientRect().width > 0, t.textContent]);\n'
+            '  const bodies = Array.from(document.querySelectorAll("#dome-svg g.dome-labels text.bodylab"))\n'
+            '      .map(t => [t.parentNode.getAttribute("data-label-scale"), getComputedStyle(t).fontSize]);\n'
+            '  return {dome: layers("#dome-svg"), pass: layers("#pass-chart"), nudge: nudge,\n'
+            '          sats: sats, bodies: bodies};\n'
             '}"""\n'
             'out = {}\n'
             'with sync_playwright() as p:\n'
@@ -8070,8 +8105,24 @@ class TestPanels:
             '        leg["after"] = page.evaluate(PROBE)\n'
             '        out[name] = leg\n'
             '        page.close()\n'
+            '    SAT = """() => [\n'
+            '      Array.from(document.querySelectorAll("#dome-svg text.satlab:not([data-body])"))\n'
+            '        .filter(t => t.getBoundingClientRect().width > 0).length,\n'
+            '      Array.from(document.querySelectorAll("#dome-svg .cel-satdot"))\n'
+            '        .filter(c => c.getBoundingClientRect().width > 0).length]"""\n'
+            '    page = browser.new_page(viewport={"width": 1200, "height": 800})\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.goto(URL)\n'
+            '    page.wait_for_timeout(3000)\n'
+            '    up = page.evaluate(SAT)\n'
+            '    shutil.copyfile(SET_FILE, LOOP_FILE)\n'
+            '    page.wait_for_timeout(5000)\n'
+            '    out["set"] = {"errors": errors, "up": up, "down": page.evaluate(SAT)}\n'
+            '    page.close()\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % httpd.server_address[1])
+            'print(json.dumps(out))\n'
+            % (httpd.server_address[1], str(tmp_path / 'loop-set.txt'), str(tmp_path / 'loop.txt')))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
                                   timeout=240)
@@ -8096,6 +8147,30 @@ class TestPanels:
             for key, tr, labs in nudge:
                 assert tr.startswith('translate('), (key, tr)
                 assert len(labs) == 2 and labs == [tr, tr], (key, tr, labs)
+            # The live satellite's name: one per layer, each at the size
+            # weewx-skyfield gave that layer's body labels (read from
+            # the chart, not assumed), and only the layer the width
+            # shows is visible.  Through 9.4 it was one name outside the
+            # layers at the browser's 16 px default.
+            for probe in (leg['before'], leg['after']):
+                body_px = {}
+                for scale, size in probe['bodies']:
+                    body_px.setdefault(scale, set()).add(size)
+                assert sorted(body_px) == ['0.8', '2.2'], probe['bodies']
+                assert all(len(v) == 1 for v in body_px.values()), body_px
+                sats = probe['sats']
+                assert sorted(s[0] for s in sats) == ['0.8', '2.2'], sats
+                shown = [scale for scale, display in probe['dome'] if display == 'inline']
+                for scale, size, visible, text in sats:
+                    assert {size} == body_px[scale], (scale, size, body_px)
+                    assert visible == (scale in shown), (scale, visible, shown)
+                    assert text == record['almanac.iss.label'], text
+        # And when the satellite sets, every layer's copy of its name
+        # hides with its dot: the names no longer sit inside the dot's
+        # group, so hiding the group alone would leave them standing.
+        assert out['set']['errors'] == [], out['set']
+        assert out['set']['up'] == [1, 1], out['set']
+        assert out['set']['down'] == [0, 0], out['set']
 
     def test_dome_and_pass_panels_first_paint_the_set_they_name(self, wxskyfield_sat_almanac):
         """A page names the fragment set it embeds and gets that set's

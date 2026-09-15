@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.4';
+  var CELESTIAL_JS_VERSION = '9.4.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -1063,11 +1063,32 @@ var celestial = (function () {
     var lab = strAt('almanac.' + name + '.label');
     return lab !== null ? lab : name.charAt(0).toUpperCase() + name.slice(1);
   }
+  // The name is drawn once per label layer, inside that layer's group, at
+  // the size weewx-skyfield gives a body label at that layer's scale
+  // (11 px x scale, its body_px), so the one the viewport shows is the
+  // same size as the names around it and turns with them.  With no
+  // class-set size in the stylesheet, a lone name in the mark's group
+  // took the browser's 16 px default: nearly twice a 0.8 layer's body labels,
+  // two-thirds of a 2.2 layer's.  A chart without layers gets one name
+  // at 11 px beside its dot.
+  var BODY_LABEL_PX = 11;
   function buildSatMark(svg) {
     var g = svgEl('g', {display: 'none'}, svg);
+    var layers = svg.querySelectorAll('g.dome-labels');
+    var labs = [];
+    for (var i = 0; i < layers.length; i++) {
+      var scale = parseFloat(layers[i].getAttribute('data-label-scale'));
+      labs.push(svgEl('text', {'class': 'satlab', display: 'none',
+                               style: 'font-size:' + (BODY_LABEL_PX * (isFinite(scale) ? scale : 1)).toFixed(1) + 'px'},
+                      layers[i]));
+    }
+    if (labs.length === 0) {
+      labs.push(svgEl('text', {'class': 'satlab',
+                               style: 'font-size:' + BODY_LABEL_PX.toFixed(1) + 'px'}, g));
+    }
     return {g: g,
             dot: svgEl('circle', {r: 4, 'class': 'cel-satdot'}, g),
-            lab: svgEl('text', {'class': 'satlab'}, g)};
+            labs: labs};
   }
   function localDayNum(ts) {
     // The instant's DISPLAY-ZONE calendar date, as a day number to
@@ -1253,6 +1274,13 @@ var celestial = (function () {
         if (m && m.g && m.g.parentNode !== null) {
           m.g.parentNode.removeChild(m.g);
         }
+        if (m && m.labs) {
+          m.labs.forEach(function(l) {
+            if (l.parentNode !== null) {
+              l.parentNode.removeChild(l);
+            }
+          });
+        }
         // (the generated marks were un-hidden by the sweep above)
       });
       satMarks = null;
@@ -1295,9 +1323,11 @@ var celestial = (function () {
       }
       if (!overhead) {
         m.g.setAttribute('display', 'none');
+        m.labs.forEach(function(l) { l.setAttribute('display', 'none'); });
         return;
       }
       m.g.removeAttribute('display');
+      m.labs.forEach(function(l) { l.removeAttribute('display'); });
       var p = domeXY(azNow, altNow);
       m.dot.setAttribute('cx', p[0].toFixed(1));
       m.dot.setAttribute('cy', p[1].toFixed(1));
@@ -1317,11 +1347,13 @@ var celestial = (function () {
       var daylight = (sunAlt !== null && sunAlt >= -6);
       m.dot.setAttribute('class', 'cel-satdot' + (shadowed ? ' cel-shadow' : '')
                                            + (daylight ? ' cel-faint' : ''));
-      m.lab.setAttribute('class',
-                         (shadowed || daylight) ? 'satlab cel-faint' : 'satlab');
-      setText(m.lab, satLabel(name));
-      m.lab.setAttribute('x', (p[0] + 8).toFixed(1));
-      m.lab.setAttribute('y', (p[1] - 6).toFixed(1));
+      m.labs.forEach(function(l) {
+        l.setAttribute('class',
+                       (shadowed || daylight) ? 'satlab cel-faint' : 'satlab');
+        setText(l, satLabel(name));
+        l.setAttribute('x', (p[0] + 8).toFixed(1));
+        l.setAttribute('y', (p[1] - 6).toFixed(1));
+      });
     });
   }
   function domeFragMeta() {

@@ -1,6 +1,16 @@
 weewx-celestial change history
 ------------------------------
 
+9.4.1 2026/09/15
+----------------
+- A satellite's name on the live sky dome is the same size as the names
+  around it.  The page's live marker drew the name with no size, so it
+  took the browser's 16 px default: about twice the size of the other
+  labels on a dome drawn at a small label scale, and smaller than them in
+  a phone-sized label layer.  It is now drawn in every label layer the
+  dome carries, at that layer's body-label size, so the name the screen
+  shows matches its neighbors and switches with them.
+
 9.4 2026/09/14
 --------------
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6 first.
