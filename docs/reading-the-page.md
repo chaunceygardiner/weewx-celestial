@@ -94,9 +94,9 @@ begins — "autumn begins"), Earth's **perihelion or aphelion**, the next
 configured comet also contributes a **perihelion** chip on the same
 30-day rule.
 
-A countdown's precision follows its horizon: a day or more out it reads
-`2d 04h 11m` with the event's date beside it; inside the final day it
-becomes an `hh:mm:ss` clock.
+A countdown shows the two largest units that matter: `22 d 19 h`
+a day or more out, with the event's date beside it; `9 h 35 m`
+inside a day; `35 m` inside an hour; `45 s` in the last minute.
 
 {: .note }
 A chip you never see is not a fault.  A chip is hidden when its field is

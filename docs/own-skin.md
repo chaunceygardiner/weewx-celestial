@@ -474,7 +474,8 @@ The panels are self-contained, but two elements describe the **feed**
 rather than any one panel, and the script writes them if it finds them:
 
 - **`#last-update`** — the page's clock: the timestamp of the last loop
-  packet, painted as `HH:MM:SS`.
+  packet, painted in the report's clock format with seconds (`1:53:22 PM`
+  in English).
 - **`#live-label`** — the badge, where the feed's faults are reported:
   `LIVE`, an age in seconds, `NO DATA (HTTP 404)`, `BAD DATA`, `OFFLINE`,
   `CLICK-ME`.
@@ -639,7 +640,7 @@ and nothing on the page's own markup; the label layers inside a chart
 (`g.dome-labels`, `data-label-scale`, and `data-label-layers` and
 `data-label-media` on the svg root) are weewx-skyfield 2.5's contract,
 documented there.  9.4 added the config key `countdown` and the token
-`--tail-below-op`.
+`--tail-below-op`.  9.5 added the config key `clock`.
 
 What is **not** contract: the internals of `celestial.js`, the shape of
 the SVG the dial builds, and the roster's inner spans.  A page that

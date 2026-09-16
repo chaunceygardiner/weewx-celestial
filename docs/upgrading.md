@@ -23,6 +23,20 @@ skin changes, and no file has to be deleted.  Reload any page you have
 open: the javascript is served with the version in its URL, so a browser
 holding the previous release's copy takes the new one on the next load.
 
+9.5 requires **weewx-skyfield 2.6.1** if you run it: upgrade
+weewx-skyfield first, since the installer refuses an older one, naming
+the version it found.  Having none at all is not a refusal.  The two
+releases write clock times, dates and durations the same way, and you
+will see it on an English page: times read 12-hour ("3:53 PM"), a date
+with its time takes a comma ("Sep 15, 3:53 PM"), and a countdown shows
+one symbol per unit ("9 h 35 m", "in 5 m") instead of `hh:mm:ss`.
+Other languages keep their own words and their 24-hour clocks.  Nothing
+to do, unless you keep a lang file of your own for the Celestial skin:
+its renamed and new `[Texts]` keys are listed in `changes.txt`, and an
+entry under an old key simply stops being read.  A skin of your own that
+copies `celestial.js` should copy the new one; its config gains the key
+`clock`, which `config_script` writes.
+
 9.4 requires **weewx-skyfield 2.6** if you run it: upgrade weewx-skyfield
 first, since the installer refuses an older one, naming the version it
 found.  Having none at all is not a refusal.  The two releases share one
@@ -275,7 +289,7 @@ chips and the comets (8.1) included — the fixed ones from the skin, the
 satellite and comet ones written by the installer for your `[Skyfield]`
 sets.  Your old fields line is neither needed nor touched.
 
-Run weewx-skyfield 2.6: 9.4 is pinned to it and the installer refuses an
+Run weewx-skyfield 2.6.1: 9.5 is pinned to it and the installer refuses an
 older one.  It is what serves the sky dome, the satellite layer, the Next
 Visible Pass chart, the comets and the shower and supermoon chips — the
 sunset, darkness and pass chips are the page's own arithmetic and count

@@ -117,7 +117,9 @@
             $("%.2f&deg; %s &middot; %.2f&deg; %s" % (abs($lat_f), $lat_letter, abs($lon_f), $lon_letter))
             ## The "updated" stamp first-paints the generation instant -- the
             ## page's clock until the first loop packet (the config block's
-            ## gen_ts) -- in the shape fmtHMS repaints it in: %H:%M:%S.
+            ## gen_ts) -- in the shape fmtHMS repaints it in: the report's
+            ## clock format with seconds (clock_stamp).  24-hour without
+            ## the panels, which also means without the script.
             ## And in the ZONE fmtHMS repaints it in: the station's own,
             ## which is this machine's, so time.localtime is already it.
             ## Three cases can still part them, and in all three the
@@ -134,6 +136,9 @@
             ## first paint must be a real instant in a defined zone, not a
             ## blank waiting for a packet that may never come.
             #set $gen_hms = time.strftime('%H:%M:%S', time.localtime($almanac.time_ts))
+            #if $panels
+            #set $gen_hms = $panels.clock_stamp($almanac)
+            #end if
             &middot; $gettext("updated") <span id="last-update">$gen_hms</span> <span id="live-label"></span>
           </div>
         </div>

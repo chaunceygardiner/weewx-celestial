@@ -737,14 +737,15 @@ class TestSampleSkinRenders:
         # would ship a page whose clock never started.
         assert '"gen_ts": %d' % int(TIME_TS) in html
         # The header's "updated" stamp first-paints that same instant, in
-        # the shape fmtHMS repaints it in (%H:%M:%S, station-local, the
+        # the shape fmtHMS repaints it in (the report's clock format with
+        # seconds, station-local, the
         # chip-detail precedent) -- the page displays on its own, and the
         # first packet must not reformat what the report painted.  Noon
         # PDT on the solstice; asserted on the rendered value for the
         # same errorCatcher reason.  8.3.4 shipped this span empty (and a
         # live clock beside it that is gone: read from the station it was
         # this stamp shown twice).
-        assert '<span id="last-update">12:00:00</span>' in html
+        assert '<span id="last-update">12:00:00 PM</span>' in html
         assert 'id="live-clock"' not in html
         # A capable almanac serves the page: no install hint, and the
         # footer carries the full Skyfield credit (Proxima proves the star
@@ -793,10 +794,10 @@ class TestSampleSkinRenders:
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
         assert 'id="sat-row-iss"' in html and 'id="sat-row-tiangong"' in html
         line = self.cell(html, 'sat-line-iss')
-        assert 'Jun 22 03:11' in line and 'in 15 h' in line
+        assert 'Jun 22, 3:11 AM' in line and 'in 15\u00a0h' in line
         sub = self.cell(html, 'sat-pass-iss')
         assert 'SSW' in sub and 'SE' in sub and 'ENE' in sub
-        assert '19' in sub and '10 min' in sub
+        assert '19' in sub and '10\u00a0m' in sub
         assert self.cell(html, 'sat-line-tiangong') == 'no visible pass in the coming week'
         assert self.cell(html, 'sat-pass-tiangong') == ''
         # The dome-side roster: the next pass of ANY kind, tagged from
@@ -805,12 +806,12 @@ class TestSampleSkinRenders:
         # PDT, peak 36 SW) -- and Tiangong crosses at 12:37 (peak 37 N),
         # likewise not visible.
         any_line = self.cell(html, 'sat-any-line-iss')
-        assert 'Jun 21 12:06' in any_line and 'in 6 min' in any_line
+        assert 'Jun 21, 12:06 PM' in any_line and 'in 6\u00a0m' in any_line
         any_sub = self.cell(html, 'sat-any-pass-iss')
         assert 'WNW' in any_sub and 'SW' in any_sub and 'SSE' in any_sub
-        assert '36' in any_sub and '11 min' in any_sub
+        assert '36' in any_sub and '11\u00a0m' in any_sub
         assert 'not visible' in any_sub
-        assert 'Jun 21 12:37' in self.cell(html, 'sat-any-line-tiangong')
+        assert 'Jun 21, 12:37 PM' in self.cell(html, 'sat-any-line-tiangong')
         assert 'not visible' in self.cell(html, 'sat-any-pass-tiangong')
         # Split by panel: the any-pass roster lives with the dome, the
         # visible-pass roster inside the Next Visible Pass section.
@@ -832,7 +833,7 @@ class TestSampleSkinRenders:
         when = re.search(r'passwhen mono">([^<]*)<', html)
         assert when is not None
         assert 'Jun 22' in when.group(1)
-        assert '03:11' in when.group(1) and '03:21' in when.group(1)
+        assert '3:11 AM' in when.group(1) and '3:21 AM' in when.group(1)
         assert '19' in when.group(1)
         # Both panels carry their own gradient and clip ids: the pass
         # chart's skygp/domecp and the dome's skyg/domec.  weewx-skyfield
@@ -870,16 +871,16 @@ class TestSampleSkinRenders:
 
             # Jun 20 02:00 PDT: the pass is 26 hours out and TOMORROW.
             tomorrow = line(1750410000)
-            assert 'Jun 21 03:59' in tomorrow
+            assert 'Jun 21, 3:59 AM' in tomorrow
             assert 'in 1 day' in tomorrow
             # Jun 19 20:00 PDT: 32 hours out, and the day after tomorrow.
             two_days = line(1750388400)
-            assert 'Jun 21 03:59' in two_days
+            assert 'Jun 21, 3:59 AM' in two_days
             assert 'in 2 days' in two_days
             # Under a day the row keeps its finer elapsed-time resolution:
             # that is what a go-watch reader wants, whichever side of
             # midnight the pass falls on.
-            assert 'in 16 h' in line(1750446000)          # Jun 20 12:00 PDT
+            assert 'in 16\u00a0h' in line(1750446000)     # Jun 20 12:00 PDT
 
     def test_renders_with_comets(self, wxskyfield_comet_almanac):
         """Comets configured (the skyfield 2.1 fixture MPC rows): the
@@ -916,14 +917,14 @@ class TestSampleSkinRenders:
         # The countdown row: the pass chip and the windowed guests
         # first-paint hidden; the sun, shower and darkness chips
         # first-paint the COUNTDOWN ITSELF -- the remaining time at
-        # generation, in the shape the javascript ticks: hh:mm:ss
-        # inside the final day, days-hours-minutes beyond (seconds are
-        # noise at that range) -- never the event's clock time alone (a
+        # generation, in the shape the javascript ticks: hours and
+        # minutes inside the final day, days and hours beyond -- never
+        # the event's clock time alone (a
         # countdown chip whose only number is a wall-clock time reads
         # as remaining time and lies); the clock time / moon note is
         # the small detail beside it (noon: sunset comes before
         # sunrise, ~8 h out; the fixture shower peak is ~38 days out,
-        # so its countdown reads days-hours-minutes).
+        # so its countdown reads days and hours).
         assert 'id="countdown"' in html
         # The pass chip first-paints the soonest visible pass (the
         # fixture ISS pass tomorrow morning, ~15 h out) -- all four
@@ -932,7 +933,7 @@ class TestSampleSkinRenders:
         assert re.search(r'id="chip-pass" data-ts="\d+" data-set="\d+"', html)
         assert self.cell(html, 'chip-pass-k') == 'Iss'
         assert self.cell(html, 'chip-pass-d') == 'appears in'
-        assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-pass-v'))
+        assert re.match(r'\d{1,2}\xa0h \d{1,2}\xa0m$', self.cell(html, 'chip-pass-v'))
         # The supermoon and eclipse guests bake their targets (and the
         # eclipse its kind-derived label) even while out of window --
         # nothing determinable at report time waits for the feed.
@@ -941,14 +942,14 @@ class TestSampleSkinRenders:
         assert self.cell(html, 'chip-eclipse-k') in ('lunar eclipse',
                                                      'solar eclipse')
         assert self.cell(html, 'chip-sun-k') == 'sunset'
-        assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-sun-v'))
-        assert re.match(r'\d{2}:\d{2}$', self.cell(html, 'chip-sun-d'))
+        assert re.match(r'\d{1,2}\xa0h \d{1,2}\xa0m$', self.cell(html, 'chip-sun-v'))
+        assert re.match(r'\d{1,2}:\d{2} [AP]M$', self.cell(html, 'chip-sun-d'))
         assert self.cell(html, 'chip-shower-k') == 'Southern Delta Aquariids'
-        assert re.match(r'\d{1,3}d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-shower-v'))
+        assert re.match(r'\d{1,3}\xa0d \d{1,2}\xa0h$', self.cell(html, 'chip-shower-v'))
         assert 'moon ' in self.cell(html, 'chip-shower-d')
         assert self.cell(html, 'chip-dark-k') == 'darkness begins'
-        assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-dark-v'))
-        assert re.match(r'\d{2}:\d{2}$', self.cell(html, 'chip-dark-d'))
+        assert re.match(r'\d{1,2}\xa0h \d{1,2}\xa0m$', self.cell(html, 'chip-dark-v'))
+        assert re.match(r'\d{1,2}:\d{2} [AP]M$', self.cell(html, 'chip-dark-d'))
         # The season chip: from the June fixture the next event is
         # September's equinox, 93 days out -- outside the 30-day window,
         # so the chip first-paints hidden, but its label and target bake
@@ -962,8 +963,8 @@ class TestSampleSkinRenders:
         # counting, date detail underneath.
         assert re.search(r'id="chip-apsis" data-ts="\d+">', html)
         assert self.cell(html, 'chip-apsis-k') == 'Earth aphelion'
-        assert re.match(r'\d{1,2}d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-apsis-v'))
-        assert re.match(r'\w+ \d{1,2} \d{2}:\d{2}$', self.cell(html, 'chip-apsis-d'))
+        assert re.match(r'\d{1,2}\xa0d \d{1,2}\xa0h$', self.cell(html, 'chip-apsis-v'))
+        assert re.match(r'\w+ \d{1,2}, \d{1,2}:\d{2} [AP]M$', self.cell(html, 'chip-apsis-d'))
         # The embedded dome passes the 2.1 comet markup through intact:
         # Halley's hollow diamond (mag 25.6) and the fabricated
         # always-bright comet's solid one, tails and all.  (No radiant at
@@ -1841,10 +1842,10 @@ class TestSampleSkinRenders:
         assert 'DOMContentLoaded' not in src
         assert re.search(r'if \(latest === null\) \{\n(\s*//[^\n]*\n)+\s*return;\n\s*\}\n\s*// The window the chart is judged against', src), \
             'pre-packet renderPass returns without touching the chart'
-        # The "updated" stamp repaints in the template's own shape (24-hour
-        # HH:MM:SS, en-GB hour12 off, the fmtHM precedent), so the first
-        # packet never reformats the first paint.
-        assert re.search(r"function fmtHMS\(ts\) \{[^}]*'en-GB'[^}]*hour12: false", src, re.S)
+        # The "updated" stamp repaints through the report's own clock
+        # format with seconds (config.clock, the template's clock_stamp),
+        # so the first packet never reformats the first paint.
+        assert re.search(r"function fmtHMS\(ts\) \{[^}]*strftime\(CLOCK\.stamp, ts\)", src, re.S)
         # A record with no station timestamp is dropped whole -- it can
         # never become the clock's anchor, as it did through 8.3.3.  (A
         # 2026-08-17 ruling: celestial keeps this where liveseasons
@@ -2181,9 +2182,9 @@ class TestSampleSkinRenders:
         # The fixture pass is behind the browser's real clock, so this row
         # sits in the window between a pass's set and the feed's next_pass
         # rollover: satWhen must say "just set", never clamp the negative
-        # countdown to "in 1 min".
+        # countdown to "in 1 m".
         assert 'just set' in out['satline']
-        assert 'in 1 min' not in out['satline']
+        assert 'in 1\u00a0m' not in out['satline']
         # The Next Visible Pass chart came up (the fixture ISS pass is tomorrow
         # morning, June 2025) and its featured dot was NOT swept.  Judged
         # by the chart's OWN data-rise/data-set against the browser's real
@@ -2192,7 +2193,7 @@ class TestSampleSkinRenders:
         # before the next chart arrived, which 8.3.3 fixes by reading the
         # chart's window rather than remembering whether it swept.
         assert out['passchart'] == 1
-        assert '03:11' in out['passwhen']
+        assert '3:11 AM' in out['passwhen']
         assert out['passnudged'] == 0
         if re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
             assert out['passdot'] == 'none'
@@ -2283,7 +2284,149 @@ class TestSampleSkinRenders:
             httpd.shutdown()
         assert proc.returncode == 0, proc.stderr
         assert jsonlib.loads(proc.stdout) == ['in 1 day', 'in 2 days', 'in 2 days',
-                                              'in 1 day', 'in 3 h', 'in 10 min']
+                                              'in 1 day', 'in 3\u00a0h', 'in 10\u00a0m']
+
+    @staticmethod
+    def unit_samples():
+        """Number-unit strings generated rather than picked: every run of
+        one to four characters from letters, a Latin-1 letter, a vulgar
+        fraction (numeric but not a digit), an underscore, a digit and a
+        CJK letter, after an ASCII digit, an Arabic-Indic digit and a
+        non-digit, with nothing, a second unit or a full stop after it."""
+        import itertools
+        chars = ['m', '\u00e9', '\u00bd', '_', '1', '\u4e2d']
+        units = [''.join(c) for n in (1, 2, 3, 4) for c in itertools.product(chars, repeat=n)]
+        return ['%s %s%s' % (lead, unit, tail) for lead in ('7', '\u0663', 'x')
+                for unit in units for tail in ('', ' h', '.')]
+
+    def test_unit_gap_and_clock_format_in_step_with_skyfield(self, monkeypatch):
+        """_keep_units and _clock_format are weewx-skyfield's, copied so the
+        page renders without it: swept against the sibling's own functions
+        over the generated number-unit strings and every clock or date
+        format a bundled lang file carries, with the locale's AM/PM present
+        and blank.  Skips when the sibling is not available."""
+        import locale as localelib
+        load_wxskyfield()
+        import wxskyfield_sky
+        samples = self.unit_samples()
+        assert ([celestial_page._keep_units(s) for s in samples]
+                == [wxskyfield_sky._keep_units(s) for s in samples])
+        configobj = pytest.importorskip('configobj')
+        formats = {'%I:%M %p', '%p %-I:%M', '%-I:%M%p', '%A, %B %-d, %Y, %-I:%M %p %Z'}
+        for name in sorted(os.listdir(os.path.join(SKIN_DIR, 'lang'))):
+            texts = configobj.ConfigObj(os.path.join(SKIN_DIR, 'lang', name),
+                                        encoding='utf-8')['Texts']
+            formats |= {k for k in texts if k.startswith('%')}
+            formats |= {v for k, v in texts.items() if k.startswith('%')}
+        assert '%-I:%M:%S %p' in formats and '%H:%M' in formats
+        for am in ('AM', ''):
+            monkeypatch.setattr(localelib, 'nl_langinfo', lambda item, am=am: am)
+            for fmt in sorted(formats):
+                assert (celestial_page._clock_format(fmt)
+                        == wxskyfield_sky._clock_format(fmt)), (am, fmt)
+
+    def test_clock_and_countdown_text_repaint_the_first_paint_in_a_real_browser(
+            self, tmp_path):
+        """Every clock time, date and countdown the script writes is the
+        text the report's first paint wrote for the same instant.  The
+        script fills the report's own strftime formats from config.clock,
+        never the browser's Intl, and composes countdowns from the same
+        [Texts] keys and unit rule as celestial_page.  Swept in English,
+        German and French over instants either side of midnight and noon
+        and in the fall-back hour, every rung of the countdown ladder and
+        its boundaries, and the generated number-unit strings through
+        keepUnits against _keep_units.  The browser sits in Auckland while
+        the page displays America/Los_Angeles, so a formatter reading the
+        browser's zone fails.  A locale whose AM/PM is lowercase reaches the
+        page as written.  Skips when the playwright env is absent."""
+        import json as jsonlib
+        import subprocess
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        configobj = pytest.importorskip('configobj')
+
+        stamps = [TIME_TS] + [time.mktime(t) for t in (
+            (2026, 9, 15, 0, 5, 7, 0, 0, -1), (2026, 9, 15, 9, 3, 0, 0, 0, -1),
+            (2026, 9, 15, 12, 0, 59, 0, 0, -1), (2026, 9, 15, 13, 53, 22, 0, 0, -1),
+            (2026, 9, 15, 23, 59, 59, 0, 0, -1), (2026, 11, 1, 1, 30, 0, 0, 0, -1),
+            (2026, 1, 3, 20, 4, 0, 0, 0, -1))]
+        rems = [0, 1, 59, 60, 61, 3599, 3600, 3661, 86399, 86400, 90061,
+                22 * 86400 + 19 * 3600 + 5]
+        samples = self.unit_samples()
+        cases = {}
+        for lang in ('en', 'de', 'fr'):
+            texts = configobj.ConfigObj(os.path.join(SKIN_DIR, 'lang', lang + '.conf'),
+                                        encoding='utf-8')['Texts']
+            page = celestial_page.CelestialPage({'lang': lang, 'Texts': dict(texts)}, None)
+            cases[lang] = {
+                'texts': {k: page._t(k) for k in celestial_page.LIVE_TEXTS},
+                'clock': page._clock_config(),
+                'want': {'hm': [page._hm(ts) for ts in stamps],
+                         'dayhm': [page._date_hm(ts) for ts in stamps],
+                         'hms': [page.clock_stamp(types.SimpleNamespace(time_ts=ts))
+                                 for ts in stamps],
+                         'dhms': [page._dhms(r) for r in rems]}}
+        write_assets(tmp_path, unwrapped=True)   # the runner calls internals
+        (tmp_path / 'index.html').write_text(
+            '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            '<script src="celestial.js"></script></head><body></body></html>')
+        (tmp_path / 'cases.json').write_text(jsonlib.dumps(
+            {'stamps': stamps, 'rems': rems, 'samples': samples,
+             'langs': {lang: {'texts': c['texts'], 'clock': c['clock']}
+                       for lang, c in cases.items()}}))
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'CASES = json.load(open(%r))\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            "    ctx = browser.new_context(timezone_id='Pacific/Auckland')\n"
+            '    page = ctx.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.goto(%r)\n'
+            '    out = {"errors": errors, "langs": {}}\n'
+            '    for lang, c in CASES["langs"].items():\n'
+            '        out["langs"][lang] = page.evaluate("""([c, stamps, rems]) => {\n'
+            "          T = c.texts; CLOCK = c.clock; time_zone = 'America/Los_Angeles';\n"
+            '          return {hm: stamps.map(fmtHM), dayhm: stamps.map(fmtDayHM),\n'
+            '                  hms: stamps.map(fmtHMS), dhms: rems.map(fmtDHMS)};\n'
+            '        }""", [c, CASES["stamps"], CASES["rems"]])\n'
+            '    out["keep"] = page.evaluate("s => s.map(function(x) { return keepUnits(x); })",\n'
+            '                                CASES["samples"])\n'
+            '    out["lower"] = page.evaluate("""([c, ts]) => {\n'
+            '      T = c.texts; CLOCK = Object.assign({}, c.clock, {am: "am", pm: "pm"});\n'
+            '      return [fmtHM(ts), fmtHMS(ts)];\n'
+            '    }""", [CASES["langs"]["en"], CASES["stamps"][4]])\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % (str(tmp_path / 'cases.json'), (tmp_path / 'index.html').as_uri()))
+        proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                              timeout=120)
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        for lang, c in cases.items():
+            assert out['langs'][lang] == c['want'], lang
+        want_keep = [celestial_page._keep_units(s) for s in samples]
+        differ = [(s, js, py) for s, js, py in zip(samples, out['keep'], want_keep) if js != py]
+        assert differ == [], differ[:10]
+        # What the agreed forms look like, so a sweep that agrees with
+        # itself on the wrong text still fails: English 12-hour with a
+        # comma after the date, German 24-hour, one symbol per unit.
+        en = cases['en']['want']
+        assert en['dayhm'][4] == 'Sep 15, 1:53 PM', en['dayhm']
+        assert en['hms'][4] == '1:53:22 PM', en['hms']
+        assert en['hm'][1] == '12:05 AM', en['hm']
+        assert cases['de']['want']['hm'][4] == '13:53'
+        assert [en['dhms'][i] for i in (0, 2, 3, 7, 9, 11)] == [
+            '0\u00a0s', '59\u00a0s', '1\u00a0m', '1\u00a0h 1\u00a0m', '1\u00a0d 0\u00a0h',
+            '22\u00a0d 19\u00a0h']
+        assert out['lower'] == ['1:53 pm', '1:53:22 pm'], out['lower']
 
     def test_tap_tooltips_in_a_real_browser(self, wxskyfield_sat_almanac, tmp_path):
         """Tap tooltips (sky.js, copied from weewx-skyfield) on all three
@@ -4353,7 +4496,7 @@ class TestSampleSkinRenders:
         # second distinct packet to do it.
         assert out['latestTs'] == now
         assert out['dark'] != baked_dark, 'the chip still wears the generated first paint'
-        assert out['dark'] == '01:00:00', out['dark']
+        assert out['dark'] == '1\u00a0h 0\u00a0m', out['dark']
         assert out['wanted'] is False
 
     @pytest.mark.parametrize('behind', [False, True])
@@ -4534,14 +4677,14 @@ class TestSampleSkinRenders:
         """Countdown central, where it actually runs: synthetic
         event instants around the browser's real clock (the chips are
         pure client arithmetic, so the feed can stage any sky).  Pins:
-        the sun chip counts hh:mm:ss from the FEED and ROLLS from sunset
+        the sun chip counts down from the FEED and ROLLS from sunset
         to sunrise when the feed's event expiry replaces the passed
         instant (the min() flip); the darkness chip counts from its
         generation-baked data-ts target with NO feed KEY at all -- a
         countdown needs no key to count, only the page's clock, which
         the packets move (8.3.5: at loop cadence, no timer); the shower
         chip shows a
-        days-hours-minutes value under its live label; the pass chip
+        days-and-hours value under its live label; the pass chip
         shows the staged pass's label and 'appears in'; the windowed
         guests obey their 30-day window (supermoon and one perihelion
         in, eclipse and the other perihelion honestly out); zero page
@@ -4565,7 +4708,7 @@ class TestSampleSkinRenders:
         # tick from the generation-baked target alone (a countdown
         # needs no feed to count; the feed's job is the roll).
         html, n_subs = re.subn(r'(id="chip-dark" data-ts=")\d+(")',
-                               r'\g<1>%d\g<2>' % int(now + 5000), html)
+                               r'\g<1>%d\g<2>' % int(now + 55), html)
         assert n_subs == 1
         (tmp_path / 'index.html').write_text(html)
         write_assets(tmp_path)
@@ -4639,10 +4782,10 @@ class TestSampleSkinRenders:
             "      var k = document.getElementById('chip-sun-k');\n"
             "      var v = document.getElementById('chip-sun-v');\n"
             "      return k !== null && k.textContent === 'sunset' &&\n"
-            "             /^\\\\d{2}:\\\\d{2}:\\\\d{2}$/.test(v.textContent);\n"
+            "             /^\\\\d+\\\\u00a0s$/.test(v.textContent);\n"
             '    }""", timeout=15000)\n'
-            '    # The darkness chip is inside its final day, so it counts\n'
-            '    # hh:mm:ss -- on the packets, which are 2 s apart here: the\n'
+            '    # The darkness chip is in its last minute, so it counts\n'
+            '    # seconds -- on the packets, which are 2 s apart here: the\n'
             '    # value must CHANGE within a few polls.  (A fixed 1.5 s\n'
             '    # sample was the 8.3.4 one-second tick at work; it would\n'
             '    # now miss a packet a quarter of the time.)\n'
@@ -4691,20 +4834,20 @@ class TestSampleSkinRenders:
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
         assert out['v1'] != out['v2']              # the value really moves
-        assert re.match(r'^\d{2}:\d{2}:\d{2}$', out['v1'])
-        # Days out, the countdown is days-hours-minutes (seconds are
-        # noise at that range); the staged peak is 3 days ahead.
-        assert re.match(r'^2d 23h \d{1,2}m$', out['shower_v'])
+        assert re.match(r'^\d{1,2}\xa0s$', out['v1'])
+        # Days out, the countdown is days and hours; the staged peak
+        # is 3 days ahead.
+        assert re.match(r'^2\xa0d 23\xa0h$', out['shower_v'])
         assert out['shower_k'] == 'Perseids'       # the live label took over
         assert out['pass_hidden'] is False
         assert out['pass_k'] == 'ISS'
         assert out['pass_d'] == 'appears in'
-        assert re.match(r'^\d{2}:\d{2}:\d{2}$', out['pass_v'])
-        # The live detail renders EXACTLY the template's %H:%M shape (no
-        # locale AM/PM): the first live rewrite must not reformat what
+        assert re.match(r'^\d\xa0m$', out['pass_v'])
+        # The live detail renders EXACTLY the template's clock format
+        # (config.clock): the first live rewrite must not reformat what
         # the report painted.  After the roll the chip counts to the
         # staged sunrise.
-        assert out['sun_d'] == time.strftime('%H:%M',
+        assert out['sun_d'] == time.strftime(celestial_page._clock_format('%-I:%M %p'),
                                              time.localtime(now + 40000))
         assert out['dark_hidden'] is False
         # The season chip: the staged equinox is 10 days out (in the
@@ -4918,7 +5061,8 @@ class TestSampleSkinRenders:
         html, n_subs = re.subn(r'(id="chip-dark" data-ts=")\d+(")',
                                r'\g<1>%d\g<2>' % DARK_TARGET, html)
         assert n_subs == 1
-        gen_hms = time.strftime('%H:%M:%S', time.localtime(TIME_TS))
+        gen_hms = time.strftime(celestial_page._clock_format('%-I:%M:%S %p'),
+                                time.localtime(TIME_TS))
         assert '<span id="last-update">%s</span>' % gen_hms in html
         baked_dark = re.search(r'id="chip-dark-v"[^>]*>([^<]*)<', html).group(1)
         (tmp_path / 'index.html').write_text(html)
@@ -5020,9 +5164,10 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
 
-        def hms_seconds(text):
-            h, m, s = (int(x) for x in text.split(':'))
-            return h * 3600 + m * 60 + s
+        def countdown_seconds(text):
+            # The ladder's text back to seconds: each number with its unit.
+            return sum(int(n) * {'d': 86400, 'h': 3600, 'm': 60, 's': 1}[u]
+                       for n, u in re.findall(r'(\d+)\s([dhms])', text))
 
         for name, sign in (('plus', 1), ('minus', -1)):
             leg = out[name]
@@ -5036,15 +5181,17 @@ class TestSampleSkinRenders:
             assert abs(st['serverNow'] - leg['real_now']) < 15, \
                 (name, 'same-machine harness: the stamp is real time')
             # The "updated" stamp paints that instant, in the template's
-            # own 24-hour shape (fmtHMS's en-GB pin) -- never the viewer's.
+            # own clock format (fmtHMS fills config.clock) -- never the viewer's.
             assert st['updated'] == st['updatedExpected'], name
-            assert st['updated'] == time.strftime('%H:%M:%S',
+            assert st['updated'] == time.strftime(celestial_page._clock_format('%-I:%M:%S %p'),
                                                   time.localtime(st['latestTs'])), name
             # The darkness chip counts from its baked target on the
-            # STATION's clock: about 5000 s, not 5000 -/+ 1800.
+            # STATION's clock: about 5000 s, not 5000 -/+ 1800.  It reads
+            # hours and minutes and floors, so the true remaining time is
+            # up to a minute above what it shows, plus the harness's slack.
             assert st['darkHidden'] is False, name
-            remaining = hms_seconds(st['dark'])
-            assert abs(remaining - (DARK_TARGET - st['serverNow'])) <= 3, \
+            remaining = countdown_seconds(st['dark'])
+            assert -3 <= (DARK_TARGET - st['serverNow']) - remaining < 63, \
                 (name, st['dark'], DARK_TARGET - st['serverNow'])
             assert abs(remaining - (DARK_TARGET - st['browserNow'])) > SKEW - 60, \
                 (name, 'the chip is reading the viewer clock')
@@ -7339,7 +7486,7 @@ class TestConfigScript:
             'time_zone', 'station_lat', 'gen_ts', 'per_au', 'dist_label',
             'locale', 'body_labels', 'cardinals', 'texts', 'sat_names',
             'comet_names', 'report_name', 'loop_data_file', 'theme', 'root',
-            'countdown'}
+            'countdown', 'clock'}
 
     @staticmethod
     def page(extras=None, texts=None, sky_page=None, **skin):
@@ -7683,6 +7830,20 @@ class TestConfigScript:
         assert html.count('celestial.start(') == 1
         assert set(TestSampleSkinRenders.config(html)) == self.KEYS
 
+    def test_celestial_js_is_ascii(self):
+        """celestial.js carries no byte outside ASCII: every non-ASCII
+        character, in a string or a regex, is spelled as a \\u escape.
+        A page that does not declare its charset decodes the script as
+        Latin-1, where a literal character becomes two, a regex range
+        such as a-to-z-with-accents turns out of order, and the whole
+        script fails to parse -- no live layer at all, and one error in a
+        console nobody opens.  9.5's unit rule shipped exactly that until
+        the one-global browser test, whose page has no charset, caught it."""
+        src = open(JS_PATH, encoding='utf-8').read()
+        bad = [(n, line) for n, line in enumerate(src.splitlines(), 1)
+               if any(ord(c) > 127 for c in line)]
+        assert bad == [], bad[:5]
+
     def test_celestial_js_publishes_one_global_in_a_real_browser(self, tmp_path):
         """The browser half of the scope test, on a page the way a report
         builds it (the script in <head>, the config block at the top of
@@ -7786,8 +7947,8 @@ class TestPanels:
     def test_pass_chip_first_paints_every_state(self, wxskyfield_sat_sky):
         """The pass chip's first paint is the live layer's pick at the
         generation instant -- the soonest visible pass -- in the live
-        layer's own dress: counting down in hh:mm:ss inside the final
-        day, in days-hours-minutes beyond, 'overhead now' during the
+        layer's own dress: counting down in hours and minutes inside the
+        final day, in days and hours beyond, 'overhead now' during the
         pass with an empty countdown, and its rise AND set instants baked
         so a feed without the pass keys can roll it by itself."""
         mod, _ = load_wxskyfield()
@@ -7803,9 +7964,9 @@ class TestPanels:
             assert re.search(r'^ data-ts="\d+" data-set="\d+"$', self.chip_attrs(html, 'chip-pass'))
             assert self.cell(html, 'chip-pass-k') == 'Iss'
             assert self.cell(html, 'chip-pass-d') == 'appears in'
-            assert re.match(r'\d{2}:\d{2}:\d{2}$', self.cell(html, 'chip-pass-v'))
+            assert re.match(r'\d{1,2}\xa0h \d{1,2}\xa0m$', self.cell(html, 'chip-pass-v'))
             html = row(1750388400)                     # Jun 19 20:00 PDT: 32 h out
-            assert re.match(r'1d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-pass-v'))
+            assert re.match(r'1\xa0d \d{1,2}\xa0h$', self.cell(html, 'chip-pass-v'))
             html = row(1750503568 + 120)               # two minutes into the pass
             assert self.cell(html, 'chip-pass-d') == 'overhead now'
             assert self.cell(html, 'chip-pass-v') == ''
@@ -7825,8 +7986,8 @@ class TestPanels:
             html = self.page(make_sky_page()).countdown_html(alm)
         assert re.search(r'^ data-ts="\d+"$', self.chip_attrs(html, 'chip-season'))
         assert self.cell(html, 'chip-season-k') == 'autumn begins'
-        assert re.match(r'1[0-3]d \d{1,2}h \d{1,2}m$', self.cell(html, 'chip-season-v'))
-        assert re.match(r'Sep \d{1,2} \d{2}:\d{2}$', self.cell(html, 'chip-season-d'))
+        assert re.match(r'1[0-3]\xa0d \d{1,2}\xa0h$', self.cell(html, 'chip-season-v'))
+        assert re.match(r'Sep \d{1,2}, \d{1,2}:\d{2} [AP]M$', self.cell(html, 'chip-season-d'))
         # After sunset the sun chip has rolled to sunrise by itself.
         assert self.cell(html, 'chip-sun-k') in ('sunset', 'sunrise')
 
@@ -7884,7 +8045,7 @@ class TestPanels:
         assert 'celestial.geocentric_html failed' in caplog.text
         assert 'id="countdown"' not in html and 'id="dial"' not in html
         assert 'id="geo-row-moon"' not in html
-        assert '<span id="last-update">12:00:00</span>' in html
+        assert '<span id="last-update">12:00:00 PM</span>' in html
         assert 'celestial.start({' in html
         assert 'Sky dome chart' in html
         assert 'Hipparcos' in html
@@ -7907,6 +8068,9 @@ class TestPanels:
         assert '$celestial' not in html and 'cannot find' not in html
         assert 'celestial.start(' not in html
         assert 'id="countdown"' not in html and 'id="dial"' not in html
+        # The stamp stands, 24-hour: without the module there is no check
+        # for a locale with no AM/PM, and an unambiguous time is the honest
+        # fallback on a page already missing its panels.
         assert '<span id="last-update">12:00:00</span>' in html
         # The dome, the pass panel and the footer's credit are the tag's
         # too; the section chrome stands, empty.
@@ -9028,7 +9192,6 @@ class TestPanels:
         the boundary instants, like sky.js, the palette and de.conf, so
         the next threshold or wording change lands on both pages."""
         load_wxskyfield()
-        import wxskyfield_sky
         sp = make_sky_page()
         page = self.page(sp)
         so = types.SimpleNamespace(sunlit=True)
@@ -9053,8 +9216,7 @@ class TestPanels:
         for now, rise, sset in cases:
             alm = types.SimpleNamespace(time_ts=now)
             line, _sub = page._pass_lines(alm, so, pass_obj(rise, sset), 'x', False)
-            want = '%s %s · %s' % (sp._date(rise), wxskyfield_sky._t_hm(rise),
-                                   sp._sat_when(alm, rise, sset))
+            want = '%s · %s' % (sp._date_hm(rise), sp._sat_when(alm, rise, sset))
             assert line == want, (now, rise, sset)
 
     def test_an_empty_pass_wrapper_hides_the_chart_in_a_real_browser(
@@ -10041,7 +10203,8 @@ class TestI18n:
         # The pass chart's own strings (the same SkyPage renders it).
         'Pass sky chart',
         '{date} · {rise} → {set} · peak {alt}°',
-        '%a %b %-d',
+        '%a, %b %-d',
+        '%-I:%M %p',
         # The 2.1 dome's radiant marks (drawn while a shower is active;
         # the comet marks reuse the mag tooltip above).
         '{name} radiant — ZHR {zhr}, peak {date}',
@@ -12492,28 +12655,31 @@ class TestInstallerLoader:
         assert 'weewx-loopdata 7.0 or later' in message
         assert 'none is installed' in message
 
-    # ---- the weewx-skyfield 2.6 floor (9.4) ----------------------------
+    # ---- the weewx-skyfield 2.6.1 floor (9.5) --------------------------
     #
     # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or the
-    # built-in almanac -- so ABSENCE must not refuse.  But 9.4 is pinned
-    # to 2.6, whose contrast palette the panels copy (2.5 brought the
+    # built-in almanac -- so ABSENCE must not refuse.  But 9.5 is pinned
+    # to 2.6.1, whose [Texts] keys the charts' dates and clock times read
+    # (2.6 brought the contrast palette the panels copy, 2.5 the
     # label_layers that draw a set's narrow label scale, and 2.4 the pass
     # dot's role classes; 2.6 carries all of them).  A skyfield that IS
     # there and is too old refuses, rather than a fallback logging on
     # every report cycle.
 
-    @pytest.mark.parametrize('version', ['2.6', '2.6.1', '2.7', '3.0', '2.6a1', '2.6b1'])
-    def test_loads_with_skyfield_2_6(self, monkeypatch, version):
+    @pytest.mark.parametrize('version', ['2.6.1', '2.6.2', '2.7', '3.0', '2.6.1a1', '2.6.1b1'])
+    def test_loads_with_skyfield_2_6_1(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
         monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
         assert load_installer().loader()['name'] == 'celestial'
 
-    # '2.6b1' is NOT here: WeeWX's version_compare reads a dev build of
-    # 2.6 as 2.6, exactly as the weewx-loopdata floor above reads
-    # '7.0a1' as 7.0.  A pre-release of the version BELOW the floor
-    # ('2.5.9b1') is what must refuse.
-    @pytest.mark.parametrize('version', ['2.5', '2.5.1', '2.4', '2.3.5', '1.16', '2.5.9b1'])
+    # The floor means what WeeWX's own version_compare says, exactly as
+    # the weewx-loopdata floor above does.  Measured against '2.6.1':
+    # '2.6.1a1' and '2.6.1b1' compare as later (a dev build of 2.6.1 is
+    # 2.6.1), '2.6.0b1' and '2.5.9b1' as earlier -- and '2.6b1' as LATER,
+    # which is why it is not here: no skyfield version is spelled that way.
+    @pytest.mark.parametrize('version', ['2.6', '2.6.0', '2.6.0b1', '2.5', '2.5.1', '2.4',
+                                         '2.3.5', '1.16', '2.5.9b1'])
     def test_refuses_an_older_skyfield(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
@@ -12521,7 +12687,7 @@ class TestInstallerLoader:
         with pytest.raises(SystemExit) as info:
             load_installer().loader()
         message = str(info.value)
-        assert 'weewx-skyfield 2.6 or later' in message
+        assert 'weewx-skyfield 2.6.1 or later' in message
         assert 'found %s' % version in message
 
     def test_no_skyfield_at_all_still_installs(self, monkeypatch):

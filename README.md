@@ -39,7 +39,7 @@ comet's perihelion.  Each chip is client-side arithmetic on an event instant
 weewx-loopdata computes once and caches until it passes — so a sunset chip
 counts to zero and rolls itself to the next sunrise, with no reload:
 
-![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll-2026-08-18.gif)
+![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll-2026-09-14.gif)
 
 **The Geocentric** — Earth at the center, every body (sun, moon, Mercury
 through Neptune, Proxima Centauri) placed by compass bearing and log

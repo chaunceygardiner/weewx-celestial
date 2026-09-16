@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **9.4.1**, the current release.
+This manual documents weewx-celestial **9.5**, the current release.
 
 ## Start here
 
@@ -51,11 +51,11 @@ page you leave open, on which everything moves.
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
 chart.  Here it is entire, in the bundled sample report (Palo Alto,
-mid-morning on 14 September 2026 — the sun, Mercury, Mars, Jupiter and
-Uranus above the horizon and trailing their wake, the moon and Venus
-dashed just below it beside the sun, Saturn and Neptune dashed farther
-down, comet Halley riding among the planets, Proxima Centauri alone at
-the rim, and every odometer ticking):
+mid-afternoon on 15 September 2026 — the sun, the moon, Mercury, Venus,
+Mars and Jupiter above the horizon and trailing their wake, comet Halley
+just risen beside Jupiter, Saturn, Uranus and Neptune dashed below it,
+Proxima Centauri alone at the rim, Terra's evening pass counting down in
+the first chip, and every odometer ticking):
 
 ![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
 
@@ -63,7 +63,7 @@ Panel by panel:
 
 **Countdown central** (new in 8.1) — countdown chips at the top of
 the page, counting on every loop packet: the soonest visible satellite pass ("ISS · appears in
-00:41:12", then "overhead now", rolling to the next pass as this one
+41 m", then "overhead now", rolling to the next pass as this one
 ends), sunset or sunrise — whichever comes next — the next meteor
 shower's peak with the moon's illumination at the peak, and
 astronomical darkness (begins and ends, whichever is next).  Windowed
@@ -71,18 +71,18 @@ guests join within ~30 days of their
 event: the next equinox or solstice — named by the season it begins —
 Earth's perihelion or aphelion,
 the next supermoon, the next eclipse visible from your station,
-and each configured comet's perihelion.  A day or more out a countdown
-reads days-hours-minutes with the event's date beside it; inside the
-final day it becomes an `hh:mm:ss` clock.  Every chip is
-client-side
-arithmetic on an event instant weewx-loopdata computes once and caches
-until it passes.
+and each configured comet's perihelion.  A countdown shows the two
+largest units that matter: `22 d 19 h` a day or more out, with the
+event's date beside it; `9 h 35 m` inside a day; `35 m` inside an hour;
+`45 s` in the last minute.  Every chip is client-side arithmetic on an
+event instant weewx-loopdata computes once and caches until it passes.
 
-The row riding through a sunset, live (at about 15× speed): the sunset
-chip counts `hh:mm:ss` down through zero, then rolls itself to the next
-sunrise — loopdata expires the event and the page follows, no reload:
+The row riding through the sunset of 14 September 2026 (one-second
+frames played at about 15× speed): the sunset chip counts down through
+zero, then rolls itself to the next sunrise — loopdata expires the event
+and the page follows, no reload:
 
-![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll-2026-08-18.gif)
+![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll-2026-09-14.gif)
 
 **The Geocentric** — Earth at the center, every body (sun, moon,
 Mercury through Neptune, Proxima Centauri) placed by compass bearing and log
@@ -142,16 +142,16 @@ arrives.  When no configured satellite has a visible pass
 coming, the chart hides and the roster's honest rows say why.
 
 The same July 24 pass on this panel — the chart features it, so the
-sweep dot rides the dashed arc from the 21:54 rise to the 22:05 set
-while the visible-pass roster counts down beside it:
+sweep dot rides the dashed arc from the 9:54 PM rise to the 10:05 PM
+set, snapping to the in-shadow ring as the ISS enters Earth's shadow
+near the end, while the visible-pass roster counts down beside it:
 
 ![The Next Visible Pass panel during the ISS pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-ISS-zenith.gif)
 
-And the live flip itself, captured September 8: Tiangong rises sunlit
+And the same flip on Tiangong's pass of September 8: it rises sunlit
 in the west-northwest, peaks at 59° to the north-northeast and drops
 into Earth's shadow at 49°, the sweep dot snapping from solid to the
-in-shadow ring mid-ride, in step with the dome's marker (the July 24
-capture above predates the fix; its dot stays solid to the set):
+in-shadow ring mid-ride, in step with the dome's marker:
 
 ![The Next Visible Pass panel during a Tiangong pass, the sweep dot flipping to the in-shadow ring mid-ride](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-Tiangong-shadow-entry.gif)
 
@@ -212,7 +212,7 @@ What installs:
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.6 everything, and less at each tier below it, down to
+weewx-skyfield 2.6.1 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -233,7 +233,7 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
   7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-  **2.6 or later** if you run it at all — 9.4 is pinned to it and the
+  **2.6.1 or later** if you run it at all — 9.5 is pinned to it and the
   installer refuses an older one.  It is what the sky dome, the Next
   Visible Pass chart, the comets, the meteor showers, the full countdown
   row and Proxima Centauri all come from, so without it the page is the

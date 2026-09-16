@@ -117,6 +117,7 @@ EMPTY, which is the page's signal to say so and point at weewx-skyfield.
 import datetime
 import functools
 import json
+import locale
 import logging
 import math
 import os
@@ -266,12 +267,12 @@ LIVE_TEXTS = (
     # the honest empty states -- shared verbatim with weewx-skyfield's Sky
     # page (its translations are mined into this skin's lang files).
     'overhead now',
-    'in {m} min',
+    'in {m} m',
     'in {h} h',
     'in {n} day',
     'in {n} days',
     'just set',
-    'appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min',
+    'appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
     'no visible pass in the coming week',
     'no pass in the coming week',
     'visible',
@@ -293,7 +294,11 @@ LIVE_TEXTS = (
     'Earth aphelion',
     'supermoon',
     'appears in',
-    '{d}d {h}h {m}m',
+    '{d} d {h} h',
+    '{h} h {m} m',
+    '{m} m',
+    '{s} s',
+    '{date}, {time}',
     'lunar eclipse',
     'solar eclipse',
     'penumbral',
@@ -458,15 +463,35 @@ def distance_unit(alm: Any) -> Tuple[float, str]:
             str(alm.formatter.get_label_string(unit)))
 
 
-def _hms(rem: int) -> str:
-    """hh:mm:ss of a remaining time in seconds, inside the final day."""
-    return '%02d:%02d:%02d' % (rem % 86400 // 3600, rem % 3600 // 60, rem % 60)
+# A number and the unit symbol after it, joined by a no-break space so a
+# narrow cell never wraps "10" and "m" onto two lines.  One to three
+# letters after the space and no more, so "in 2 days" keeps its ordinary
+# space.  weewx-skyfield's _UNIT_GAP and _keep_units, copied; a test
+# sweeps inputs through both, and celestial.js's keepUnits is the same.
+_UNIT_GAP = re.compile(r'(\d) (?=[^\W\d_]{1,3}(?![^\W\d_]))')
 
 
-def _hm(ts: float) -> str:
-    """The station-local clock time of an instant, as the chips' detail
-    cell and the javascript's fmtHM paint it."""
-    return time.strftime('%H:%M', time.localtime(ts))
+def _keep_units(text: str) -> str:
+    return _UNIT_GAP.sub('\\1\u00a0', text)
+
+
+def _clock_format(fmt: str) -> str:
+    """fmt, made 24-hour when the report's locale has no AM/PM.  English
+    prints clock times 12-hour and the format is a [Texts] key, but %p
+    comes from the locale WeeWX set for the report, not from the lang
+    file, and most non-English locales define it as nothing: an English
+    report there would print a bare, ambiguous '8:45 '.
+    weewx-skyfield's _clock_format, copied; a test sweeps formats through
+    both."""
+    if '%p' not in fmt:
+        return fmt
+    try:
+        blank = locale.nl_langinfo(locale.AM_STR) == ''
+    except AttributeError:  # platform without nl_langinfo
+        blank = False
+    if not blank:
+        return fmt
+    return re.sub(r'\s*%p', '', re.sub(r'%-?I:%M', '%H:%M', fmt))
 
 
 def _soonest(first: Any, second: Any) -> Tuple[Any, Optional[int]]:
@@ -893,14 +918,22 @@ class CelestialPage:
     # finds no root element for it and leaves it alone.
 
     def _dhms(self, rem: int) -> str:
-        """A countdown's shape, mirroring the javascript's fmtDHMS
-        exactly (the first paint IS what the script would render for
-        the generation instant): days-hours-minutes a day or more out,
-        the hh:mm:ss clock inside the final day."""
+        """A countdown's text, mirroring the javascript's fmtDHMS exactly
+        (the first paint IS what the script would render for the
+        generation instant): one symbol per unit and the two largest
+        units that matter -- days and hours a day or more out, hours and
+        minutes inside a day, minutes inside an hour, seconds in the last
+        minute -- each number joined to its unit by a no-break space.
+        Never an hh:mm:ss clock face, which reads as a time of day."""
         if rem >= 86400:
-            return self._t('{d}d {h}h {m}m', d=rem // 86400, h=rem % 86400 // 3600,
-                           m=rem % 3600 // 60)
-        return _hms(rem)
+            text = self._t('{d} d {h} h', d=rem // 86400, h=rem % 86400 // 3600)
+        elif rem >= 3600:
+            text = self._t('{h} h {m} m', h=rem // 3600, m=rem % 3600 // 60)
+        elif rem >= 60:
+            text = self._t('{m} m', m=rem // 60)
+        else:
+            text = self._t('{s} s', s=rem)
+        return _keep_units(text)
 
     def _date(self, ts: float) -> str:
         """An event's date, station-local, in the report's [Texts] date
@@ -908,8 +941,42 @@ class CelestialPage:
         return time.strftime(self._t('%b %-d'), time.localtime(ts))
 
     def _date_hm(self, ts: float) -> str:
-        """An event's date and clock time, station-local."""
-        return self._date(ts) + ' ' + _hm(ts)
+        """An event's date and clock time, station-local, joined by the
+        [Texts] key weewx-skyfield's _date_hm uses (English "{date},
+        {time}": "Sep 15, 3:53 PM")."""
+        return self._t('{date}, {time}', date=self._date(ts), time=self._hm(ts))
+
+    def _hm(self, ts: float) -> str:
+        """An instant's station-local clock time in the report's [Texts]
+        clock format -- English 12-hour, the other bundled languages
+        24-hour -- as the javascript's fmtHM paints it."""
+        return time.strftime(_clock_format(self._t('%-I:%M %p')), time.localtime(ts))
+
+    def clock_stamp(self, alm: Any) -> str:
+        """The header's "updated" stamp: the generation instant in the
+        report's clock format with seconds, as the javascript's fmtHMS
+        repaints it.  24-hour if the format cannot be applied: the stamp
+        is chrome, and must never cost the page."""
+        try:
+            return time.strftime(_clock_format(self._t('%-I:%M:%S %p')),
+                                 time.localtime(alm.time_ts))
+        except Exception:
+            return time.strftime('%H:%M:%S', time.localtime(alm.time_ts))
+
+    def _clock_config(self) -> Dict[str, Any]:
+        """What celestial.js's strftime fills a format from, besides the
+        instant: the resolved clock formats, the date format, and the
+        weewxd locale's AM/PM and abbreviated month names -- the strings
+        the report's own strftime calls produce, so the first packet
+        repaints exactly what the report painted."""
+        def at(month: int, hour: int, fmt: str) -> str:
+            return time.strftime(fmt, (2001, month, 15, hour, 0, 0, 0, 1, -1))
+        return {'time': _clock_format(self._t('%-I:%M %p')),
+                'stamp': _clock_format(self._t('%-I:%M:%S %p')),
+                'date': self._t('%b %-d'),
+                'am': at(1, 9, '%p'),
+                'pm': at(1, 21, '%p'),
+                'months': [at(month, 12, '%b') for month in range(1, 13)]}
 
     @staticmethod
     def _chip(chip_id: str, k: str, v: str, d: str, data: str = '',
@@ -940,7 +1007,7 @@ class CelestialPage:
         if ts is not None:
             k = k_first if which == 0 else k_second
             v = self._dhms(max(0, int(ts - now)))
-            d = _hm(ts)
+            d = self._hm(ts)
             data = ' data-ts="%d"' % int(ts)
         return self._chip(chip_id, k, v, d, data, hidden=not k)
 
@@ -1384,6 +1451,9 @@ class CelestialPage:
             # The language only, as core's $lang serves it: 'en', not
             # 'en_AU.utf8'.
             'locale': str(self.skin_dict.get('lang', 'en')).split('_')[0],
+            # Every clock time and date the javascript writes is built
+            # from these, never from the browser's Intl.
+            'clock': self._clock_config(),
             'body_labels': {b: body_name(texts, b) for b in LABEL_BODIES},
             'cardinals': [str(ords[i]) for i in (0, 4, 8, 12)],
             'texts': {key: self._t(key) for key in LIVE_TEXTS},
@@ -1708,20 +1778,20 @@ class CelestialPage:
         if sset is not None and rise <= now < sset:
             when = self._t('overhead now')
         elif delta < 3600:
-            when = self._t('in {m} min', m=max(1, int(delta // 60)))
+            when = _keep_units(self._t('in {m} m', m=max(1, int(delta // 60))))
         elif delta < 86400:
-            when = self._t('in {h} h', h=int(round(delta / 3600)))
+            when = _keep_units(self._t('in {h} h', h=int(round(delta / 3600))))
         else:
             days = max(1, (datetime.date.fromtimestamp(rise)
                            - datetime.date.fromtimestamp(now)).days)
             when = self._t('in {n} day', n=1) if days == 1 else self._t('in {n} days', n=days)
         line = self._date_hm(rise) + ' · ' + when
-        sub = self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min',
-                      rise=_esc(p.rise_azimuth.ordinal_compass()),
-                      alt='%.0f' % p.max_altitude.raw,
-                      culm=_esc(p.culmination_azimuth.ordinal_compass()),
-                      set=_esc(p.set_azimuth.ordinal_compass()),
-                      m='%d' % round(p.duration.raw / 60))
+        sub = _keep_units(self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
+                                  rise=_esc(p.rise_azimuth.ordinal_compass()),
+                                  alt='%.0f' % p.max_altitude.raw,
+                                  culm=_esc(p.culmination_azimuth.ordinal_compass()),
+                                  set=_esc(p.set_azimuth.ordinal_compass()),
+                                  m='%d' % round(p.duration.raw / 60)))
         if tag_visibility:
             if p.visible is True:
                 sub += ' · ' + self._t('visible')

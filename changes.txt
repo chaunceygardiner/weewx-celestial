@@ -1,6 +1,52 @@
 weewx-celestial change history
 ------------------------------
 
+9.5 2026/09/15
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6.1 first.
+  The sky charts' dates and clock times read [Texts] keys 2.6.1 renamed,
+  and beside an older weewx-skyfield a translated page's chart dates
+  would fall back to English.  The installer REFUSES to install beside
+  an older one, naming the version it found.  Having none at all is not
+  a refusal.
+
+- ACTION REQUIRED only if you keep a lang file of your own for the
+  Celestial skin: [Texts] keys are renamed and added, and an entry
+  under an old key simply stops being read.  Renamed: "%a %b %-d" is
+  "%a, %b %-d"; "in {m} min" is "in {m} m"; "appears {rise} · peaks
+  {alt}° {culm} · disappears {set} · {m} min" ends "· {m} m"; and
+  "{d}d {h}h {m}m" is replaced by the four keys "{d} d {h} h",
+  "{h} h {m} m", "{m} m" and "{s} s".  New: "%-I:%M %p" (a clock
+  time), "%-I:%M:%S %p" (the header's "updated" stamp) and
+  "{date}, {time}" (a date with its time).  The bundled lang files
+  carry them all.
+
+- Clock times read 12-hour in English: the countdown chips' event
+  times, the satellite rosters' pass times, the header's "updated"
+  stamp and the frozen-sky line all say "3:53 PM".  The format is a
+  [Texts] entry, and the other bundled languages keep 24-hour.  AM and
+  PM come from the station's locale (a British-English station shows
+  "pm"), and a locale with no AM/PM at all reads 24-hour rather than a
+  bare "3:53".
+
+- A date with its time takes a comma in English, "Sep 15, 3:53 PM",
+  matching weewx-skyfield 2.6.1's charts.
+
+- Countdowns show one symbol per unit and the two largest units that
+  matter: "22 d 19 h" a day or more out, "9 h 35 m" inside a day,
+  "35 m" inside an hour, "45 s" in the last minute.  The hh:mm:ss
+  clock inside the final day is gone: a remaining time written like a
+  clock read as a time of day.  The satellite rosters count "in 5 m"
+  and give a pass's length as "10 m"; a count of days stays in words.
+  A number and its unit are joined by a no-break space, so a narrow
+  cell never wraps them apart.
+
+- The live layer writes every clock time and date from the report's own
+  formats, AM/PM and month names, carried in a new config key, clock.
+  It used to format the satellite rosters' pass times and the
+  frozen-sky line through the browser's locale rules, so an English pass
+  time changed from "15:53" to "03:53 PM" on the first loop packet.
+
 9.4.1 2026/09/15
 ----------------
 - A satellite's name on the live sky dome is the same size as the names

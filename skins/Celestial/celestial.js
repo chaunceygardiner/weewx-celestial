@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.4.1';
+  var CELESTIAL_JS_VERSION = '9.5';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -55,6 +55,8 @@ var celestial = (function () {
                           // almanac fields) and convert to the report's
                           // distance unit here
   var LOCALE;
+  var CLOCK;              // the report's clock and date formats and its
+                          // locale's AM/PM and month names (strftime)
   var BODY_LABELS;        // body names from the report's [Almanac] section
   var CARDINALS;          // the report formatter's compass ordinates, N E S W
   var T;                  // the [Texts] strings this script composes, keyed
@@ -234,29 +236,76 @@ var celestial = (function () {
     }
     return opts;
   }
+  // Every clock time and date this script writes is the report's own
+  // strftime format, filled from the instant's station-zone parts and the
+  // report locale's AM/PM and month names (config.clock) -- never the
+  // browser's Intl, whose idea of a language's clock need not be the
+  // report's ('en' reads "PM" where an en_GB station's strftime says
+  // "pm").  So the first packet repaints exactly the text the report
+  // painted.  The tokens are the ones a bundled format uses; any other
+  // is left as written.
+  function zoneParts(ts) {
+    var parts = new Intl.DateTimeFormat('en-US', tzOptions({
+      month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
+      second: 'numeric', hour12: false})).formatToParts(new Date(ts * 1000));
+    var v = {};
+    for (var i = 0; i < parts.length; i++) {
+      v[parts[i].type] = parts[i].value;
+    }
+    // hour12: false reads midnight as "24" in some engines.
+    return {mo: parseInt(v.month, 10), d: parseInt(v.day, 10),
+            H: parseInt(v.hour, 10) % 24, M: parseInt(v.minute, 10),
+            S: parseInt(v.second, 10)};
+  }
+  function pad2(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+  function strftime(format, ts) {
+    var p = zoneParts(ts);
+    var h12 = (p.H % 12 === 0) ? 12 : p.H % 12;
+    return format.replace(/%(-?)([a-zA-Z%])/g, function(all, dash, c) {
+      var n = {H: p.H, I: h12, M: p.M, S: p.S, d: p.d, m: p.mo}[c];
+      if (n !== undefined) {
+        return dash ? String(n) : pad2(n);
+      }
+      if (c === 'p') {
+        return p.H < 12 ? CLOCK.am : CLOCK.pm;
+      }
+      if (c === 'b') {
+        return CLOCK.months[p.mo - 1];
+      }
+      return c === '%' ? '%' : all;
+    });
+  }
   function fmtHMS(ts) {
-    // The header's "updated" stamp: BYTE-IDENTICAL to the template's
-    // first paint, which renders %H:%M:%S of the generation instant in
-    // the station's zone, for the same reason as fmtHM below -- the
-    // first packet must not reformat what the report painted.
-    // Through 8.3.4 this was LOCALE-formatted (an English page read
-    // "03:11:22 PM"), which no
-    // template can bake byte for byte across locales; 24-hour matches
-    // the chip details beside it.
-    return new Date(ts * 1000).toLocaleString('en-GB',
-      tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit',
-                 hour12: false}));
+    // The header's "updated" stamp: the report's clock format with
+    // seconds, as the template bakes it (clock_stamp).
+    return strftime(CLOCK.stamp, ts);
   }
   function fmtHM(ts) {
-    // The countdown chips' event-time detail: BYTE-IDENTICAL to the
-    // template's first paint, which renders %H:%M in the station's zone
-    // -- the first live rewrite must not reformat what the report
-    // painted (no seconds, no locale AM/PM: en-GB with hour12 off is
-    // 24-hour HH:MM in every browser).  The remaining-time value above
-    // it is the hh:mm:ss-shaped number; the two must not wear the same
-    // dress.
-    return new Date(ts * 1000).toLocaleString('en-GB',
-      tzOptions({hour: '2-digit', minute: '2-digit', hour12: false}));
+    // A clock time: the countdown chips' event-time detail, and the time
+    // half of a date with its time (celestial_page's _hm).
+    return strftime(CLOCK.time, ts);
+  }
+  function fmtDayHM(ts) {
+    // A date with its clock time, joined as the report joins them
+    // (celestial_page's _date_hm; English "Sep 15, 3:53 PM").
+    return fmt('{date}, {time}', {date: strftime(CLOCK.date, ts), time: fmtHM(ts)});
+  }
+  // A number and the unit symbol after it, joined by a no-break space
+  // (celestial_page's _keep_units, weewx-skyfield's rule): one to three
+  // letters after the space and no more.  Built at run time, because a
+  // \p{...} literal is a syntax error to an engine without Unicode
+  // property escapes, and would take the whole script with it; such an
+  // engine gets the Latin letters.
+  var UNIT_GAP;
+  try {
+    UNIT_GAP = new RegExp('(\\p{Nd}) (?=[\\p{L}\\p{Nl}\\p{No}]{1,3}(?![\\p{L}\\p{Nl}\\p{No}]))', 'gu');
+  } catch (e) {
+    UNIT_GAP = /(\d) (?=[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F]{1,3}(?![A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F]))/g;
+  }
+  function keepUnits(text) {
+    return String(text).replace(UNIT_GAP, '$1\u00A0');
   }
   function numberWithCommas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -1114,10 +1163,10 @@ var celestial = (function () {
       return T['just set'];
     }
     if (delta < 3600) {
-      return fmt('in {m} min', {m: Math.max(1, Math.floor(delta / 60))});
+      return keepUnits(fmt('in {m} m', {m: Math.max(1, Math.floor(delta / 60))}));
     }
     if (delta < 86400) {
-      return fmt('in {h} h', {h: Math.round(delta / 3600)});
+      return keepUnits(fmt('in {h} h', {h: Math.round(delta / 3600)}));
     }
     // Whole days is a CALENDAR-day difference, not elapsed seconds
     // divided down: renderPassRow puts this count on the same line as
@@ -1133,11 +1182,6 @@ var celestial = (function () {
     // has already ruled out anything under a day.
     var n = Math.max(1, localDayNum(riseTs) - localDayNum(nowTs));
     return n === 1 ? fmt('in {n} day', {n: 1}) : fmt('in {n} days', {n: n});
-  }
-  function fmtDayHM(ts) {
-    return new Date(ts * 1000).toLocaleString(LOCALE,
-      tzOptions({month: 'short', day: 'numeric',
-                 hour: '2-digit', minute: '2-digit'}));
   }
   function renderPassRow(base, lineId, passId, noPassMsg, sunlit, nowTs, tagVisibility) {
     // One roster row from a pass chain (base runs through .next_pass or
@@ -1175,9 +1219,9 @@ var celestial = (function () {
         culmOrd === null || setOrd === null) {
       return;
     }
-    var sub = fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} min',
-                  {rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),
-                   set: esc(setOrd), m: Math.round(dur / 60).toString()});
+    var sub = keepUnits(fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} m',
+                            {rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),
+                             set: esc(setOrd), m: Math.round(dur / 60).toString()}));
     if (tagVisibility) {
       var vis = latest[base + '.visible'];
       if (vis === true) {
@@ -2130,16 +2174,8 @@ var celestial = (function () {
     // on a sky that has not moved for an hour.  The DATE comes along
     // once the backdrop is not from the reference clock's own day: a
     // report cycle stalled overnight would otherwise say "from 12:00"
-    // of a day it never names.  Intl does the wording, so this costs no
-    // translation.
-    var d = new Date(ts * 1000);
-    var opts = {hour: '2-digit', minute: '2-digit'};
-    if (new Date(refTs * 1000).toLocaleDateString(LOCALE, tzOptions({}))
-        !== d.toLocaleDateString(LOCALE, tzOptions({}))) {
-      opts.month = 'short';
-      opts.day = 'numeric';
-    }
-    return d.toLocaleString(LOCALE, tzOptions(opts));
+    // of a day it never names.
+    return localDayNum(ts) === localDayNum(refTs) ? fmtHM(ts) : fmtDayHM(ts);
   }
   function domeAsking(nowTs) {
     // "The page is still asking, so it is not yet answering."  A fetch
@@ -2624,22 +2660,24 @@ var celestial = (function () {
   // -- close enough to count meaningfully.
   var CHIP_WINDOW_SEC = 30 * 86400;
   function fmtDHMS(sec) {
-    // The countdown's precision follows its horizon: a day or more out
-    // it reads days-hours-minutes, moving by the minute (seconds --
-    // and a seconds-bearing clock shape -- are noise at that range, and
-    // the chip's detail carries the actual date); inside the final day
-    // it becomes the hh:mm:ss clock, where seconds are the point.
+    // A countdown: one symbol per unit and the two largest units that
+    // matter -- days and hours a day or more out, hours and minutes
+    // inside a day, minutes inside an hour, seconds in the last minute
+    // -- never an hh:mm:ss clock face, which reads as a time of day.
+    // celestial_page's _dhms first-paints the same text.
     sec = Math.max(0, Math.floor(sec));
-    var days = Math.floor(sec / 86400);
-    var rem = sec - days * 86400;
-    var hh = Math.floor(rem / 3600);
-    var mm = Math.floor((rem - hh * 3600) / 60);
-    if (days >= 1) {
-      return fmt('{d}d {h}h {m}m', {d: days, h: hh, m: mm});
+    if (sec >= 86400) {
+      return keepUnits(fmt('{d} d {h} h', {d: Math.floor(sec / 86400),
+                                           h: Math.floor(sec % 86400 / 3600)}));
     }
-    var ss = rem - hh * 3600 - mm * 60;
-    return ('0' + hh).slice(-2) + ':' + ('0' + mm).slice(-2) + ':' +
-           ('0' + ss).slice(-2);
+    if (sec >= 3600) {
+      return keepUnits(fmt('{h} h {m} m', {h: Math.floor(sec / 3600),
+                                           m: Math.floor(sec % 3600 / 60)}));
+    }
+    if (sec >= 60) {
+      return keepUnits(fmt('{m} m', {m: Math.floor(sec / 60)}));
+    }
+    return keepUnits(fmt('{s} s', {s: sec}));
   }
   function chipShow(id, show) {
     var el = document.getElementById(id);
@@ -3297,10 +3335,9 @@ var celestial = (function () {
     GEN_TS = config.gen_ts;
     PER_AU = config.per_au;
     DIST_LABEL = config.dist_label;
-    // The report's language drives toLocaleString (the satellite rosters'
-    // pass times and the frozen-sky line's time; the header's "updated"
-    // stamp and the chip details are 24-hour in every language, matching
-    // the template's bake); an unknown tag must not break every render.
+    // The report's language tag.  Since 9.5 no clock time or date is
+    // formatted through it (config.clock carries the report's own
+    // formats), but an unknown tag must still never break the page.
     LOCALE = config.locale;
     try {
       new Date().toLocaleString(LOCALE);
@@ -3320,6 +3357,7 @@ var celestial = (function () {
     BODY_LABELS = config.body_labels || {};
     CARDINALS = config.cardinals || [];
     T = config.texts || {};
+    CLOCK = config.clock;
     // The satellite set follows the station's [Skyfield] [[Satellites]]
     // and the comet set its [[Comets]], both enumerated by the report
     // through weewx-skyfield's public satellite_names()/comet_names();

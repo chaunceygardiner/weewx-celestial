@@ -240,9 +240,11 @@ season it begins — Earth's perihelion or aphelion, the next supermoon,
 the next eclipse visible from
 the station, each configured comet's perihelion) appear only within
 ~30 days of their event — close enough for a countdown to mean
-something.  A day or more out a countdown reads days-hours-minutes
-with the event's date beside it; inside the final day it becomes an
-`hh:mm:ss` clock, counting on every loop packet.  Every chip is client-side arithmetic on an
+something.  A countdown shows the two largest units that matter:
+`22 d 19 h` a day or more out, with the event's date beside it;
+`9 h 35 m` inside a day; `35 m` inside an hour; `45 s` in the last
+minute.  It counts on every loop packet.  Every chip is client-side
+arithmetic on an
 event instant
 weewx-loopdata computes once and caches until it passes; a chip whose
 field the almanac cannot serve simply stays hidden.  (weewx-skyfield's
@@ -265,13 +267,14 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.6** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
-| **weewx-skyfield 2.6**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
+| **weewx-skyfield 2.6.1** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.6.1**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |
 
-**Older than 2.6 is not a tier.**  9.4 is pinned to weewx-skyfield 2.6 and
-the installer refuses an older one, naming the version it found: the
+**Older than 2.6.1 is not a tier.**  9.5 is pinned to weewx-skyfield 2.6.1
+and the installer refuses an older one, naming the version it found: the
+sky charts' dates and clock times read [Texts] keys 2.6.1 renamed, the
 panels' colors are 2.6's contrast palette, a fragment set's narrow label
 layer is drawn by 2.5, the light plate's brass is 2.4's value, and the Next
 Visible Pass chart's sunlit dot flips by exchanging the role classes 2.4

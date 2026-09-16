@@ -20,7 +20,7 @@ separately.
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    7.0 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.6 or later, both per their instructions, in that order.
+   2.6.1 or later, both per their instructions, in that order.
    weewx-loopdata **must** come first: this extension's installer refuses
    to run beside an older weewx-loopdata, or none, because the page's
    live values reach it only through 7.0's per-report field declaration
