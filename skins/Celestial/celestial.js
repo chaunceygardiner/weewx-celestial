@@ -242,20 +242,23 @@ var celestial = (function () {
   // browser's Intl, whose idea of a language's clock need not be the
   // report's ('en' reads "PM" where an en_GB station's strftime says
   // "pm").  So the first packet repaints exactly the text the report
-  // painted.  The tokens are the ones a bundled format uses; any other
-  // is left as written.
+  // painted.  The tokens are the ones a date or clock format asks for --
+  // %H %-H %I %-I %M %S %p, %d %-d %m %-m, %b %B, %a %A, %Y %y and %% --
+  // so a translator who writes "%a %-d %B" into one of the format keys
+  // gets the same text from the report and from this script.  Anything
+  // else is left as written, which is visible rather than silent.
   function zoneParts(ts) {
     var parts = new Intl.DateTimeFormat('en-US', tzOptions({
-      month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
-      second: 'numeric', hour12: false})).formatToParts(new Date(ts * 1000));
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric',
+      minute: 'numeric', second: 'numeric', hour12: false})).formatToParts(new Date(ts * 1000));
     var v = {};
     for (var i = 0; i < parts.length; i++) {
       v[parts[i].type] = parts[i].value;
     }
     // hour12: false reads midnight as "24" in some engines.
-    return {mo: parseInt(v.month, 10), d: parseInt(v.day, 10),
-            H: parseInt(v.hour, 10) % 24, M: parseInt(v.minute, 10),
-            S: parseInt(v.second, 10)};
+    return {Y: parseInt(v.year, 10), mo: parseInt(v.month, 10),
+            d: parseInt(v.day, 10), H: parseInt(v.hour, 10) % 24,
+            M: parseInt(v.minute, 10), S: parseInt(v.second, 10)};
   }
   function pad2(n) {
     return (n < 10 ? '0' : '') + n;
@@ -271,8 +274,21 @@ var celestial = (function () {
       if (c === 'p') {
         return p.H < 12 ? CLOCK.am : CLOCK.pm;
       }
-      if (c === 'b') {
-        return CLOCK.months[p.mo - 1];
+      if (c === 'b' || c === 'B') {
+        return (c === 'b' ? CLOCK.months : CLOCK.months_full)[p.mo - 1];
+      }
+      if (c === 'a' || c === 'A') {
+        // The weekday of the instant's STATION-ZONE date, indexed as
+        // getUTCDay() does (Sunday first), which is the order the report
+        // sends the names in.
+        var wd = new Date(Date.UTC(p.Y, p.mo - 1, p.d)).getUTCDay();
+        return (c === 'a' ? CLOCK.weekdays : CLOCK.weekdays_full)[wd];
+      }
+      if (c === 'Y') {
+        return String(p.Y);
+      }
+      if (c === 'y') {
+        return pad2(p.Y % 100);
       }
       return c === '%' ? '%' : all;
     });

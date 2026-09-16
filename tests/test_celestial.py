@@ -2356,6 +2356,13 @@ class TestSampleSkinRenders:
         rems = [0, 1, 59, 60, 61, 3599, 3600, 3661, 86399, 86400, 90061,
                 22 * 86400 + 19 * 3600 + 5]
         samples = self.unit_samples()
+        # Date and clock formats beyond the ones the bundled lang files
+        # use: a translator may write a weekday, a full month or a year
+        # into any of the three format keys, and the script has to fill
+        # it exactly as the report's own strftime does -- otherwise the
+        # first packet repaints "%a" over a weekday name.
+        formats = ['%a %-d %B', '%A, %B %-d, %Y', '%y-%m-%d %H:%M',
+                   '%a %b %-d %-I:%M %p', '%B %d, %Y %%']
         cases = {}
         for lang in ('en', 'de', 'fr'):
             texts = configobj.ConfigObj(os.path.join(SKIN_DIR, 'lang', lang + '.conf'),
@@ -2368,13 +2375,15 @@ class TestSampleSkinRenders:
                          'dayhm': [page._date_hm(ts) for ts in stamps],
                          'hms': [page.clock_stamp(types.SimpleNamespace(time_ts=ts))
                                  for ts in stamps],
-                         'dhms': [page._dhms(r) for r in rems]}}
+                         'dhms': [page._dhms(r) for r in rems],
+                         'fmt': [time.strftime(f, time.localtime(stamps[4]))
+                                 for f in formats]}}
         write_assets(tmp_path, unwrapped=True)   # the runner calls internals
         (tmp_path / 'index.html').write_text(
             '<!DOCTYPE html><html><head><meta charset="utf-8">'
             '<script src="celestial.js"></script></head><body></body></html>')
         (tmp_path / 'cases.json').write_text(jsonlib.dumps(
-            {'stamps': stamps, 'rems': rems, 'samples': samples,
+            {'stamps': stamps, 'rems': rems, 'samples': samples, 'formats': formats,
              'langs': {lang: {'texts': c['texts'], 'clock': c['clock']}
                        for lang, c in cases.items()}}))
         runner = tmp_path / 'runner.py'
@@ -2391,13 +2400,17 @@ class TestSampleSkinRenders:
             '    page.goto(%r)\n'
             '    out = {"errors": errors, "langs": {}}\n'
             '    for lang, c in CASES["langs"].items():\n'
-            '        out["langs"][lang] = page.evaluate("""([c, stamps, rems]) => {\n'
+            '        out["langs"][lang] = page.evaluate("""([c, stamps, rems, formats]) => {\n'
             "          T = c.texts; CLOCK = c.clock; time_zone = 'America/Los_Angeles';\n"
             '          return {hm: stamps.map(fmtHM), dayhm: stamps.map(fmtDayHM),\n'
-            '                  hms: stamps.map(fmtHMS), dhms: rems.map(fmtDHMS)};\n'
-            '        }""", [c, CASES["stamps"], CASES["rems"]])\n'
+            '                  hms: stamps.map(fmtHMS), dhms: rems.map(fmtDHMS),\n'
+            '                  fmt: formats.map(function(f) { return strftime(f, stamps[4]); })};\n'
+            '        }""", [c, CASES["stamps"], CASES["rems"], CASES["formats"]])\n'
             '    out["keep"] = page.evaluate("s => s.map(function(x) { return keepUnits(x); })",\n'
             '                                CASES["samples"])\n'
+            '    out["unsupported"] = page.evaluate("""([c, ts]) => {\n'
+            '      CLOCK = c.clock; return strftime("%%j of %%Y", ts);\n'
+            '    }""", [CASES["langs"]["en"], CASES["stamps"][4]])\n'
             '    out["lower"] = page.evaluate("""([c, ts]) => {\n'
             '      T = c.texts; CLOCK = Object.assign({}, c.clock, {am: "am", pm: "pm"});\n'
             '      return [fmtHM(ts), fmtHMS(ts)];\n'
@@ -2427,6 +2440,9 @@ class TestSampleSkinRenders:
             '0\u00a0s', '59\u00a0s', '1\u00a0m', '1\u00a0h 1\u00a0m', '1\u00a0d 0\u00a0h',
             '22\u00a0d 19\u00a0h']
         assert out['lower'] == ['1:53 pm', '1:53:22 pm'], out['lower']
+        # A token the script does not fill is left as written -- visible,
+        # never a silently wrong date.  (%j is in no bundled format.)
+        assert out['unsupported'] == '%j of 2026', out['unsupported']
 
     def test_tap_tooltips_in_a_real_browser(self, wxskyfield_sat_almanac, tmp_path):
         """Tap tooltips (sky.js, copied from weewx-skyfield) on all three
@@ -5069,10 +5085,19 @@ class TestSampleSkinRenders:
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
         def packet(i):
+            # Stamped when the request is ANSWERED, not when the test was
+            # set up: the badge ages the record against the Date header on
+            # the response that carried it (9.0.1), and setup -- render,
+            # assets, a browser launch -- takes longer than the six-second
+            # LIVE threshold, so a stamp fixed up here read "8s ago" and
+            # the test passed only when suite order happened to be quick.
+            # The offsets below stay relative to the same instant, so the
+            # chip arithmetic these assertions check is unchanged.
+            base = int(time.time()) + 2 * i
             return loop_file({
-                'current.dateTime.raw': int(now + 2 * i),
-                'almanac.sun.next_setting.unix_epoch.raw': int(now + 3000),
-                'almanac.sun.next_rising.unix_epoch.raw': int(now + 40000),
+                'current.dateTime.raw': base,
+                'almanac.sun.next_setting.unix_epoch.raw': base + 3000,
+                'almanac.sun.next_rising.unix_epoch.raw': base + 40000,
             }).encode()
         served = {'n': 0}
 
@@ -10364,6 +10389,40 @@ class TestI18n:
         """Swedish likewise ships complete."""
         conf = self.lang_conf(self.LANG_DIR, 'sv.conf')
         assert sorted(self.rendered_keys() - set(conf['Texts'])) == []
+
+    def test_lang_format_keys_use_only_tokens_the_script_fills(self):
+        """Every strftime token in a shipped lang file's format keys AND
+        values is one celestial.js can fill.
+
+        The report paints a format through Python's strftime and the live
+        layer refills it from config.clock; a token the script does not
+        know is left as written, so a translation that reaches for, say,
+        %Z would first-paint correctly and then be repainted as the
+        literal "%Z" by the first loop packet -- the repaint parity this
+        whole mechanism exists to keep.  The supported set is read out of
+        the script itself, so teaching it a token updates this test."""
+        src = open(JS_PATH, encoding='utf-8').read()
+        body = re.search(r'function strftime\(format, ts\) \{(.*?)\n  \}', src, re.S)
+        assert body, 'strftime not found in celestial.js'
+        supported = set(re.findall(r"c === '(\w|%)'", body.group(1)))
+        table = re.search(r'var n = \{([^}]*)\}', body.group(1))
+        assert table, 'the numeric token table not found'
+        supported |= set(re.findall(r'(\w+):', table.group(1)))
+        assert {'H', 'I', 'M', 'S', 'p', 'd', 'm', 'b', 'B', 'a', 'A', 'Y', 'y'} <= supported, \
+            sorted(supported)
+        configobj = pytest.importorskip('configobj')
+        for name in sorted(os.listdir(self.LANG_DIR)):
+            texts = configobj.ConfigObj(os.path.join(self.LANG_DIR, name),
+                                        encoding='utf-8')['Texts']
+            for key, value in texts.items():
+                if not key.startswith('%'):
+                    continue
+                for text in (key, value):
+                    for _dash, token in re.findall(r'%(-?)([a-zA-Z%])', str(text)):
+                        assert token in supported or token == '%', (
+                            '%s: %r uses %%%s, which celestial.js cannot fill -- '
+                            'the first loop packet would repaint it literally'
+                            % (name, text, token))
 
     def test_lang_files_in_step_with_skyfield(self):
         """The shared vocabulary is copied verbatim from weewx-skyfield's

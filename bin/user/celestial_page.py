@@ -971,12 +971,24 @@ class CelestialPage:
         repaints exactly what the report painted."""
         def at(month: int, hour: int, fmt: str) -> str:
             return time.strftime(fmt, (2001, month, 15, hour, 0, 0, 0, 1, -1))
+
+        def weekday(js_day: int, fmt: str) -> str:
+            # SUNDAY FIRST, the order javascript's getUTCDay() indexes;
+            # struct_time counts weekdays from Monday, hence the shift.
+            return time.strftime(fmt, (2001, 1, 15, 12, 0, 0, (js_day - 1) % 7, 1, -1))
         return {'time': _clock_format(self._t('%-I:%M %p')),
                 'stamp': _clock_format(self._t('%-I:%M:%S %p')),
                 'date': self._t('%b %-d'),
                 'am': at(1, 9, '%p'),
                 'pm': at(1, 21, '%p'),
-                'months': [at(month, 12, '%b') for month in range(1, 13)]}
+                'months': [at(month, 12, '%b') for month in range(1, 13)],
+                # The names a date format can ask for beyond %b: a
+                # translator who writes "%a %-d %B" into one of these keys
+                # gets the same text from the report and from the script,
+                # which is the whole point of carrying the formats here.
+                'months_full': [at(month, 12, '%B') for month in range(1, 13)],
+                'weekdays': [weekday(day, '%a') for day in range(7)],
+                'weekdays_full': [weekday(day, '%A') for day in range(7)]}
 
     @staticmethod
     def _chip(chip_id: str, k: str, v: str, d: str, data: str = '',
