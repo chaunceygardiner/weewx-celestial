@@ -880,7 +880,9 @@ class TestSampleSkinRenders:
             # Under a day the row keeps its finer elapsed-time resolution:
             # that is what a go-watch reader wants, whichever side of
             # midnight the pass falls on.
-            assert 'in 16\u00a0h' in line(1750446000)     # Jun 20 12:00 PDT
+            # 15.6 h out: every rung FLOORS (skyfield's _sat_when), so this
+            # is "in 15 h", not the 16 that rounding gave.
+            assert 'in 15\u00a0h' in line(1750446000)     # Jun 20 12:00 PDT
 
     def test_renders_with_comets(self, wxskyfield_comet_almanac):
         """Comets configured (the skyfield 2.1 fixture MPC rows): the

@@ -1181,8 +1181,11 @@ var celestial = (function () {
     if (delta < 3600) {
       return keepUnits(fmt('in {m} m', {m: Math.max(1, Math.floor(delta / 60))}));
     }
+    // Every rung FLOORS, matching weewx-skyfield's _sat_when: rounding
+    // the hours let 86399 s read "in 24 h", one second before the day
+    // rung says "in 1 day".
     if (delta < 86400) {
-      return keepUnits(fmt('in {h} h', {h: Math.round(delta / 3600)}));
+      return keepUnits(fmt('in {h} h', {h: Math.floor(delta / 3600)}));
     }
     // Whole days is a CALENDAR-day difference, not elapsed seconds
     // divided down: renderPassRow puts this count on the same line as

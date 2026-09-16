@@ -1792,7 +1792,7 @@ class CelestialPage:
         elif delta < 3600:
             when = _keep_units(self._t('in {m} m', m=max(1, int(delta // 60))))
         elif delta < 86400:
-            when = _keep_units(self._t('in {h} h', h=int(round(delta / 3600))))
+            when = _keep_units(self._t('in {h} h', h=int(delta // 3600)))
         else:
             days = max(1, (datetime.date.fromtimestamp(rise)
                            - datetime.date.fromtimestamp(now)).days)
