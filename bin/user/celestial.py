@@ -35,7 +35,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '9.5'
+CELESTIAL_VERSION = '9.5.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -906,7 +906,7 @@ def receipts(report: Dict[str, Any]) -> List[str]:
 
 # The legacy [LoopData] [[Include]] fields line -- weewx-loopdata's
 # station-wide list, deprecated in 7.0 and removed by a later loopdata --
-# is READ here and never written (John's ruling, 2026-08-25).  Read for
+# is READ here and never written, deliberately.  Read for
 # one purpose: to say what it still costs.  loopdata 7.0 evaluates the
 # line as a context of its own beside every declaring report's, so an
 # entry on it that this page now declares is computed twice per loop

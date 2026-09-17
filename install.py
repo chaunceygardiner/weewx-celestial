@@ -53,8 +53,7 @@ def loader():
     # downgraded weewx-loopdata unable to list its extensions or to
     # uninstall this one.  The Python and WeeWX checks above have the
     # same shape but cannot regress after install; this one can.
-    # (John's ruling, 2026-08-25, for celestial, weatherboard and
-    # liveseasons alike.)
+    # (Settled 2026-08-25, the same way in every skin here.)
     if installing():
         from weeutil.weeutil import version_compare
         try:
@@ -138,8 +137,7 @@ def installing():
     wee_extension has no other option starting so (--list, --uninstall,
     --config, --bin-root, --tmpdir, --dry-run, --verbosity), weectl's
     extension subcommands none, and an argument value never starts with
-    `--`.  Same shape as weatherboard and liveseasons (John's ruling,
-    2026-08-26)."""
+    `--`.  Same shape as weewx-weatherboard's installer (2026-08-26)."""
     return any(arg == 'install' or arg.startswith('--i') for arg in sys.argv)
 
 
@@ -208,7 +206,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.5",
+            version = "9.5.1",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

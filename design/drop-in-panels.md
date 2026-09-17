@@ -691,7 +691,7 @@ loses in that swap it never chose to have.  That conversion is done
 BEFORE celestial 9.0 is cut, against the unreleased 9.0 on the
 dogfooding instances, and what it finds is fixed here first: shipping
 the interface before its one real consumer has been built against it
-would be shipping it untested (John, 2026-08-30, correcting this
+would be shipping it untested (corrected 2026-08-30 from this
 paragraph's original "after celestial 9.0 ships").  Nothing in this
 design needs a liveseasons-specific option, and none is proposed.
 

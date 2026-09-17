@@ -1840,7 +1840,7 @@ class TestSampleSkinRenders:
                          code(src)), 'the load-time re-render of a mid-parse first packet is gone or unguarded'
         # The pass chart before a packet: untouched, and no load-time
         # render reaching for it (a page opened after the set shows the
-        # chart as drawn until the first packet -- John, 2026-08-16).
+        # chart as drawn until the first packet).
         assert 'DOMContentLoaded' not in src
         assert re.search(r'if \(latest === null\) \{\n(\s*//[^\n]*\n)+\s*return;\n\s*\}\n\s*// The window the chart is judged against', src), \
             'pre-packet renderPass returns without touching the chart'
@@ -1849,10 +1849,10 @@ class TestSampleSkinRenders:
         # so the first packet never reformats the first paint.
         assert re.search(r"function fmtHMS\(ts\) \{[^}]*strftime\(CLOCK\.stamp, ts\)", src, re.S)
         # A record with no station timestamp is dropped whole -- it can
-        # never become the clock's anchor, as it did through 8.3.3.  (A
-        # 2026-08-17 ruling: celestial keeps this where liveseasons
-        # adopts such a record silently -- celestial serves other
-        # people's stations, and its badge must name a misconfiguration.)
+        # never become the clock's anchor, as it did through 8.3.3.
+        # (Deliberate since 2026-08-17: celestial serves other people's
+        # stations, so its badge must name a misconfiguration rather
+        # than adopt such a record silently.)
         assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
         assert re.search(r'console\.log\(.loop record has no '
                          r'current\.dateTime\.raw; ignored.\)', src)
@@ -3498,6 +3498,75 @@ class TestSampleSkinRenders:
         assert out['hidden'] == 0, out
         assert out['satdots'] == 0, out
         assert out['satnames'] == 0, out
+
+    def test_percent_encoded_page_update_keeps_the_page_live_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """?pageUpdate=<page_update_pwd> keeps the page from expiring even
+        when the URL carries the password percent-encoded, as a browser
+        or a link rewriter may leave it; compared raw it never matched
+        and the page expired anyway.  A bare % that does not decode is
+        compared as it stands.  The control, a copy with no pageUpdate,
+        runs the same clock in the same browser and must expire, so the
+        live legs are not merely a page that never reached its expiry.
+        Skips when the playwright env is absent."""
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        html = self.render(wxskyfield_sat_almanac)
+        click_me = self.config(html)['texts']['CLICK-ME']
+        write_assets(tmp_path)
+
+        def page_with(pwd):
+            baked = '"page_update_pwd": "foo"'
+            assert html.count(baked) == 1
+            return html.replace(baked, '"page_update_pwd": %s' % json.dumps(pwd))
+
+        pwd = 'its-xyzzy&ok=1/2'
+        encoded = ''.join('%%%02X' % b for b in pwd.encode('utf-8'))
+        (tmp_path / 'pwd.html').write_text(page_with(pwd))
+        (tmp_path / 'pct.html').write_text(page_with('100%'))
+        base = (tmp_path / 'pwd.html').as_uri()
+        legs = {
+            'encoded': base + '?pageUpdate=' + encoded,
+            'partly_encoded': base + '?pageUpdate=its-xyzzy%26ok%3D1%2F2',
+            'bare_percent': (tmp_path / 'pct.html').as_uri() + '?pageUpdate=100%',
+            'control': base,
+        }
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json, sys\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'legs, click_me = json.loads(sys.argv[1])\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    for name, url in legs.items():\n'
+            '        page = browser.new_page()\n'
+            '        errors = []\n'
+            "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '        page.clock.install()\n'
+            '        page.goto(url)\n'
+            '        # Past the 24-hour expiry, then two poll ticks for the\n'
+            '        # poll to notice it and write CLICK-ME into the badge.\n'
+            '        page.clock.fast_forward(25 * 3600 * 1000)\n'
+            '        page.clock.run_for(4000)\n'
+            "        out[name] = {'label': page.inner_text('#live-label'),\n"
+            "                     'errors': errors}\n"
+            '        page.close()\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n')
+        proc = subprocess.run(
+            [pwenv, str(runner), json.dumps([legs, click_me])],
+            capture_output=True, text=True, timeout=120)
+        assert proc.returncode == 0, proc.stderr
+        out = json.loads(proc.stdout)
+        for name, leg in out.items():
+            assert leg['errors'] == [], (name, leg)
+        assert out['control']['label'] == click_me, out
+        for name in ('encoded', 'partly_encoded', 'bare_percent'):
+            assert out[name]['label'] != click_me, (name, out)
 
     def test_stalled_feed_restores_the_drawn_sky_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -5835,7 +5904,7 @@ class TestSampleSkinRenders:
         # not just two values: on this plate celestial renders the dome
         # and the pass chart on skyfield's own paper palette, so every
         # color the page draws beside them has to be the same paper.
-        # John's rule cutting this release: if the light theme hardcodes
+        # The rule cutting this release: if the light theme hardcodes
         # body colors, they come FROM PALETTES['light'] rather than being
         # invented.  This is that rule, enforced.
         light_block = re.search(r'^\.theme-light, .*?\{(.*?)\n\}', cel_css, re.M | re.S)
@@ -5873,7 +5942,7 @@ class TestSampleSkinRenders:
         for body in ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
                      'saturn', 'uranus', 'neptune'):
             assert light_token('c-' + body) == light_color(body, 'body'), body
-        # Earth is the documented exception (John's call, 8.3): skyfield
+        # Earth is the documented exception (8.3): skyfield
         # draws it only in its orrery, a panel this page does not embed,
         # so the dial's center dot is the one mark with no counterpart on
         # this page to disagree with -- and it keeps its own green
@@ -11663,7 +11732,7 @@ class TestSatelliteUtility:
         assert self._group(once) == self._group(twice)
 
     def test_add_converges_mixed_states(self, tmp_path):
-        """John's scenario: the satellite was already added per
+        """The mixed-state scenario: the satellite was already added per
         weewx-skyfield's instructions -- the [[Satellites]] entry exists,
         the fields do not.  The entry is kept and the fields declared.
         And the reverse: fields declared by hand, entry missing."""
@@ -11845,8 +11914,8 @@ class TestSatelliteUtility:
         assert report['fields_added'] == celestial.satellite_fields('noaa21')
         assert report['fields_removed'] == ['almanac.zenit.az', 'almanac.zenit.alt']
         # A remove that writes: no [[Satellites]] section at all, so the
-        # rebuild re-derives the installer defaults (John has twice
-        # ruled that behavior stands -- but it may not happen SILENTLY).
+        # rebuild re-derives the installer defaults (that behavior
+        # stands -- but it may not happen SILENTLY).
         bare = ('[Station]\n    location = Test\n[StdReport]\n'
                 '    [[CelestialReport]]\n        skin = Celestial\n')
         conf2 = self._write_conf(tmp_path, bare)
@@ -13741,7 +13810,7 @@ class TestManualInStepWithCode:
     # ── the manual's page furniture ──────────────────────────────────
     # Every page carries the same two-line header under its H1: the
     # in-body link to the full manual and to the GitHub project, then a
-    # rule.  The links are there for a reason John cares about -- the
+    # rule.  The links are there for a reason that matters -- the
     # MANUAL ranks in search results and the repository does not, so
     # every page needs a body-text way back to the project; sidebar
     # chrome does not count, and neither does it exist for someone
@@ -13954,7 +14023,7 @@ class TestManualInStepWithCode:
         installer shows `#refresh_rate = 2` while skin.conf says 10, then
         commenting it out silently changed every fresh install's behavior
         and the stanza tells the reader a value that is not in force --
-        the one way this scheme can do real harm.  (John, 2026-08-28.)
+        the one way this scheme can do real harm.
 
         Which side moves when this fails is a JUDGMENT, not a rule, and
         the mechanical instinct is the wrong one.  Editing the commented
@@ -13968,8 +14037,8 @@ class TestManualInStepWithCode:
         belongs in changes.txt.  (Existing stations are unaffected
         either way: their weewx.conf already carries the live value.)
         weewx-purple hit exactly this on 2026-08-28 -- a shipped
-        `timeout = 15` against a code fallback of 10 -- and John moved
-        the code to 15.  weewx-loopdata had the same class of drift on
+        `timeout = 15` against a code fallback of 10 -- and the code
+        moved to 15.  weewx-loopdata had the same class of drift on
         loop_data_file six days earlier."""
         import configobj
         skin = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),

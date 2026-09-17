@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.5';
+  var CELESTIAL_JS_VERSION = '9.5.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -169,7 +169,16 @@ var celestial = (function () {
     if (expiration_time <= 0) {
       return;
     }
-    if (getUrlParam('pageUpdate') !== page_update_pwd) {
+    // getUrlParam returns the value as the URL carries it, and a browser
+    // or a link rewriter may have percent-encoded it, so compare it
+    // decoded; a stray % that does not decode is compared as it stands.
+    var pageUpdate = getUrlParam('pageUpdate');
+    try {
+      pageUpdate = decodeURIComponent(pageUpdate);
+    } catch (e) {
+      // a bare %: compare it raw
+    }
+    if (pageUpdate !== page_update_pwd) {
       // Expire in N hours, clamped to the browser's int32 timer-delay
       // ceiling (~24.8 days): past 2147483647 ms the delay overflows
       // and the timer fires early -- an expiration_time over ~596
@@ -1119,7 +1128,7 @@ var celestial = (function () {
   // better idea): easing the marker toward each packet's anchor
   // (first-order glide, TAU 0.8 and 1.6 both shot and compared) to
   // kill the small extrapolate-then-correct zigzag at culmination.
-  // John judged the cure worse than the disease on the pass chart:
+  // The cure is worse than the disease on the pass chart:
   // the lag pulls the dot visibly off the drawn arc -- a sustained
   // error against a truth reference, where the zigzag is fast noise
   // centered on it.  The zigzag is accepted: per-packet anchors are
@@ -2089,7 +2098,7 @@ var celestial = (function () {
     // shows, so no fetch is owed and none goes out.  That is the
     // doctrine, not an oversight -- a station whose loop feed is not
     // working has no live layer at all, and the LIVE badge is where that
-    // fault is reported (John, 2026-08-17).  When a
+    // fault is reported.  When a
     // feed DIES its clock stops with it, so this stops firing -- which
     // is right for THIS test: a stopped clock cannot judge, and the
     // dead-feed case is handled where it belongs, in renderDome, which
@@ -2133,7 +2142,7 @@ var celestial = (function () {
     // a fallback that could be wrong by hours.  So the page's time
     // advances at loop cadence and stops when the feed does -- a station
     // whose loop feed is not working has no working live layer, and the
-    // LIVE badge is where that fault is reported (John, 2026-08-16).
+    // LIVE badge is where that fault is reported.
     // The browser is asked only how long something took (packetAge and
     // the fetch throttles: a difference between two of its own readings,
     // immune to any skew), never what time it is.
@@ -2485,8 +2494,8 @@ var celestial = (function () {
       // that until the first packet lands -- normally refresh_rate
       // seconds later, but for as long as the feed stays down, since
       // nothing else here can set `latest`.  A station whose loop feed is
-      // not working has no working pass panel either; John's ruling of
-      // 2026-08-16, and what lets the verdict below be a plain
+      // not working has no working pass panel either -- the doctrine
+      // again, and what lets the verdict below be a plain
       // comparison of two station-written times with nothing remembered
       // and nothing to police.  (8.3.4 restored the drawn state here on
       // every tick -- six attribute writes a second on a chart nothing
@@ -3171,8 +3180,7 @@ var celestial = (function () {
           // these from the BROWSER's clock, which is the one clock this
           // page may not read; the skin's own declaration (its `clock`
           // group) always carries current.dateTime.raw, so a feed doing
-          // this is misconfigured and the badge says so.  (John,
-          // 2026-08-16.)
+          // this is misconfigured and the badge says so.
           setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
           console.log('loop record has no current.dateTime.raw; ignored');
           return;

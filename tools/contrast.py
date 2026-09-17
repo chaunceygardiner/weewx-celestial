@@ -16,7 +16,7 @@ WHY TWO MEASURES.  The WCAG 2 ratio is the one the standard names, and it
 is wrong in a known direction: it overrates dark text on saturated,
 mid-luminance colors.  Dark ink on the plate's pure red scores 5.03 --
 comfortably over AA -- and on an iPhone the magnitude in the Seismograph's
-marker could not be read (John, 2026-09-13).  APCA, the model written to
+marker could not be read (measured 2026-09-13).  APCA, the model written to
 replace it, scores the same pair Lc 39.5; white on that red, which the
 ratio fails at 4.00, scores Lc 69.6 and reads plainly.  Neither number is
 enough alone, so both are printed, each against its own bars.

@@ -87,9 +87,9 @@ no second implementation to drift.
 `configure()` runs at 228 and the report's stanza is created at 232.  So
 on a FRESH install the consumer's report does not exist yet when its own
 `configure()` runs: a bare call would walk `[StdReport]`, find no report
-using that skin, and correctly write nothing — leaving the state John
-ruled broken, on the fresh path.  It works on an upgrade, where the
-stanza is already there, which is every existing station and therefore
+using that skin, and correctly write nothing — leaving the state this
+design calls broken, on the fresh path.  It works on an upgrade, where
+the stanza is already there, which is every existing station and therefore
 every test either side would naturally have run.  Found by the
 liveseasons session reading weectl rather than trusting the happy path.
 
@@ -138,8 +138,9 @@ on `sys.path` for the install.
 ### Why the two halves need each other
 
 Half 1 alone still leaves the groups unwritten until celestial's
-installer next runs — the step John ruled unacceptable ("if it requires
-reinstalling celestial after installing liveseasons, it is broken").
+installer next runs — the step this design rules unacceptable: if it
+requires reinstalling celestial after installing the consumer, it is
+broken.
 
 Half 2 alone leaves the key in `weewx.conf`, written by the consumer's
 own installer through `conditional_merge`, which fills absent keys and
@@ -151,13 +152,11 @@ arrives with the skin that changed.
 
 ## More than one report on one skin is required
 
-John's ruling, after the liveseasons session reported that all seven of
-its stations run the skin under a single report and offered that as a
-reason the per-report override had no real case: "base nothing on
-liveseasons running on only one report, I could add a metric report
-tomorrow, I will not accept this limitation."  So this is a requirement,
-not a case to be discovered later.  A snapshot of today's stations is not
-a design constraint.
+That every station known today runs the skin under a single report is
+not a reason for the per-report override to have no real case: a metric
+report could be added tomorrow, and that limitation is not acceptable.
+So this is a requirement, not a case to be discovered later.  A snapshot
+of today's stations is not a design constraint.
 
 It falls out of half 1 rather than needing anything: a key in a skin's
 `skin.conf` is inherited by EVERY report running that skin, which is
@@ -212,7 +211,7 @@ means "not this extension's report", so celestial deliberately leaves
 those groups alone.  Before this design the key lived in `weewx.conf` and
 outlived the skin, so the remedy was there to use.
 
-**Ruled (John, 2026-08-30): prune the groups when the skin cannot be
+**Ruled (2026-08-30): prune the groups when the skin cannot be
 resolved.**  A report that carries no key from either place AND whose
 skin's `skin.conf` cannot be read is a report that once was a consumer
 and can no longer be one; celestial removes its two groups and reports

@@ -1,6 +1,14 @@
 weewx-celestial change history
 ------------------------------
 
+9.5.1 2026/09/16
+----------------
+- ?pageUpdate=<page_update_pwd> keeps the page from expiring even when
+  the URL carries the password percent-encoded, as a browser or a link
+  rewriter may leave it.  The page compared the password as the URL
+  carried it, so an encoded one never matched and the page expired
+  anyway.
+
 9.5 2026/09/15
 --------------
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6.1 first.
