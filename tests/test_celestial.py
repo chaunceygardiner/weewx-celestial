@@ -15,6 +15,12 @@ utilities.
 Run with the WeeWX virtual environment's Python, from the root of this repo:
     /home/weewx/weewx-venv/bin/python -m pytest tests
 
+or, where pytest-xdist is installed in that venv, on three workers (the
+fourth core is left to weewxd); worksteal, because the default scheduler
+deals tests out up front and can leave the long browser tests queued on
+one worker:
+    /home/weewx/weewx-venv/bin/python -m pytest tests -n 3 --dist worksteal
+
 The skin-render tests use the independent weewx-skyfield extension (the
 installed copy or a sibling checkout) as the report almanac, exactly as
 production does; they skip when it is not available.  The field-set
@@ -12716,6 +12722,25 @@ class TestInstallerLoader:
     -- the page would say BAD DATA for ever with nothing in any log to
     say why.  A dev build is given the benefit of the doubt, exactly as
     the WeeWX floor is."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_user_modules(self):
+        """Put the `user` package and its submodules back as they were.
+        loader() imports whatever `user` these tests arrange, and a
+        monkeypatch.delitem on a name not yet imported records nothing to
+        undo, so a scratch `user` package outlived its test and every
+        later `import user.celestial_page` in the process failed -- which
+        the consumer-skin tests do, and which only a parallel run ever
+        ordered after this class."""
+        def ours():
+            return {name: mod for name, mod in sys.modules.items()
+                    if name == 'user' or name.startswith('user.')}
+        saved = ours()
+        yield
+        for name in ours():
+            if name not in saved:
+                del sys.modules[name]
+        sys.modules.update(saved)
 
     def _with_skyfield(self, monkeypatch, version):
         """Place (or remove) a user.wxskyfield of the given version.
