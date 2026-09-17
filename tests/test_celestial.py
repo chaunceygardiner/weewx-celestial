@@ -350,6 +350,71 @@ def rewindow_pass_chart(markup, rise, sset):
     return out
 
 
+# Runner-side helpers for a browser test that drives the page on a PAUSED
+# fake clock, a poll at a time, instead of waiting on the real one.  Paste
+# into a runner's source.  They read the page's internals, so the page
+# must load the unwrapped build (write_assets(..., unwrapped=True)), and
+# every loop-data answer must carry a stamp no earlier answer had: a
+# step's arrival is recognized by the stamp changing.  The harness's
+# refresh_rate is 2 s, so one run_for(2000) fires exactly one poll.
+STEP_HELPERS = '''
+STAMP = "() => latest === null ? null : latest['current.dateTime.raw']"
+def open_paused(page, url, t0):
+    page.clock.install(time=t0)
+    page.clock.pause_at(t0 + 0.5)
+    page.goto(url)
+    page.wait_for_function('() => latest !== null', timeout=10000)
+def step(page):
+    ts = page.evaluate(STAMP)
+    page.clock.run_for(2000)
+    page.wait_for_function('ts => (' + STAMP + ')() !== ts', arg=ts,
+                           timeout=10000)
+def step_until(page, js, limit):
+    for _ in range(limit):
+        if page.evaluate(js):
+            return
+        step(page)
+    assert page.evaluate(js), js
+'''
+
+# Runner-side helpers for waiting on the page's own fetches rather than on
+# a clock.  Paste into a runner's source and call
+# page.add_init_script(XHR_DONE) before the page loads: every XHR the page
+# sends records its URL when it ENDS, and loadend fires after the
+# request's load handler has run, so a recorded URL means the page has
+# already acted on the answer (a 404 included).
+WAIT_HELPERS = '''
+XHR_DONE = """(() => {
+  var send = XMLHttpRequest.prototype.send;
+  window.__xhrDone = [];
+  window.__xhrOpen = 0;
+  XMLHttpRequest.prototype.send = function () {
+    var x = this;
+    window.__xhrOpen += 1;
+    x.addEventListener('loadend', function () {
+      window.__xhrOpen -= 1;
+      window.__xhrDone.push(x.responseURL || ''); });
+    return send.apply(this, arguments);
+  };
+})()"""
+XHR_COUNT = '([p, n]) => __xhrDone.filter(u => u.indexOf(p) >= 0).length >= n'
+def xhr_count(page, part):
+    return page.evaluate('p => __xhrDone.filter(u => u.indexOf(p) >= 0).length', part)
+def wait_xhr(page, part, n):
+    """Until n fetches whose URL contains part have been handled."""
+    page.wait_for_function(XHR_COUNT, arg=[part, n], timeout=15000)
+def settle(page):
+    """Until every fetch the page has started has been handled."""
+    page.wait_for_function('() => __xhrOpen === 0', timeout=15000)
+def handled(page, part, action):
+    """Run action (a page expression), then wait until the fetch it
+    starts has been handled."""
+    n = xhr_count(page, part)
+    page.evaluate(action)
+    wait_xhr(page, part, n + 1)
+'''
+
+
 def load_loopdata():
     """Import the sibling weewx-loopdata checkout's module, or skip the
     calling test."""
@@ -2126,14 +2191,26 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json, sys\n'
             'from playwright.sync_api import sync_playwright\n'
+            'from playwright.sync_api import TimeoutError as PlaywrightTimeout\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
-            '    page.wait_for_timeout(5500)\n'
+            '    # Until the page has shown everything read below: a rate\n'
+            '    # line and the trails need a second packet, the dome nudge\n'
+            '    # a tick, and the odometer flash a changed digit.\n'
+            '    # A page that never gets there is reported by the asserts,\n'
+            '    # which say what is missing, not by the timeout.\n'
+            '    try:\n'
+            '        page.wait_for_function("""() =>\n'
+            "          /receding|approaching/.test(document.getElementById('geo-rate-mercury').textContent) &&\n"
+            '          document.querySelectorAll(\'#dial line.cel-trail:not([display="none"])\').length > 180 &&\n'
+            "          document.querySelector('#dome-svg g.dome-body[transform]') !== null &&\n"
+            "          document.querySelector('.cel-odo .cel-chg') !== null\"\"\", timeout=15000)\n"
+            '    except PlaywrightTimeout:\n'
+            '        pass\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'rate': page.inner_text('#geo-rate-mercury'),\n"
@@ -2280,7 +2357,6 @@ class TestSampleSkinRenders:
             "    ctx = browser.new_context(timezone_id='Pacific/Auckland')\n"
             '    page = ctx.new_page()\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
             "    when = page.evaluate('%s.map("
             'function(c) { return satWhen(c[0] + c[1], null, c[0]); })\')\n'
             '    browser.close()\n'
@@ -2565,8 +2641,9 @@ class TestSampleSkinRenders:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         runner = tmp_path / 'runner.py'
         runner.write_text(
-            'import json, time\n'
+            'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    # Tall enough that every panel is in view: scrolling would\n'
@@ -2574,9 +2651,12 @@ class TestSampleSkinRenders:
             "    page = browser.new_page(viewport={'width': 1280, 'height': 4000})\n"
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             '    page.clock.install()\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            '    # The first packet\'s backdrop fetch, answered and applied, so\n'
+            '    # it cannot close a chip below or stand in for the swap.\n'
+            "    wait_xhr(page, '/dome-svg', 1)\n"
             '    def chip():\n'
             '        return page.evaluate(\n'
             '            """() => { var t = document.querySelector(\'.skytip\');\n'
@@ -2599,8 +2679,9 @@ class TestSampleSkinRenders:
             "    out['iss_title'] = page.locator(iss + ' title').first.text_content()\n"
             '    tap(iss)\n'
             "    out['iss_chip'] = chip()\n"
+            "    swaps = xhr_count(page, '/dome-svg')\n"
             '    page.clock.fast_forward(61000)\n'
-            '    time.sleep(1.5)\n'
+            "    wait_xhr(page, '/dome-svg', swaps + 1)\n"
             "    out['after_swap'] = chip()\n"
             "    out['swapped_dome_ts'] = page.evaluate(\n"
             '        """() => document.querySelector(\'#dome-svg div[data-dome-ts]\')\n'
@@ -2685,6 +2766,7 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        now = int(time.time())
         # The page is rendered for the fixture instant while this test's
         # packets carry the browser's real clock, and the include judges
         # the backdrop's age against the feed's clock: left alone, the
@@ -2693,12 +2775,11 @@ class TestSampleSkinRenders:
         # feed's own time removes a mismatch the harness invents -- in
         # production the page and the packets come from one station.
         html = relib.sub(r'data-dome-ts="\d+"',
-                         'data-dome-ts="%d"' % int(time.time()), html, count=1)
+                         'data-dome-ts="%d"' % now, html, count=1)
         # Likewise the chart's OWN window (skyfield 2.3.2's data-rise /
         # data-set): the sweep runs only inside it, so it is put around
         # the browser's clock like the feed's window below.
-        html = rewindow_pass_chart(html, int(time.time()) - 60,
-                                   int(time.time()) + 600)
+        html = rewindow_pass_chart(html, now - 60, now + 600)
         if gen_lit:
             # The fixture culminates in SHADOW, so its swap lands on role
             # classes the chart already used -- the one direction that
@@ -2707,7 +2788,7 @@ class TestSampleSkinRenders:
             # the way skyfield builds it, pruned rules and all.
             html = as_sunlit_at_generation(html)
         (tmp_path / 'index.html').write_text(html)
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
 
         # The generated look, straight from the rendered chart (the only
         # data-sunlit iss group on the page: the ISS is below the horizon
@@ -2730,12 +2811,10 @@ class TestSampleSkinRenders:
         # its palette, and -- unlike naming the classes -- fails loudly
         # if either phase resolves to the SVG default black.
 
-        # Five packets, one per 2 s poll: the pass in progress around the
-        # browser's real clock, sunlit walking true -> false -> true (the
-        # last packet repeats forever, so the restore state is stable).
-        # A dark sky (sun at -30) keeps the dome marker un-faint: the
-        # shadow ring is the only toggle under test.
-        now = time.time()
+        # One packet per 2 s poll of the page's stepped clock: the pass in
+        # progress around it, sunlit walking true -> false -> true and
+        # staying true.  A dark sky (sun at -30) keeps the dome marker
+        # un-faint: the shadow ring is the only toggle under test.
 
         def packet(i, sunlit):
             return loop_file({
@@ -2748,14 +2827,13 @@ class TestSampleSkinRenders:
                 'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now - 60,
                 'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 600,
             }).encode()
-        packets = [packet(0, True), packet(1, False), packet(2, False),
-                   packet(3, False), packet(4, True)]
         served = {'n': 0}
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
-                    body = packets[min(served['n'], len(packets) - 1)]
+                    i = served['n']
+                    body = packet(i, not 1 <= i <= 3)
                     served['n'] += 1
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
@@ -2779,32 +2857,33 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(now)d)\n"
             '    # The sweep engaged: the feed put the pass in progress.\n'
-            "    page.wait_for_selector('#pass-chart g.dome-body[transform]',\n"
-            '                           timeout=15000)\n'
+            '    step_until(page, """() => '
+            "document.querySelector('#pass-chart g.dome-body[transform]') !== null"
+            '""", 3)\n'
             '    # The shadow packets: dome dot ringed -- the two panels\n'
             '    # agreeing is the point of the fix -- then the chart dot\n'
             '    # pair as the browser RESOLVES it, whatever painted it.\n'
-            '    page.wait_for_function("""() => '
+            '    step_until(page, """() => '
             "document.querySelector('#dome-svg .cel-satdot.cel-shadow') !== null"
-            '""", timeout=20000)\n'
+            '""", 4)\n'
             '    shadow = page.evaluate("""() => {\n'
             "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
             '      var s = getComputedStyle(c); return [s.fill, s.stroke];\n'
             '    }""")\n'
             '    # Sunlit returns: the chart dot flips back, in step with the\n'
             '    # dome, mid-sweep.\n'
-            '    page.wait_for_function("""() => '
+            '    step_until(page, """() => '
             "document.querySelector('#dome-svg .cel-satdot') !== null && "
             "document.querySelector('#dome-svg .cel-satdot.cel-shadow') === null"
-            '""", timeout=20000)\n'
+            '""", 5)\n'
             '    lit = page.evaluate("""() => {\n'
             "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
             '      var s = getComputedStyle(c); return [s.fill, s.stroke];\n'
@@ -2814,7 +2893,7 @@ class TestSampleSkinRenders:
             "               '#pass-chart g.dome-body[transform]', 'els => els.length')}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n'
-            % {'port': port})
+            % {'port': port, 'now': now})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -2848,11 +2927,14 @@ class TestSampleSkinRenders:
         judges it against the chart's OWN window, skyfield 2.3.2's
         data-rise/data-set on the track, so nothing has to be remembered.
 
-        The chart's window is put around the browser's real clock -- in
-        progress at load, ending a few seconds later -- and the feed lies
-        the satellite overhead, then rolls to the following pass exactly as
-        loopdata's event expiry does.  Proven: the sweep engages, the dot
-        and its label hide at the set and stay hidden through the roll; a
+        The chart's window is put around the page's clock -- in progress
+        at load, ending ten polls later -- and the feed lies the satellite
+        overhead, then rolls to the following pass exactly as loopdata's
+        event expiry does.  The page runs on a paused fake clock stepped
+        one poll at a time, and each packet is stamped two seconds after
+        the one before, so the window passes in virtual time.  Proven: the
+        sweep engages, the dot and its label hide at the set and stay
+        hidden through the roll; a
         refetch that re-serves the SAME finished chart (the report has not
         rerun) hides it again with nothing carried over; and a page LOADED
         after the set -- the case no memory could reach -- comes up hidden
@@ -2878,25 +2960,18 @@ class TestSampleSkinRenders:
         # identically below, so a refetch brings back the same finished
         # chart.
         frag = self.render_pass_fragment(wxskyfield_sat_almanac, sky_page)
-        # The chart's own window -- in progress now, over in a few
-        # seconds -- is anchored to the browser's FIRST REQUEST for the
-        # page, at serve time, so nothing that precedes it (a fresh
-        # python, chromium's launch) can eat the margin: the handler
-        # re-windows index.html and the fragment when first asked for
-        # them.  A pre-2.3.2 sibling skips here, as everywhere.
+        # The chart's own window: in progress at T0, over twenty virtual
+        # seconds later.  A pre-2.3.2 sibling skips here, as everywhere.
         if not re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
             pytest.skip('this weewx-skyfield emits no data-rise/data-set (pre-2.3.2)')
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
-        win = {}
+        t0 = int(time.time())
+        chart_rise, chart_set = t0 - 60, t0 + 20
 
         def windowed(markup):
-            if not win:
-                t0 = int(time.time())
-                win['rise'], win['set'] = t0 - 60, t0 + 30
-                win['t0'] = t0
-            out = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % win['t0'],
+            out = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % t0,
                             markup, count=1)
-            return rewindow_pass_chart(out, win['rise'], win['set'])
+            return rewindow_pass_chart(out, chart_rise, chart_set)
 
         # The generated dot's position: what the mark must NOT snap back
         # to once the pass is over.
@@ -2912,9 +2987,10 @@ class TestSampleSkinRenders:
             # progress for the first polls, then rolled to the following
             # pass an hour out (loopdata's event expiry) -- which the
             # chart's own window makes irrelevant, and the test proves so.
+            # Each request is stamped one poll after the last: the page
+            # steps its clock a poll at a time, so this is its time.
             i = state['n']
-            now = time.time()
-            chart_rise, chart_set = win.get('rise', now - 60), win.get('set', now + 30)
+            now = t0 + 2 * i
             rolled = now >= chart_set
             return loop_file({
                 'current.dateTime.raw': now,
@@ -2988,30 +3064,30 @@ class TestSampleSkinRenders:
             '  els.forEach(function(el) {\n'
             "    if (el !== null) { window.__obs.observe(el, {attributes: true}); } });\n"
             '}"""\n'
+            + STEP_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(t0)d)\n"
             "    # The chart's own set, read where the page reads it.\n"
             '    CHART_SET = float(page.evaluate("""() =>\n'
             "      document.querySelector('#pass-chart g.dome-track').getAttribute('data-set')\"\"\"))\n"
             '    # In the window: the sweep engages.\n'
-            "    page.wait_for_selector(G + '[transform]', timeout=15000)\n"
+            '    step_until(page, "() => document.querySelector(\'" + G + "[transform]\') !== null", 4)\n'
             '    # The set instant: dot and label hide -- and stay hidden\n'
             '    # once the feed rolls (the roll follows the set in the\n'
             "    # handler; the roll's arrival is awaited below).\n"
-            '    page.wait_for_function(HIDDEN, timeout=35000)\n'
-            '    page.wait_for_function("""() => latest !== null &&\n'
-            "      latest['almanac.iss.next_visible_pass.rise.unix_epoch.raw'] > \"\"\" + str(CHART_SET),\n"
-            '      timeout=15000)\n'
-            '    page.wait_for_timeout(1500)      # one localTick after the roll\n'
+            '    step_until(page, HIDDEN, 15)\n'
+            '    step_until(page, """() => latest !== null &&\n'
+            "      latest['almanac.iss.next_visible_pass.rise.unix_epoch.raw'] > \"\"\" + str(CHART_SET), 4)\n"
+            '    step(page)                       # two localTicks after the roll\n'
             '    # Past the set, renderPass hides the mark on every tick:\n'
             '    # hiding what is already hidden must write NOTHING.\n'
             '    page.evaluate(OBSERVE)\n'
-            '    page.wait_for_timeout(5000)      # five localTicks\n'
+            '    for _ in range(3):               # six localTicks\n'
+            '        step(page)\n'
             "    out = {'errors': errors,\n"
             "           'muts': page.evaluate('() => window.__muts'),\n"
             "           'display': page.get_attribute(G, 'display'),\n"
@@ -3027,11 +3103,12 @@ class TestSampleSkinRenders:
             "    out['cx_after_refetch'] = page.get_attribute(G + ' circle', 'cx')\n"
             '    # A page LOADED after the set: hidden on its first packet.\n'
             "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            '    page.wait_for_function(HIDDEN, timeout=15000)\n'
+            "    page.wait_for_function('() => latest !== null', timeout=10000)\n"
+            '    assert page.evaluate(HIDDEN)\n'
             "    out['transform_after_reload'] = page.get_attribute(G, 'transform')\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n'
-            % {'port': port})
+            % {'port': port, 't0': t0})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -3043,7 +3120,7 @@ class TestSampleSkinRenders:
         # Hidden through the set and the roll; the circle itself never
         # rewritten -- the mark hides, it is not re-placed.
         assert out['display'] == 'none'
-        # ...and staying hidden is free: five seconds of ticks past the
+        # ...and staying hidden is free: six seconds of ticks past the
         # set write not one attribute.  Through 8.3.5 setShown wrote
         # display="none" unconditionally, so the dot group and its label
         # took two mutations a second until the next chart refetch --
@@ -3120,8 +3197,9 @@ class TestSampleSkinRenders:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         runner = tmp_path / 'runner.py'
         runner.write_text(
-            'import json\n'
+            'import json, time\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             "G = '#pass-chart g.dome-body[data-body=iss]'\n"
             'OBSERVE = """() => {\n'
             '  window.__muts = 0;\n'
@@ -3138,13 +3216,22 @@ class TestSampleSkinRenders:
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    # A paused clock, run by hand: the ticks are counted, and\n'
+            '    # every poll they fire is answered before anything is read.\n'
+            '    page.add_init_script(XHR_DONE)\n'
+            '    now = time.time()\n'
+            '    page.clock.install(time=now)\n'
+            '    page.clock.pause_at(now + 0.5)\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
             '    # The feed is running: renderPass is doing its work.\n'
             "    page.wait_for_function('() => latest !== null', timeout=15000)\n"
-            '    page.wait_for_timeout(1500)\n'
+            "    polls = xhr_count(page, '/loop-data.txt')\n"
+            '    page.clock.run_for(2000)\n'
+            "    wait_xhr(page, '/loop-data.txt', polls + 1)\n"
             '    page.evaluate(OBSERVE)\n'
-            '    page.wait_for_timeout(5000)      # five localTicks\n'
+            "    polls = xhr_count(page, '/loop-data.txt')\n"
+            '    page.clock.run_for(6000)         # six localTicks, three polls\n'
+            "    wait_xhr(page, '/loop-data.txt', polls + 3)\n"
             '    out = {\n'
             "        'errors': errors,\n"
             "        'muts': page.evaluate('() => window.__muts'),\n"
@@ -3196,24 +3283,23 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
+        t0 = int(time.time())
         html = relib.sub(r'data-dome-ts="\d+"',
-                         'data-dome-ts="%d"' % int(time.time()), html, count=1)
+                         'data-dome-ts="%d"' % t0, html, count=1)
         html = rewindow_pass_chart(html, None, None)      # a pre-2.3.2 chart
         assert 'data-set=' not in html.split('id="pass-chart"', 1)[1].split('</svg>', 1)[0]
         (tmp_path / 'index.html').write_text(html)
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
 
-        state = {'n': 0, 't0': None}
+        state = {'n': 0}
 
         def packet():
-            # The feed's window, anchored to the browser's first poll: in
+            # The feed's window, around the page's stepped clock: in
             # progress for the first three polls, then past its set.
-            if state['t0'] is None:
-                state['t0'] = time.time()
-            i, t0 = state['n'], state['t0']
+            i = state['n']
             past = i >= 3
             return loop_file({
-                'current.dateTime.raw': time.time(),
+                'current.dateTime.raw': t0 + 2 * i,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0,
@@ -3251,27 +3337,27 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS +
             "G = '#pass-chart g.dome-body[data-body=iss]'\n"
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(t0)d)\n"
             '    # The feed window governs: the sweep engages on it.\n'
-            "    page.wait_for_selector(G + '[transform]', timeout=15000)\n"
+            '    step_until(page, "() => document.querySelector(\'" + G + "[transform]\') !== null", 3)\n'
             "    # The feed's set passes: RESTORED, not hidden -- the drawn\n"
             '    # chart, transform gone, display untouched.\n'
-            '    page.wait_for_function("""() => {\n'
+            '    step_until(page, """() => {\n'
             "      var g = document.querySelector('\"\"\" + G + \"\"\"');\n"
             "      return g !== null && !g.hasAttribute('transform') &&\n"
             "             g.getAttribute('display') !== 'none';\n"
-            '    }""", timeout=20000)\n'
+            '    }""", 4)\n'
             "    out = {'errors': errors}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n'
-            % {'port': port})
+            % {'port': port, 't0': t0})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -3401,7 +3487,7 @@ class TestSampleSkinRenders:
         html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % now,
                          html, count=1)
         (tmp_path / 'index.html').write_text(html)
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
 
         def packet(ts, sun_alt):
             return loop_file({
@@ -3419,14 +3505,14 @@ class TestSampleSkinRenders:
             }).encode()
 
         # Live for the first few polls, then the station's clock jumps.
-        packets = ([packet(now + 2 * i, -5.0) for i in range(4)]
-                   + [packet(now + 7200 + 2 * i, -5.0) for i in range(6)])
+        def nth(i):
+            return packet(now + (7200 if i >= 4 else 0) + 2 * i, -5.0)
         served = {'n': 0}
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
-                    body = packets[min(served['n'], len(packets) - 1)]
+                    body = nth(served['n'])
                     served['n'] += 1
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
@@ -3450,16 +3536,16 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(now)d)\n"
             '    # The live layer really ran: marks moved, the set sun was\n'
             '    # hidden, a satellite marker was drawn.\n'
-            "    page.wait_for_selector('#dome-svg g.dome-body[transform]', timeout=15000)\n"
+            "    step_until(page, '() => document.querySelector(\"#dome-svg g.dome-body[transform]\") !== null', 3)\n"
             '    out = {\n'
             "        'live_nudged': page.eval_on_selector_all(\n"
             "            '#dome-svg g.dome-body[transform]', 'els => els.length'),\n"
@@ -3471,8 +3557,9 @@ class TestSampleSkinRenders:
             "            '#dome-svg text.satlab:not([data-body])', 'els => els.length'),\n"
             '    }\n'
             '    # ...and then the station clock leaps and the freeze engages.\n'
-            "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=20000)\n"
-            '    page.wait_for_timeout(2500)\n'
+            "    step_until(page, '() => document.querySelector(\"#dome-stale:not([hidden])\") !== null', 8)\n"
+            '    for _ in range(2):\n'
+            '        step(page)\n'
             "    out['nudged'] = page.eval_on_selector_all(\n"
             "        '#dome-svg g.dome-body[transform], #dome-svg text[data-body][transform]',\n"
             "        'els => els.length')\n"
@@ -3485,7 +3572,7 @@ class TestSampleSkinRenders:
             "        '#dome-svg text.satlab:not([data-body])', 'els => els.length')\n"
             "    out['errors'] = errors\n"
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % port)
+            'print(json.dumps(out))\n' % {'port': port, 'now': now})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -3654,14 +3741,15 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             '    page.clock.install()\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
             '    # The live layer ran on the fresh packets.\n'
             "    page.wait_for_selector('#dome-svg g.dome-body[transform]', timeout=15000)\n"
             "    out = {'live_nudged': page.eval_on_selector_all(\n"
@@ -3672,11 +3760,10 @@ class TestSampleSkinRenders:
             "            '#dome-svg text.satlab:not([data-body])', 'els => els.length')}\n"
             '    # Now the feed repeats itself while the clock runs past\n'
             '    # EXTRAP_MAX.  Every poll still answers 200.  Stepped, not\n'
-            '    # leapt: each step needs the event loop back to deliver the\n'
-            '    # XHR the timers just fired.\n'
+            '    # leapt: each step settles the polls its timers just fired.\n'
             '    for _ in range(16):\n'
             '        page.clock.fast_forward(10000)\n'
-            '        page.wait_for_timeout(120)\n'
+            '        settle(page)\n'
             "    out['nudged'] = page.eval_on_selector_all(\n"
             "        '#dome-svg g.dome-body[transform], #dome-svg text[data-body][transform]',\n"
             "        'els => els.length')\n"
@@ -3748,7 +3835,7 @@ class TestSampleSkinRenders:
         # the embedded backdrop's data-dome-ts is a year behind the feed.
         (tmp_path / 'index.html').write_text(
             self.render(wxskyfield_sat_almanac, sky_page=make_sky_page()))
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         # The first-packet refetch (8.3.5) fires within the test's life, so
         # which reason the line carries is decided here: a fragment that
         # answers with the same old sky, or nothing to answer at all.
@@ -3767,7 +3854,7 @@ class TestSampleSkinRenders:
         # whichever of the five slots real time happened to fall in --
         # making both the served-fragment case and the filename in the
         # 404 message depend on when the suite was run.
-        now = (time.time() // 300) * 300
+        now = int(time.time() // 300) * 300
 
         def packet(i):
             # A live sky: the sun and the ISS both up and moving, so a
@@ -3795,13 +3882,14 @@ class TestSampleSkinRenders:
                 'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 600,
                 'almanac.iss.next_visible_pass.max_altitude.degree_angle.raw': 45.0,
             }).encode()
-        packets = [packet(i) for i in range(4)]
+        # A fresh packet on every poll: the feed is demonstrably alive
+        # throughout, which is what makes a motionless dome a freeze.
         served = {'n': 0}
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
-                    body = packets[min(served['n'], len(packets) - 1)]
+                    body = packet(served['n'])
                     served['n'] += 1
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
@@ -3825,16 +3913,17 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(now)d)\n"
             '    # The line appears on the one-second tick, feed or no feed.\n'
-            "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=15000)\n"
-            '    page.wait_for_timeout(5500)\n'
+            "    step_until(page, '() => document.querySelector(\"#dome-stale:not([hidden])\") !== null', 5)\n"
+            '    for _ in range(3):         # six seconds more of live feed\n'
+            '        step(page)\n'
             '    def marks():\n'
             "        return page.evaluate('''() => {\n"
             "          var out = [];\n"
@@ -3858,17 +3947,18 @@ class TestSampleSkinRenders:
             "        'anyline': page.inner_text('#sat-any-line-iss'),\n"
             "        'passline': page.inner_text('#sat-line-iss'),\n"
             '    }\n'
-            '    # Two and a half seconds of feed later, every mark on\n'
+            '    # Four seconds of feed later, every mark on\n'
             '    # the dome must be exactly where it was: THAT is\n'
             '    # frozen.  Not "never nudged" -- the freeze waits for\n'
             '    # the first refetch to come back, so a mark may take\n'
             '    # one nudge before it engages, and a transform once\n'
             '    # set is not removed.\n'
-            '    page.wait_for_timeout(2500)\n'
+            '    for _ in range(2):\n'
+            '        step(page)\n'
             "    out['marks_later'] = marks()\n"
             "    out['rate_later'] = page.inner_text('#geo-rate-mercury')\n"
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % port)
+            'print(json.dumps(out))\n' % {'port': port, 'now': now})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -3878,7 +3968,7 @@ class TestSampleSkinRenders:
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
         # The dome froze, whole -- bodies and satellites together:
-        # not one mark moved across two and a half seconds of live
+        # not one mark moved across four seconds of live
         # feed, while that feed was demonstrably still arriving (the
         # dial below went on deriving rates from it).
         assert out['marks'] == out['marks_later']
@@ -3990,15 +4080,26 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            'from playwright.sync_api import TimeoutError as PlaywrightTimeout\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
-            "    page.wait_for_selector('#dome-stale:not([hidden])', timeout=15000)\n"
-            '    page.wait_for_timeout(3000)\n'
+            '    # The ahead fragment has been asked for and refused, and the\n'
+            '    # line has caught up with the refusal; a line that never does\n'
+            '    # is reported by the asserts.\n'
+            '    try:\n'
+            "        wait_xhr(page, '/dome-svg', 1)\n"
+            "        page.wait_for_selector('#dome-stale:not([hidden])', timeout=15000)\n"
+            '        page.wait_for_function("""() =>\n'
+            '          document.getElementById(\'dome-stale\').textContent.indexOf(\'stamped ahead\') >= 0""",\n'
+            '          timeout=5000)\n'
+            '    except PlaywrightTimeout:\n'
+            '        pass\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'stale': page.inner_text('#dome-stale'),\n"
@@ -4138,25 +4239,31 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
+            '    page.clock.install(time=%(t0)d)\n'
+            '    page.clock.pause_at(%(t0)d + 0.5)\n'
             "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            '    settle(page)\n'
             '    # In step: the page holds the slot its own clock names.\n'
             '    # That it asks for nothing meanwhile is proved server\n'
             '    # side, by what was requested at all.\n'
             "    before = page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts')\n"
             '    # ...and then the catch-up packet lands (the feed now\n'
             '    # reports three slots later, as it would for a machine\n'
-            '    # coming back from sleep).  Well inside the 60 s interval,\n'
-            '    # the backdrop follows it.\n'
-            '    page.wait_for_function("""(was) => {\n'
-            "      var d = document.querySelector('#dome-svg div[data-dome-ts]');\n"
-            "      return d !== null && d.getAttribute('data-dome-ts') !== was;\n"
-            '    }""", arg=before, timeout=20000)\n'
+            '    # coming back from sleep).  Within a poll of it, the\n'
+            '    # backdrop follows: each poll is run and settled, the\n'
+            '    # packet and any sky it asked for.\n'
+            '    for _ in range(4):\n'
+            "        if page.get_attribute('#dome-svg div[data-dome-ts]', 'data-dome-ts') != before:\n"
+            '            break\n'
+            '        page.clock.run_for(2000)\n'
+            '        settle(page)\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'before': before,\n"
@@ -4165,7 +4272,7 @@ class TestSampleSkinRenders:
             "            '#dome-stale', 'el => el.hidden'),\n"
             '    }\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % {'port': port})
+            'print(json.dumps(out))\n' % {'port': port, 't0': TIME_TS})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -4266,17 +4373,20 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             '    # Do not wait for load: the point is what happens before it.\n'
             "    with page.expect_request(lambda r: 'dome-svg' in r.url, timeout=15000) as req:\n"
             "        page.goto('http://127.0.0.1:%(port)d/index.html', wait_until='commit')\n"
             "    ready_at_fetch = page.evaluate('document.readyState')\n"
             "    page.wait_for_load_state('load')\n"
-            '    page.wait_for_timeout(1500)\n'
+            "    wait_xhr(page, '/dome-svg', 1)       # the refetch, judged\n"
+            '    settle(page)\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'ready_at_fetch': ready_at_fetch,\n"
@@ -4401,17 +4511,23 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             "    page.goto('http://127.0.0.1:%(port)d/index.html', wait_until='commit')\n"
             '    # The packet lands mid-stall: catch the page in that state.\n'
             "    page.wait_for_function('typeof latestTs !== \"undefined\" && latestTs > 0', timeout=15000)\n"
             "    mid = page.evaluate('({ready: document.readyState, baseNull: domeBase === null, svgParsed: domeSvg() !== null})')\n"
             "    page.wait_for_load_state('load')\n"
-            '    page.wait_for_timeout(2500)\n'
+            '    # The refetch the load handler owes, answered and applied;\n'
+            '    # anything else it started has been answered too, so a\n'
+            "    # second fetch would be on the server's list by now.\n"
+            "    wait_xhr(page, '/dome-svg', 1)\n"
+            '    settle(page)\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'mid': mid,\n"
@@ -4546,6 +4662,7 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            'from playwright.sync_api import TimeoutError as PlaywrightTimeout\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
@@ -4555,7 +4672,12 @@ class TestSampleSkinRenders:
             "    page.wait_for_function('typeof latestTs !== \"undefined\" && latestTs > 0', timeout=15000)\n"
             "    mid = page.evaluate('({ready: document.readyState, chipThere: document.getElementById(\"chip-dark-v\") !== null, wanted: renderWanted})')\n"
             "    page.wait_for_load_state('load')\n"
-            '    page.wait_for_timeout(2500)\n'
+            '    # The load handler owes the repaint; a page that never makes\n'
+            '    # it is reported by the asserts.\n'
+            '    try:\n'
+            "        page.wait_for_function('renderWanted === false', timeout=5000)\n"
+            '    except PlaywrightTimeout:\n'
+            '        pass\n'
             '    out = {\n'
             "        'errors': errors,\n"
             "        'mid': mid,\n"
@@ -4719,27 +4841,42 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
+            '# Every distinct sky the page DISPLAYS, in order, recorded by the\n'
+            '# page itself on every change under the dome.\n'
+            'SEEN = """document.addEventListener("DOMContentLoaded", function () {\n'
+            '  window.__seen = [];\n'
+            '  function note() {\n'
+            '    var d = document.querySelector("#dome-svg div[data-dome-ts]");\n'
+            '    var v = d === null ? null : d.getAttribute("data-dome-ts");\n'
+            '    if (__seen.length === 0 || __seen[__seen.length - 1] !== v) { __seen.push(v); }\n'
+            '  }\n'
+            '  note();\n'
+            '  new MutationObserver(note).observe(document.getElementById("dome-svg"),\n'
+            '    {subtree: true, childList: true, attributes: true});\n'
+            '});"""\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
+            '    page.add_init_script(SEEN)\n'
+            '    page.clock.install(time=%(old)d)\n'
+            '    page.clock.pause_at(%(old)d + 0.5)\n'
             "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
-            '    # Every distinct sky the page DISPLAYS, in order: the\n'
-            '    # ahead-of-the-station one must never be among them.\n'
-            '    seen = []\n'
-            '    for _ in range(250):\n'
-            "        v = page.get_attribute('#dome-svg div[data-dome-ts]',\n"
-            "                               'data-dome-ts')\n"
-            '        if not seen or seen[-1] != v:\n'
-            '            seen.append(v)\n'
-            "        if v == '%(landed)d':\n"
+            '    # A poll at a time, each settled -- the packet and any sky it\n'
+            '    # asked for -- until the new cycle lands; the ahead-of-the-\n'
+            '    # station sky must never be among those displayed.\n'
+            '    settle(page)\n'
+            '    for _ in range(15):\n'
+            '        if page.evaluate("__seen[__seen.length - 1]") == \'%(landed)d\':\n'
             '            break\n'
-            '        page.wait_for_timeout(100)\n'
-            "    out = {'errors': errors, 'seen': seen}\n"
+            '        page.clock.run_for(2000)\n'
+            '        settle(page)\n'
+            "    out = {'errors': errors, 'seen': page.evaluate('__seen')}\n"
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % {'port': port, 'landed': NEW})
+            'print(json.dumps(out))\n' % {'port': port, 'landed': NEW, 'old': OLD})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -4793,7 +4930,7 @@ class TestSampleSkinRenders:
         if not os.path.exists(pwenv):
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
-        now = time.time()
+        now = int(time.time())
         html = self.render(wxskyfield_comet_almanac, sky_page=make_sky_page())
         # Rewire the darkness chip to the STATIC path: its feed key is
         # deliberately absent from the packets below, and its baked
@@ -4804,7 +4941,7 @@ class TestSampleSkinRenders:
                                r'\g<1>%d\g<2>' % int(now + 55), html)
         assert n_subs == 1
         (tmp_path / 'index.html').write_text(html)
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
 
         def packet(i, rolled):
             return loop_file({
@@ -4832,14 +4969,12 @@ class TestSampleSkinRenders:
                 'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now + 300,
                 'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 900,
             }).encode()
-        packets = [packet(0, False), packet(1, False), packet(2, True),
-                   packet(3, True)]
         served = {'n': 0}
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
-                    body = packets[min(served['n'], len(packets) - 1)]
+                    body = packet(served['n'], served['n'] >= 2)
                     served['n'] += 1
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
@@ -4863,37 +4998,32 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json, re\n'
             'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
+            "    open_paused(page, 'http://127.0.0.1:%d/index.html', %d)\n"
             '    # The first packet lands and the sun chip counts to sunset.\n'
-            '    page.wait_for_function("""() => {\n'
+            '    step_until(page, """() => {\n'
             "      var k = document.getElementById('chip-sun-k');\n"
             "      var v = document.getElementById('chip-sun-v');\n"
             "      return k !== null && k.textContent === 'sunset' &&\n"
             "             /^\\\\d+\\\\u00a0s$/.test(v.textContent);\n"
-            '    }""", timeout=15000)\n'
+            '    }""", 1)\n'
             '    # The darkness chip is in its last minute, so it counts\n'
             '    # seconds -- on the packets, which are 2 s apart here: the\n'
-            '    # value must CHANGE within a few polls.  (A fixed 1.5 s\n'
-            '    # sample was the 8.3.4 one-second tick at work; it would\n'
-            '    # now miss a packet a quarter of the time.)\n'
+            '    # value must CHANGE with the next one.\n'
             "    v1 = page.inner_text('#chip-dark-v')\n"
-            '    page.wait_for_function("""(v1) => {\n'
-            "      var v = document.getElementById('chip-dark-v');\n"
-            "      return v !== null && v.textContent !== v1;\n"
-            '    }""", arg=v1, timeout=8000)\n'
+            '    step(page)\n'
             "    v2 = page.inner_text('#chip-dark-v')\n"
             '    # The roll: the feed replaced the passed sunset with\n'
             "    # tomorrow's, and the min() flips the chip to sunrise.\n"
-            '    page.wait_for_function("""() => {\n'
+            '    step_until(page, """() => {\n'
             "      var k = document.getElementById('chip-sun-k');\n"
             "      return k !== null && k.textContent === 'sunrise';\n"
-            '    }""", timeout=20000)\n'
+            '    }""", 3)\n'
             '    def hidden(cid):\n'
             "        return page.eval_on_selector('#' + cid,\n"
             "            'el => el.hasAttribute(\"hidden\")')\n"
@@ -4917,7 +5047,7 @@ class TestSampleSkinRenders:
             "        'peri_halley_hidden': hidden('chip-peri-halley'),\n"
             '    }\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % port)
+            'print(json.dumps(out))\n' % (port, now))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -4985,15 +5115,17 @@ class TestSampleSkinRenders:
         if not os.path.exists(pwenv):
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
-        now = time.time()
+        now = int(time.time())
         html = self.render(wxskyfield_comet_almanac, sky_page=make_sky_page())
         assert html.count('"countdown": true') == 1
         (tmp_path / 'on.html').write_text(html)
         (tmp_path / 'off.html').write_text(html.replace('"countdown": true', '"countdown": false'))
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
+        served = {'n': 0}
 
         def packet():
-            # The station clock advances per request; every event instant
+            # The station clock advances a poll per request (the runner
+            # steps the page's clock a poll at a time); every event instant
             # and every position stands still, so a chip's label and detail,
             # and each dial mark's label and <title>, stay the same from
             # packet to packet while a countdown value moves.
@@ -5008,7 +5140,7 @@ class TestSampleSkinRenders:
                 'almanac.halley.az': 90.0, 'almanac.halley.alt': 20.0,
                 'almanac.halley.earth_distance': 35.0, 'almanac.halley.mag': 25.0,
                 'almanac.halley.label': 'Halley',
-                'current.dateTime.raw': time.time(),
+                'current.dateTime.raw': now + 2 * served['n'],
                 'almanac.sun.next_setting.unix_epoch.raw': now + 4000,
                 'almanac.sun.next_rising.unix_epoch.raw': now + 40000,
                 'almanac.next_meteor_shower.peak.unix_epoch.raw': now + 3 * 86400,
@@ -5022,6 +5154,7 @@ class TestSampleSkinRenders:
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
                     body = packet()
+                    served['n'] += 1
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.send_header('Content-Length', str(len(body)))
@@ -5067,6 +5200,7 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS +
             'out = {}\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
@@ -5075,13 +5209,10 @@ class TestSampleSkinRenders:
             '        errors = []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
             '        page.add_init_script(%r)\n'
-            "        page.goto('http://127.0.0.1:%d/' + name + '.html')\n"
-            "        page.wait_for_load_state('networkidle')\n"
-            '        # Four packets past the first: the "updated" stamp moves on each.\n'
+            "        open_paused(page, 'http://127.0.0.1:%d/' + name + '.html', %d)\n"
+            '        # Four packets past the first, each with its own stamp.\n'
             '        for _ in range(4):\n'
-            "            u = page.inner_text('#last-update')\n"
-            '            page.wait_for_function("(u) => document.getElementById(\'last-update\')'
-            '.textContent !== u", arg=u, timeout=15000)\n'
+            '            step(page)\n'
             "        m = page.evaluate('window.__mut')\n"
             "        out[name] = {'errors': errors, 'chip': m['chip'], 'titles': m['titles'],\n"
             "                     'identical': [i for i in m['identical']\n"
@@ -5089,7 +5220,7 @@ class TestSampleSkinRenders:
             "                     'sun_v': page.inner_text('#chip-sun-v')}\n"
             '        page.close()\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % (observer, port))
+            'print(json.dumps(out))\n' % (observer, port, now))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=180)
@@ -5229,7 +5360,6 @@ class TestSampleSkinRenders:
             '        # The viewer\'s clock, wrong by skew; timers keep flowing.\n'
             '        page.clock.install(time=time.time() + skew)   # epoch seconds\n'
             "        page.goto('http://127.0.0.1:%%d/index.html' %% port)\n"
-            "        page.wait_for_load_state('networkidle')\n"
             '        leg = {"errors": errors}\n'
             '        if name != "nofeed":\n'
             '            page.wait_for_function("() => latest !== null", timeout=15000)\n'
@@ -5244,7 +5374,7 @@ class TestSampleSkinRenders:
             "                darkHidden: document.getElementById('chip-dark').hasAttribute('hidden')})\"\"\")\n"
             '        else:\n'
             "            page.wait_for_selector('#live-label:not(:empty)', timeout=15000)\n"
-            '            page.wait_for_timeout(5000)\n'
+            '            page.clock.run_for(5000)     # five seconds of the page standing\n'
             '            leg["state"] = page.evaluate("""() => ({\n'
             '                serverNow: serverNow(), latestTs: latestTs, latest: latest,\n'
             '                browserNow: Date.now() / 1000,\n'
@@ -5409,6 +5539,7 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'PORTS = %r\n'
             'out = {}\n'
             'with sync_playwright() as p:\n'
@@ -5417,9 +5548,9 @@ class TestSampleSkinRenders:
             '        page = browser.new_page()\n'
             '        errors = []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '        page.add_init_script(XHR_DONE)\n'
             "        page.goto('http://127.0.0.1:%%d/index.html' %% port)\n"
-            "        page.wait_for_selector('#live-label:not(:empty)', timeout=15000)\n"
-            '        page.wait_for_timeout(500)\n'
+            "        wait_xhr(page, '/loop-data.txt', 1)   # the badge is written there\n"
             "        out[mode] = {'errors': errors,\n"
             "                     'badge': page.inner_text('#live-label')}\n"
             '        page.close()\n'
@@ -5529,14 +5660,24 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            'from playwright.sync_api import TimeoutError as PlaywrightTimeout\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
-            '    page.wait_for_timeout(5500)\n'
+            '    # Until both drawn comets carry their tails and a second\n'
+            '    # packet has given them trails; a page that never gets there\n'
+            '    # is reported by the asserts.\n'
+            '    try:\n'
+            '        page.wait_for_function("""() =>\n'
+            '          document.querySelectorAll(\'#dial line.cel-comet-tail:not([display="none"])\').length >= 6 &&\n'
+            '          document.querySelectorAll(\'#dial line.cel-trail.cel-stroke-comet:not([display="none"])\').length >= 48""",\n'
+            '          timeout=15000)\n'
+            '    except PlaywrightTimeout:\n'
+            '        pass\n'
             '    tail_ok = page.evaluate("""() => {\n'
             '      // The visible comet groups: diamond center from the path\n'
             '      // d, center-ray direction vs the (comet - sun) vector.\n'
@@ -5650,14 +5791,15 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
-            '    page.wait_for_timeout(1500)\n'
+            "    wait_xhr(page, '/loop-data.txt', 1)      # the failed poll, handled\n"
             "    out = {'errors': errors, 'badge': page.inner_text('#live-label')}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -5719,14 +5861,15 @@ class TestSampleSkinRenders:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.add_init_script(XHR_DONE)\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
-            '    page.wait_for_timeout(2500)\n'
+            "    wait_xhr(page, '/loop-data.txt', 1)      # the poll, handled\n"
             "    out = {'errors': errors, 'badge': page.inner_text('#live-label')}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -7408,16 +7551,19 @@ class TestConsumerSkin:
     RUNNER = (
         'import json, sys\n'
         'from playwright.sync_api import sync_playwright\n'
+        + WAIT_HELPERS +
         'def drive(browser, url):\n'
         '    page = browser.new_page()\n'
+        '    page.add_init_script(XHR_DONE)\n'
         '    errors, warnings = [], []\n'
         "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
         "    page.on('console', lambda m: warnings.append(m.text) if m.type == 'warning' else None)\n"
         '    page.goto(url)\n'
-        "    page.wait_for_load_state('networkidle')\n"
-        '    page.wait_for_timeout(5500)\n'
-        "    page.evaluate('refreshPass()')\n"
-        '    page.wait_for_timeout(1500)\n'
+        '    # The dome slot the walk asks for on the first packet, and a\n'
+        '    # second packet behind it: the dial and the rows are live.\n'
+        "    wait_xhr(page, '/dome-svg', 1)\n"
+        "    wait_xhr(page, '/loop-data.txt', 2)\n"
+        "    handled(page, '/pass-chart.txt', 'refreshPass()')\n"
         '    out = {\n'
         "        'errors': errors, 'warnings': list(warnings),\n"
         "        'root': page.evaluate('FRAGMENT_ROOT'),\n"
@@ -7435,8 +7581,7 @@ class TestConsumerSkin:
         '    }\n'
         "    # A fetch that fails: one line, naming the URL asked.\n"
         "    page.evaluate(\"document.getElementById('pass-chart').setAttribute('data-pass-fragment', 'nope.txt')\")\n"
-        "    page.evaluate('refreshPass()')\n"
-        '    page.wait_for_timeout(1000)\n'
+        "    handled(page, '/nope.txt', 'refreshPass()')\n"
         "    out['late_warnings'] = warnings[len(out['warnings']):]\n"
         '    page.close()\n'
         '    return out\n'
@@ -7986,6 +8131,9 @@ class TestConfigScript:
             '    page.on("pageerror", lambda e: errors.append(str(e)))\n'
             '    page.on("console", lambda m: logs.append(m.text))\n'
             '    page.on("request", lambda r: requests.append(r.url))\n'
+            '    # A paused clock, so the three seconds below are run, not waited.\n'
+            '    page.clock.install()\n'
+            '    page.clock.pause_at(2000000000)\n'
             '    page.goto("file://%s/blank.html")\n'
             '    before = set(page.evaluate("Object.getOwnPropertyNames(window)"))\n'
             '    page.goto("file://%s/index.html")\n'
@@ -7995,11 +8143,12 @@ class TestConfigScript:
             '           "old": page.evaluate("[\'fmt\', \'latest\', \'GEO_BODIES\', \'refreshDome\', \'T\']'
             '.filter(function (n) { return n in window; })")}\n'
             '    page.evaluate("function (c) { celestial.start(c); }", cfg)\n'
-            '    page.wait_for_timeout(3000)\n'
+            '    page.clock.run_for(3000)\n'
+            '    page.evaluate("0")                   # one round trip for stray events\n'
             '    out["errors"] = errors\n'
             '    out["twice"] = [l for l in logs if "called twice" in l]\n'
             '    out["badge"] = page.evaluate("document.getElementById(\'live-label\').textContent")\n'
-            '    out["requests"] = sorted(set(requests))\n'
+            '    out["requests"] = sorted(requests)\n'
             '    b.close()\n'
             'print(json.dumps(out))\n' % (tmp_path, tmp_path))
         res = subprocess.run([pwenv, str(runner), str(tmp_path / 'cfg.json')],
@@ -8011,12 +8160,14 @@ class TestConfigScript:
         assert out['old'] == []
         assert out['errors'] == [], out['errors']
         assert len(out['twice']) == 1
-        assert out['badge'] == 'BAD DATA \u2014 check loop_data_file'
-        # Three seconds at refresh_rate 1: a poll would have fetched the
-        # page's own URL three times.  Only the two files were requested.
+        # Three seconds of the page's clock at refresh_rate 1: a poll would
+        # have fetched the page's own URL three times.  Only the two files
+        # were requested, each once -- a list, not a set, or the repeats
+        # of index.html would vanish into the one load of it.
         assert out['requests'] == ['file://%s/blank.html' % tmp_path,
                                    'file://%s/celestial.js' % tmp_path,
                                    'file://%s/index.html' % tmp_path], out['requests']
+        assert out['badge'] == 'BAD DATA \u2014 check loop_data_file'
 
 
 class TestPanels:
@@ -8355,6 +8506,12 @@ class TestPanels:
             '  return {dome: layers("#dome-svg"), pass: layers("#pass-chart"), nudge: nudge,\n'
             '          sats: sats, bodies: bodies};\n'
             '}"""\n'
+            '# The first packet has landed and been drawn: a body nudged and\n'
+            '# the live satellite named in both layers.\n'
+            'LIVE = """() => document.querySelector("#dome-svg g.dome-body[transform]") !== null &&\n'
+            '  document.querySelectorAll("#dome-svg text.satlab:not([data-body])").length === 2"""\n'
+            '# Two frames: a resize has been laid out and its listeners run.\n'
+            'FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"\n'
             'out = {}\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
@@ -8362,12 +8519,14 @@ class TestPanels:
             '        page = browser.new_page(viewport={"width": w, "height": 800})\n'
             '        errors, fetched = [], []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
-            "        page.on('response', lambda r: fetched.append(r.url.split('/')[-1].split('?')[0]) if '.txt' in r.url and 'loop' not in r.url else None)\n"
+            '        # Requests, not responses: a fetch counts the moment it is\n'
+            '        # asked, so nothing has to be waited out to see none.\n'
+            "        page.on('request', lambda r: fetched.append(r.url.split('/')[-1].split('?')[0]) if '.txt' in r.url and 'loop' not in r.url else None)\n"
             '        page.goto(URL)\n'
-            '        page.wait_for_timeout(3000)\n'
+            '        page.wait_for_function(LIVE, timeout=15000)\n'
             '        leg = {"errors": errors, "fetched": fetched, "before": page.evaluate(PROBE)}\n'
             '        page.set_viewport_size({"width": 1590 - w, "height": 800})\n'
-            '        page.wait_for_timeout(1500)\n'
+            '        page.evaluate(FRAMES)\n'
             '        leg["after"] = page.evaluate(PROBE)\n'
             '        out[name] = leg\n'
             '        page.close()\n'
@@ -8380,10 +8539,11 @@ class TestPanels:
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             '    page.goto(URL)\n'
-            '    page.wait_for_timeout(3000)\n'
+            '    page.wait_for_function(SAT + "[1] > 0", timeout=15000)\n'
             '    up = page.evaluate(SAT)\n'
             '    shutil.copyfile(SET_FILE, LOOP_FILE)\n'
-            '    page.wait_for_timeout(5000)\n'
+            '    # Until the set packet has hidden the dot; the names are the check.\n'
+            '    page.wait_for_function(SAT + "[1] === 0", timeout=15000)\n'
             '    out["set"] = {"errors": errors, "up": up, "down": page.evaluate(SAT)}\n'
             '    page.close()\n'
             '    browser.close()\n'
@@ -9369,22 +9529,35 @@ class TestPanels:
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
+            'from playwright.sync_api import Error as PlaywrightError\n'
+            'from playwright.sync_api import TimeoutError as PlaywrightTimeout\n'
+            + WAIT_HELPERS +
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    page = browser.new_page()\n'
-            '    errors, loads = [], []\n'
+            '    errors, loads, navs = [], [], []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "    page.on('load', lambda: loads.append(1))\n"
+            "    page.on('request', lambda r: navs.append(r.url) if r.is_navigation_request() else None)\n"
+            '    page.add_init_script(XHR_DONE)\n'
             "    page.goto('http://127.0.0.1:%(port)d/index.html')\n"
-            "    page.wait_for_load_state('networkidle')\n"
             "    before = page.evaluate(\"document.getElementById('pass-wrap').hidden\")\n"
-            "    page.evaluate('refreshPass()')\n"
-            '    page.wait_for_timeout(1500)\n'
+            '    # A reload begun by the handler can tear the page down under\n'
+            '    # the wait itself; that is a reload, not a harness fault.\n'
+            '    try:\n'
+            "        handled(page, '/pass-chart.txt', 'refreshPass()')\n"
+            '    except PlaywrightError:\n'
+            '        pass\n'
+            '    # Proving NO reload: a second load within a second would be one.\n'
+            '    try:\n'
+            "        page.wait_for_event('load', timeout=1000)\n"
+            '    except PlaywrightTimeout:\n'
+            '        pass\n'
             '    out = {"before": before,\n'
             "           'wrap_hidden': page.evaluate(\"document.getElementById('pass-wrap').hidden\"),\n"
             "           'sec_hidden': page.evaluate(\"document.getElementById('pass-sec').hidden\"),\n"
             "           'chart': page.evaluate(\"document.getElementById('pass-chart').innerHTML\"),\n"
-            "           'loads': len(loads), 'errors': errors}\n"
+            "           'loads': len(loads), 'navs': len(navs), 'errors': errors}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n' % {'port': port})
         try:
@@ -9394,10 +9567,11 @@ class TestPanels:
         assert res.returncode == 0, res.stderr
         out = jsonlib.loads(res.stdout)
         assert out['errors'] == [], out['errors']
+        # In step: no reload -- one navigation, one load.
+        assert out['navs'] == 1 and out['loads'] == 1, out
         assert out['before'] is False
         assert out['wrap_hidden'] is True and out['sec_hidden'] is True
         assert out['chart'] == ''
-        assert out['loads'] == 1        # in step: no reload
 
     def test_the_gate_is_skyfields_can_draw(self, wxskyfield_sat_almanac):
         """The panels beside the dome stand behind weewx-skyfield's own
