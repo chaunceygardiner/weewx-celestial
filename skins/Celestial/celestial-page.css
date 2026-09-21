@@ -17,6 +17,22 @@
 body{background:var(--night); color:var(--ink);
      font-family:Charter, Georgia, 'Times New Roman', serif;
      margin:0; padding:32px 20px 40px; line-height:1.55}
+/* On a phone the chrome comes off, because it is competing with the
+ * drawings for the only thing they need.  At 320px this page's 20px
+ * body padding and 22px section padding left a chart 234px of glass,
+ * where even the frame built for a phone puts its labels at 9.8px.  At
+ * 10 and 12 it leaves 274px, which clears 11. */
+@media (max-width: 480px){
+  body{padding:20px 10px 28px}
+  section{padding:16px 12px 12px}
+}
+/* And on the narrowest phones still sold, less again: at 320px, with a
+ * scrollbar taking its share, 10 and 12 leave a chart 254px and its
+ * labels 10.6px.  4 and 6 leave it 266px, and 11.1px. */
+@media (max-width: 380px){
+  body{padding:16px 4px 24px}
+  section{padding:14px 6px 10px}
+}
 
 .cel-page{max-width:1280px; margin:0 auto; display:flex; flex-direction:column; gap:30px}
 

@@ -374,6 +374,28 @@ so browsers refetch them.  So: restart weewxd, then reload the page.  If
 it persists, confirm both files exist in the report's HTML_ROOT and are
 served (a 404 on either produces exactly its own half of this).
 
+## Every chart is drawn twice, one above the other
+
+Since 9.6 each sky chart is generated twice — a drawing for a desk and a
+drawing for a phone, in the one fragment — and the stylesheet shows
+whichever fits the width the chart is rendered at.  Seeing both means the
+stylesheet the browser is using does not know about the second one, so
+nothing is hidden.  On the pass chart you will also see its dated head
+line twice, which is the quickest way to recognize it.
+
+It is the same cause as the entry above and the same cure: restart
+weewxd so the report's first run re-copies `celestial.css`, then reload
+the page.  A browser is unlikely to be the culprit on the bundled page,
+because its asset URLs carry the release version (`celestial.css?v=9.6`)
+and a new version is a new URL.
+
+If you embed these panels in a skin of your own, this is the symptom to
+expect after upgrading the extension and *not* re-copying the assets
+into your skin: `copy_once` faithfully re-copies whatever is in your skin
+directory, which is still the old stylesheet.  Copy `celestial.css` and
+`celestial.js` out of `skins/Celestial/` again, and version-tag their
+URLs — see [Embedding the panels](own-skin.md#the-two-drawings).
+
 ## weewxd will not start after upgrading
 
 Look for this in the log, and remove the entry it names:

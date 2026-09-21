@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **9.5.1**, the current release.
+This manual documents weewx-celestial **9.6**, the current release.
 
 ## Start here
 
@@ -51,11 +51,11 @@ page you leave open, on which everything moves.
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
 chart.  Here it is entire, in the bundled sample report (Palo Alto,
-mid-afternoon on 15 September 2026 — the sun, the moon, Mercury, Venus,
-Mars and Jupiter above the horizon and trailing their wake, comet Halley
-just risen beside Jupiter, Saturn, Uranus and Neptune dashed below it,
-Proxima Centauri alone at the rim, Terra's evening pass counting down in
-the first chip, and every odometer ticking):
+mid-afternoon on 20 September 2026 — the sun, Mercury, Venus, Mars and
+Jupiter above the horizon and trailing their wake, comet Halley just
+risen beside Jupiter, the moon and Saturn, Uranus and Neptune dashed
+below, Proxima Centauri alone at the rim, Terra's evening pass counting
+down in the first chip, and every odometer ticking):
 
 ![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
 
@@ -212,7 +212,7 @@ What installs:
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.6.1 everything, and less at each tier below it, down to
+weewx-skyfield 2.7 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -233,7 +233,7 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
   7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-  **2.6.1 or later** if you run it at all — 9.5 is pinned to it and the
+  **2.7 or later** if you run it at all — 9.6 is pinned to it and the
   installer refuses an older one.  It is what the sky dome, the Next
   Visible Pass chart, the comets, the meteor showers, the full countdown
   row and Proxima Centauri all come from, so without it the page is the

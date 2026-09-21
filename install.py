@@ -99,7 +99,18 @@ def loader():
         # own charts about brass -- neither says anything in any log.  So
         # a skyfield that IS there and is too old refuses, here, where the
         # user is reading.  Gated on installing() for the same reason as
-        # the weewx-loopdata check above.  9.5 raises the floor to 2.6.1: the
+        # the weewx-loopdata check above.  9.6 raises the floor to 2.7: the
+        # sky dome and the Next Visible Pass chart are drawn TWICE into
+        # every fragment, once for a desk and once for a phone, and the
+        # phone drawing is 2.7's narrow frame.  An older skyfield does
+        # not take the argument, and its own panel guard catches the
+        # TypeError the unknown keyword raises and returns '' -- so the
+        # charts still draw, in the desk frame only, while every draw
+        # writes a traceback into the log each cycle and every phone
+        # gets the desk drawing at phone size, which is the fault this
+        # release exists to remove.  Quiet enough to miss and wrong
+        # enough to matter, so it refuses here instead.  9.5
+        # raised it to 2.6.1: the
         # sky charts' dates and clock times render through [Texts] keys 2.6.1
         # renamed, and beside 2.6 a translated page's pass-chart dates would
         # fall back to English.  9.4 raised it to 2.6: the
@@ -114,12 +125,14 @@ def loader():
         except Exception:
             WXSKYFIELD_VERSION = None      # absent, or broken: not ours to judge
         if (WXSKYFIELD_VERSION is not None
-                and version_compare(str(WXSKYFIELD_VERSION), '2.6.1') < 0):
-            sys.exit("weewx-celestial requires weewx-skyfield 2.6.1 or later, "
+                and version_compare(str(WXSKYFIELD_VERSION), '2.7') < 0):
+            sys.exit("weewx-celestial requires weewx-skyfield 2.7 or later, "
                      "found %s.  Upgrade weewx-skyfield first, then install "
                      "weewx-celestial.  (weewx-skyfield is optional -- the page "
                      "renders without it -- but an older one is not kept in "
-                     "step: the charts' dates and clock times read [Texts] keys 2.6.1 "
+                     "step: the sky charts are drawn for a phone as well as a "
+                     "desk and the phone drawing is 2.7's, the charts' dates and "
+                     "clock times read [Texts] keys 2.6.1 "
                      "renamed, the panels' colors are 2.6's, a skin's narrow label "
                      "layers need 2.5, and before 2.4 the Next Visible Pass dot "
                      "would not flip and the light theme's accent would disagree "
@@ -206,7 +219,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.5.1",
+            version = "9.6",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

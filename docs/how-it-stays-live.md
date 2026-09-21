@@ -205,6 +205,43 @@ never mistaken for a flip.)  The change reaches a page left open overnight
 within a minute of the report cycle that makes it, rather than waiting
 for someone to press reload.
 
+## Two drawings, one fragment
+
+Since 9.6 each of those fragments carries the chart **twice** — drawn for
+a desk and drawn for a phone — and the stylesheet shows the one that fits.
+Which drawing a reader needs is a question about the screen, and a report
+runs with no screen in front of it, so the page carries both and decides
+in the browser.
+
+The decision is made on **the drawing's own width**, not the window's —
+a `@container` query.  Those are different questions: on the
+previous release a 1000px window drew the dome 640px and a 1001px window
+drew it 459px, because at 1001 the panel becomes a grid and the chart
+shares the row with its roster.  A window rule could not see that, and it
+could not see a consuming skin's chrome at all.  The threshold itself is
+derived, and derived per fragment set: a chart's smallest label is 10
+units times that set's `label_scale`, so the width at which it reaches
+11px moves with the scale — 935px at 0.8, 623px at the 1.2 default,
+534px at 1.4.  Each fragment carries its own width as `data-frame-at`,
+and the page honors it.
+
+That choice is what makes turning a phone free: it is a style
+recalculation, with nothing fetched and nothing recomputed.  The cost is
+paid once, in the fragment's size, and it is smaller than it sounds
+because the phone drawing carries fewer stars — a night dome measures
+about 20 KB gzipped for the desk drawing alone and about 29 KB for both.
+
+The live layer moves the marks in **both** drawings, including the one
+currently hidden.  That is the point: the drawing that appears when a
+phone is turned is already in the right place, rather than showing
+generation-time positions until the next packet lands.  Each drawing has
+its own geometry — the phone frame is 360 units across, the desk frame
+680 — and each is read from the drawing itself, so a mark is always
+placed in the frame it belongs to.
+
+The Geocentric dial does the same thing without any fetching at all: the
+script builds it, so on a flip it simply rebuilds it in the other frame.
+
 ## What the browser does not do
 
 No astronomy, and no theme switching.  The javascript does arithmetic —

@@ -148,7 +148,34 @@
  * to the fragment, where it styles skyfield's markup and cannot collide
  * with a host skin's own .mono. */
 .domefrag .mono, .passfrag .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
-.cel-sub{color:var(--muted); margin-top:6px; font-size:.95em}
+/* THE TEXT FLOOR (9.6), which is in two halves and needs both.
+ *
+ * The first half is each panel's ROOT, here: text that sets no size of
+ * its own inherits the host's, and a roster's name chip inheriting a
+ * 5.5px root renders at 5.5px however carefully the small rules are
+ * floored.  The second half is those small rules, below.  Neither half
+ * covers the other: a root floored to 11px still leaves a .75em
+ * sub-line at 8.25px, and a floored sub-line still sits beside an
+ * unfloored chip.
+ *
+ * A panel's install hint is a sibling BEFORE its root, so it is named
+ * here too rather than inherited. */
+.cel-count, .cel-geo-body, #dome-wrap, #pass-wrap, .cel-roster,
+.cel-skyhint{font-size:max(11px,1em)}
+
+/* Every rule below asking for less than 1em
+ * carries max(11px, ...): a ONE-WAY floor, never a size.  These panels
+ * drop into somebody else's page, and a host is free to scale its root
+ * font with the viewport -- one does, to about 5.5px at 390 -- which
+ * silently takes every em-relative label here to a third of what it
+ * reads at on this page and puts it under any legibility standard.  A
+ * plain px size would be the wrong cure: it would also override a host
+ * that scales type UP, for a reader who asked for it.  max() refuses
+ * only the bottom, so a host scaling up still wins and a host scaling
+ * down stops at 11px.  The drawn text inside the charts is not covered
+ * by this -- an SVG's type is in user units and scales with the
+ * drawing, which is what the narrow frame is for. */
+.cel-sub{color:var(--muted); margin-top:6px; font-size:max(11px,.95em)}
 #live-label{color:var(--brass); font-variant-caps:small-caps; letter-spacing:.1em}
 
 /* Countdown central: the ticking event chips under the header.  The chip
@@ -160,9 +187,9 @@
 .cel-countdown{display:flex; gap:10px; flex-wrap:wrap}
 .cel-count{border:1px solid var(--line); padding:7px 12px; display:flex; gap:8px;
        align-items:baseline; background:var(--vault)}
-.cel-count .cel-k{color:var(--muted); font-variant-caps:small-caps; letter-spacing:.1em; font-size:.8em}
-.cel-count .cel-v{font-size:.9em}
-.cel-count .cel-d{color:var(--brass); font-size:.8em}
+.cel-count .cel-k{color:var(--muted); font-variant-caps:small-caps; letter-spacing:.1em; font-size:max(11px,.8em)}
+.cel-count .cel-v{font-size:max(11px,.9em)}
+.cel-count .cel-d{color:var(--brass); font-size:max(11px,.8em)}
 /* Celestial's chips are two lines by design (a deliberate divergence
  * from sky.css's one-line chip): the label and the ticking value on
  * the first line, the event's clock time / date detail underneath.
@@ -179,14 +206,14 @@
 .cel-count .cel-d:empty{display:none}
 .cel-count[hidden]{display:none}
 .cel-eyebrow{font-variant-caps:small-caps; letter-spacing:.22em; color:var(--brass); font-weight:400;
-         font-size:.85em; margin:0 0 4px}
-.cel-caption{color:var(--muted); font-size:.85em; margin:10px 0 0; max-width:68ch}
+         font-size:max(11px,.85em); margin:0 0 4px}
+.cel-caption{color:var(--muted); font-size:max(11px,.85em); margin:10px 0 0; max-width:68ch}
 .cel-dialcaption{text-align:center; max-width:none}
 
 /* The Geocentric: the dial beside its roster; one column below 1000px. */
 .cel-geo-body{display:grid; grid-template-columns:minmax(0,1fr) 430px;
           gap:26px; align-items:center; margin-top:8px}
-@media (max-width: 1000px){
+@media (max-width: 1165px){
   .cel-geo-body{display:flex; flex-direction:column; align-items:stretch}
 }
 #dial{width:100%; max-width:640px; display:block; margin:0 auto}
@@ -203,10 +230,10 @@
 /* A body below the horizon steps down to the muted tier.  A color, not
  * opacity: every opacity that looks dimmed puts text under APCA Lc 60. */
 .cel-row.cel-below .cel-bname, .cel-row.cel-below .cel-odo{color:var(--muted)}
-.cel-odo{text-align:right; font-size:.9em; letter-spacing:.02em}
-.cel-odo .cel-unit{color:var(--muted); font-size:.8667em}
+.cel-odo{text-align:right; font-size:max(11px,.9em); letter-spacing:.02em}
+.cel-odo .cel-unit{color:var(--muted); font-size:max(11px,.8667em)}
 .cel-rsub{grid-column:1 / -1; display:flex; justify-content:space-between; gap:.45em;
-      color:var(--muted); font-size:.75em; flex-wrap:wrap}
+      color:var(--muted); font-size:max(11px,.75em); flex-wrap:wrap}
 .cel-rsub .cel-arr{color:var(--brass)}
 /* The odometer flash: freshly changed digits ease from brass to ink. */
 .cel-chg{animation:chgflash .9s ease-out}
@@ -319,6 +346,130 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .gridlab{font-size:10px; fill:var(--muted)}
 .cel-earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
           letter-spacing:.12em; text-anchor:middle}
+/* THE DIAL'S NARROW FRAME (9.6).  Below the breakpoint celestial.js
+ * rebuilds the dial in a 360-unit frame -- about a unit to the pixel on
+ * a phone -- and marks it data-frame="narrow".  These are the sizes that
+ * frame was laid out around, and they are weewx-skyfield's own
+ * NARROW_TYPE_PX for the same class names, so the dial and the dome
+ * beside it carry one size of type; a test pins them to the sibling.
+ * Sizes, not a scale factor: the script thins the ring labels to every
+ * other decade precisely because type this size needs the room, so
+ * geometry and type are one decision and neither may move alone.
+ *
+ * The WIDE frame's are this skin's own too, and bigger than the bare
+ * classes: the dial is capped at 640px, so a 10px grid label rendered
+ * 9.7px on every desktop there has ever been.  12 units puts it at
+ * 11.6px at the cap and 11.0px at the width the frame switch lets it
+ * fall to.  The bare .gridlab/.bodylab values are untouched, because
+ * weewx-skyfield's charts wear those class names too and their sizes
+ * are its own. */
+#dial[data-frame="wide"] .gridlab{font-size:12px}
+#dial[data-frame="wide"] .bodylab{font-size:12px}
+#dial[data-frame="wide"] .cel-earthlab{font-size:12px}
+#dial[data-frame="narrow"] .gridlab{font-size:15px}
+#dial[data-frame="narrow"] .bodylab{font-size:16px}
+#dial[data-frame="narrow"] .cardinal{font-size:17px}
+#dial[data-frame="narrow"] .cel-earthlab{font-size:16px}
+
+/* THE TWO DRAWINGS (9.6).  weewx-skyfield 2.7 draws each sky chart
+ * either for a desk (680 units across, the frame it has always drawn)
+ * or for a phone (`narrow`: 360 units, its own larger type, its star
+ * census thinned so the bigger names have room).  A report runs with no
+ * screen in front of it, so the fragment carries BOTH and this rule
+ * shows the one that fits -- which makes turning a phone a style
+ * recalculation, not a refetch, and leaves the fetch path and every
+ * fragment filename exactly as they were.
+ *
+ * What is switched is each frame's BOX, not its <svg>: a pass chart is
+ * its drawing plus the pass's dated head line, and hiding only the
+ * drawing would print that line twice, once from each frame.
+ *
+ * Scoped to the two fragment wrappers, not to the bare attribute: a
+ * panel dropped into somebody else's page may not reach for a selector
+ * that a host's own markup could satisfy, which is the same rule every
+ * cel- prefix in this file follows.
+ *
+ * Scoped to data-frames="both", which a wrapper claims only when it
+ * really holds two drawings: if one frame failed to draw, the other is
+ * emitted bare and must show at every width rather than be hidden by a
+ * rule meant for its missing twin.
+ *
+ * WHICH frame is asked of the DRAWING'S OWN WIDTH, not the viewport's,
+ * and that is the whole point of the rule below being a @container
+ * query rather than a @media one.  The viewport does not determine how
+ * wide a chart renders: on the bundled page a 1000px window draws it
+ * 640px and a 1001px window draws it 459px, because at 1001 the panel
+ * becomes a grid and the chart shares the row with a fixed roster; and
+ * in a consuming skin the chart's width depends on that skin's chrome,
+ * which nothing here can know.  Measured on this page, a viewport rule
+ * put 6.95px labels on a 1001px desktop.
+ *
+ * THE THRESHOLD IS DERIVED, not chosen.  The wide drawing is used only
+ * where it is legible: its smallest label is 10 units scaled by the
+ * set's label_scale, 12 units at the 1.2 default, in a 680 unit frame
+ * -- so it needs 11 x 680 / 12 = 623.3px of glass to put that label at
+ * 11px.  Below that the narrow drawing is the better drawing, at any
+ * viewport.  celestial.js gives the dial this same number, rounded up,
+ * so that an uncustomized page changes all of its drawings at one
+ * width rather than showing a desk dial beside a phone-sized dome; a
+ * test derives both.
+ *
+ * KNOWN, DELIBERATE: the Nu validator's CSS checker does not yet know
+ * container-type or @container and reports both as errors.  They are
+ * not defects -- every engine has shipped them since 2023 -- and a
+ * browser too old to know the at-rule ignores it and keeps the wide
+ * drawing, which is what it had before.  The release gate pins those
+ * two errors rather than expecting none, so a third one still fails. */
+.domefrag, .passfrag{container-type:inline-size}
+/* A drawing is never stretched past the size it was laid out for.  Each
+ * of these caps is its frame's own width: 640px for the 660 and 680 unit
+ * desk drawings (the caps this skin has always had, below), 360px for
+ * the 360 unit phone one.  Without this last one a phone drawing handed
+ * a 544px column -- which is what a host's two-column panel does on a
+ * desktop -- is blown up to 544px, with 26px labels and a thinned star
+ * census: legible, and obviously wrong.  Capped and centered it reads as
+ * what it is, a chart drawn for a narrow column.
+ *
+ * It is the frame's BOX that is capped, not the drawing inside it: a
+ * pass chart is its drawing plus the pass's dated head line, and capping
+ * only the drawing would leave that line spanning a column twice its
+ * width. */
+/* The box when there are two drawings, and the drawing itself when
+ * there is only one: a frame that draws alone is emitted bare, with no
+ * box for the rule above to find, and #dome-wrap svg would otherwise
+ * stretch a 360 unit drawing to 640px -- the very thing this cap is
+ * here to stop. */
+.cel-frame[data-frame="narrow"],
+#dome-wrap svg.sky-narrow, #pass-chart svg.sky-narrow{max-width:360px; margin:0 auto}
+#dial[data-frame="narrow"]{max-width:360px}
+.domefrag[data-frames="both"] .cel-frame[data-frame="narrow"],
+.passfrag[data-frames="both"] .cel-frame[data-frame="narrow"]{display:none}
+@container (max-width: 623.29px){
+  .domefrag[data-frames="both"] .cel-frame[data-frame="narrow"],
+  .passfrag[data-frames="both"] .cel-frame[data-frame="narrow"]{display:block}
+  .domefrag[data-frames="both"] .cel-frame[data-frame="wide"],
+  .passfrag[data-frames="both"] .cel-frame[data-frame="wide"]{display:none}
+}
+/* AND THE SET'S OWN ANSWER WINS.  The width above is the DEFAULT label
+ * scale's; a set that declares another changes frame somewhere else
+ * entirely -- 935px at 0.8, 534px at 1.4 -- because a chart's smallest
+ * label is 10 units TIMES that scale.  A container query cannot be told
+ * a number per fragment (its condition takes no variable, and a <style>
+ * element is not valid inside a fragment), so each fragment carries its
+ * own width as data-frame-at and celestial.js writes the verdict here
+ * as data-frame-fit.  These rules therefore carry one more attribute
+ * than the ones above, which is what lets them win.
+ *
+ * A page with no javascript keeps the query above, which is right for
+ * every set on the default scale -- including this skin's own. */
+.domefrag[data-frames="both"][data-frame-fit="wide"] .cel-frame[data-frame="narrow"],
+.passfrag[data-frames="both"][data-frame-fit="wide"] .cel-frame[data-frame="narrow"]{display:none}
+.domefrag[data-frames="both"][data-frame-fit="wide"] .cel-frame[data-frame="wide"],
+.passfrag[data-frames="both"][data-frame-fit="wide"] .cel-frame[data-frame="wide"]{display:block}
+.domefrag[data-frames="both"][data-frame-fit="narrow"] .cel-frame[data-frame="narrow"],
+.passfrag[data-frames="both"][data-frame-fit="narrow"] .cel-frame[data-frame="narrow"]{display:block}
+.domefrag[data-frames="both"][data-frame-fit="narrow"] .cel-frame[data-frame="wide"],
+.passfrag[data-frames="both"][data-frame-fit="narrow"] .cel-frame[data-frame="wide"]{display:none}
 
 /* The sky dome: weewx-skyfield's dome_svg embedded beside the satellite
  * roster; one column below 1000px, like the Geocentric.  The dome is
@@ -328,13 +479,13 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * data-body consumer contract), so the panel wrapper is "domepanel". */
 .cel-domepanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
            gap:26px; align-items:center; margin-top:8px}
-@media (max-width: 1000px){
+@media (max-width: 1165px){
   .cel-domepanel{display:flex; flex-direction:column; align-items:stretch}
 }
 #dome-wrap svg{max-width:640px; margin:0 auto}
 .cel-roster .cel-eyebrow{margin-top:2px}
 .cel-chip-sat{background:var(--brass)}
-.cel-satline{font-size:.8em}
+.cel-satline{font-size:max(11px,.8em)}
 /* Dome typography borrowed from weewx-skyfield's sky.css -- names and
  * values kept in step, same cross-repo rule as cardinal/bodylab/gridlab
  * above -- the light-theme variants included, as of 8.3.
@@ -382,7 +533,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * step, the same cross-repo rule as the dome typography above. */
 .cel-passpanel{display:grid; grid-template-columns:minmax(0,1fr) 430px;
            gap:26px; align-items:center; margin-top:8px}
-@media (max-width: 1000px){
+@media (max-width: 1165px){
   .cel-passpanel{display:flex; flex-direction:column; align-items:stretch}
 }
 #pass-chart{max-width:640px; margin:0 auto}
@@ -390,7 +541,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .passhead{display:flex; justify-content:space-between; align-items:baseline;
           gap:12px; margin-bottom:10px; flex-wrap:wrap}
 .passname{font-variant-caps:small-caps; letter-spacing:.1em}
-.passwhen{font-size:.85em; color:var(--brass)}
+.passwhen{font-size:max(11px,.85em); color:var(--brass)}
 
 /* Shown in the panel when no extended almanac serves the report.  The
    dome's hint arrives inside the .domepanel grid (the panel renders it
@@ -407,7 +558,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
    property: the javascript hides it with the hidden attribute, and a
    display here would defeat it (the .count lesson). */
 .cel-stalehint{color:var(--brass); font-style:italic; text-align:center;
-           font-size:.82em; margin:2px 0 6px}
+           font-size:max(11px,.82em); margin:2px 0 6px}
 .cel-stalehint a{color:inherit}
 
 /* The tap tooltip (sky.js): the same text as a mark's hover <title>,

@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.5.1';
+  var CELESTIAL_JS_VERSION = '9.6';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -378,7 +378,196 @@ var celestial = (function () {
   // Dial geometry: azimuth is the compass bearing (plan view, east right);
   // radius is log10 of the distance in au, one ring per decade from
   // 0.01 au (inside the moon's orbit) to 100,000 au (Proxima at the rim).
-  var CX = 330, CY = 330, R_IN = 56, R_OUT = 292;
+  // THE DIAL'S TWO FRAMES (9.6).  The dial is this script's own drawing,
+  // so unlike the dome it cannot be asked of weewx-skyfield -- but it has
+  // the same problem and takes the same answer.  Its type is sized in
+  // USER UNITS, so a 660-unit drawing shown 342 px wide on a 390 px
+  // phone renders an 11-unit body label at 5.7 px, and every label on it
+  // between 5.2 and 7.3 px.  Scaling the type inside this frame does not
+  // fix that: at the size the type has to reach, labels laid out for
+  // 11 units collide and clip.  So there is a second frame, laid out at
+  // phone size -- 360 units across, so a unit is about a pixel on the
+  // glass, with the type weewx-skyfield gives its own narrow drawing
+  // (NARROW_TYPE_PX: 15 for a grid label, 16 for a body, 17 for a
+  // cardinal) and the ring labels THINNED to every other decade, which
+  // is what makes room for them.
+  //
+  // How the narrow numbers were got, so nobody has to guess later:
+  //   - the rim is 148, weewx-skyfield's own narrow dome radius, which
+  //     falls out of putting 17 px cardinals outside it with the wide
+  //     frame's proportional clearance and keeping them inside the box;
+  //   - the radial geometry is otherwise the wide frame halved, EXCEPT
+  //     the inner ring (44, not 28): the Earth label below the center is
+  //     16 units of type now and the innermost ring has to clear it;
+  //   - the marks take weewx-skyfield's narrow ratio for a mark radius,
+  //     0.9 of the wide value rather than the frame's 0.55, so a dot
+  //     stays findable under a thumb (its jupiter is r=5.5 wide, r=5
+  //     narrow) -- they are the one thing that is not shrunk with the
+  //     drawing;
+  //   - offsets that hold type off a mark scale with the TYPE, not the
+  //     frame.
+  // The consequence to know about: the rings are 12.7 units apart where
+  // the wide frame's are 29.5, so the narrow dial trades some radial
+  // resolution for legible names.  That is the trade the standard asks
+  // for -- an unreadable label carries nothing at all.
+  //
+  // The WIDE frame's numbers are exactly what this file has always used
+  // and must stay that way: on any screen wider than the breakpoint the
+  // dial is drawn character for character as it was.
+  var DIAL_WIDE = {
+    w: 660, cx: 330, cy: 330, rIn: 56, rOut: 292, rim: 296, tickIn: 290,
+    cardR: 310, cardDy: 4.5, earthR: 9, earthDy: 24,
+    sunR: 8, glowR: 13, moonR: 8, dotR: 6.5, cometR: 5,
+    tailGap: 6.0, rays: [[-0.18, 9.0], [0.0, 12.0], [0.18, 9.0]],
+    labOff: 17, labDy: 4, labIn: 250, ringDy: -3, ringEvery: 1,
+    labPx: 12, ly: true
+  };
+  var DIAL_NARROW = {
+    w: 360, cx: 180, cy: 180, rIn: 44, rOut: 146, rim: 148, tickIn: 145,
+    cardR: 165, cardDy: 5.5, earthR: 8, earthDy: 29,
+    sunR: 7, glowR: 11.5, moonR: 7, dotR: 6, cometR: 4.5,
+    tailGap: 5.5, rays: [[-0.18, 8.1], [0.0, 10.8], [0.18, 8.1]],
+    labOff: 21, labDy: 6, labIn: 125, ringDy: -4.5, ringEvery: 2,
+    labPx: 16, ly: false
+  };
+  // The frame the dial is drawn in right now.  buildDial sets it; every
+  // placement below reads it, so a mark and the geometry it is placed
+  // against can never come from different frames.
+  var dialNow = DIAL_WIDE;
+  // WHICH frame is a question about how wide THIS DRAWING is rendered,
+  // never about the viewport.  The two are not the same question and the
+  // difference is not small: on the bundled page a 1000px window draws
+  // the dial 640px and a 1001px window draws it 459px, because at 1001
+  // the panel becomes a grid and the dial shares the row with a fixed
+  // roster -- and in a consuming skin the width depends on that skin's
+  // chrome, which nothing here can know.  A viewport rule measured
+  // 6.95px labels on a 1001px desktop.
+  //
+  // THE THRESHOLD IS DERIVED, and it is the DEFAULT SET'S -- 623.3px,
+  // rounded up to the first width that is wide.  The dial's own would
+  // be 605 (its smallest desk label is 12 units in a 660 unit frame, so
+  // 11 x 660 / 12), and using that instead would be correct for the
+  // dial and wrong for the PAGE: between 605 and 623 it would show a
+  // desk dial beside a phone-sized dome, two treatments of one sky on
+  // one screen.  On a page where nothing is customized everything
+  // changes together, so the dial takes the number the stylesheet
+  // gives the charts; a set that declares its own scale follows its
+  // own, which is a choice its skin has made deliberately.  The dial's
+  // type clears the floor comfortably at this width (12 x 624 / 660 =
+  // 11.3px), and a test derives both rather than reading them.
+  //
+  // It is the threshold ITSELF, not a rounded-up neighbor: rounding to
+  // 624 left widths in [623.3, 624) where this said narrow and
+  // fitFrames, comparing against the same 623.3, said wide -- a
+  // phone-sized dial beside desk-sized charts, which is the very thing
+  // the shared number exists to prevent.
+  var NARROW_BELOW = 623.3;
+  function dialBox(dial) {
+    // The element the dial's width comes FROM, never the dial itself.
+    // Each frame is capped near its own design size -- 640px for the
+    // wide drawing, 360px for the narrow one -- so a dial that has gone
+    // narrow measures 360px whatever room it is given, and measuring
+    // that would leave it narrow for ever and deaf to a window growing
+    // back.  Its container has no such feedback: it is a block filling
+    // whatever the page gives it.
+    var box = dial.parentNode;
+    return (box && box.getBoundingClientRect) ? box : dial;
+  }
+  function narrowDial(dial) {
+    // A dial with no width yet -- not laid out, or display:none -- is
+    // not narrow: it gets the wide frame, which is what it had before
+    // there were two.
+    var w = dialBox(dial).getBoundingClientRect().width;
+    return w > 0 && w < NARROW_BELOW;
+  }
+  // THE SET'S OWN THRESHOLD.  Every fragment that carries two drawings
+  // carries the width it changes between them at -- data-frame-at,
+  // derived by celestial_page.frame_threshold from that set's
+  // label_scale, because a chart's smallest label is 10 units TIMES
+  // that scale and so the width at which it stops reading moves with
+  // it: 935px at 0.8, 623px at the 1.2 default, 534px at 1.4.
+  //
+  // celestial.css can only state one of those: a container query's
+  // condition cannot be a variable, and a <style> element is not valid
+  // inside a fragment.  So the stylesheet carries the DEFAULT scale's
+  // width -- right for any page that takes the default, and the answer
+  // a page with no javascript keeps -- and this refines it per
+  // fragment, so no set can silently show a drawing its labels have
+  // stopped reading on.
+  function fitFrames() {
+    var wraps = document.querySelectorAll(
+        '.domefrag[data-frame-at], .passfrag[data-frame-at]');
+    Array.prototype.forEach.call(wraps, function(w) {
+      var at = parseFloat(w.getAttribute('data-frame-at'));
+      var width = w.getBoundingClientRect().width;
+      if (!isFinite(at) || width <= 0) {
+        return;            // not laid out yet, or a wrapper without one
+      }
+      w.setAttribute('data-frame-fit', width < at ? 'narrow' : 'wide');
+    });
+  }
+  var framesWatched = false;
+  function watchFrames() {
+    // The SWAP TARGETS are what is watched, not the wrappers inside
+    // them: a refetch replaces the wrapper, and an observer of a
+    // replaced element watches nothing.  The targets outlive every
+    // fragment they hold.
+    if (framesWatched) {
+      return;
+    }
+    framesWatched = true;
+    fitFrames();
+    if (window.ResizeObserver) {
+      var ro = new window.ResizeObserver(fitFrames);
+      ['dome-svg', 'pass-chart'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el !== null) {
+          ro.observe(el);
+        }
+      });
+    } else if (window.addEventListener) {
+      window.addEventListener('resize', fitFrames);
+    }
+  }
+  var dialWatched = false;
+  function watchDialFrame(dial) {
+    // Armed by the first buildDial, not by start(): start() runs from
+    // the config block at the top of <body>, where #dial has not been
+    // parsed yet, and an observer of nothing watches nothing.  Nothing
+    // is lost by waiting -- before the dial is drawn there is no drawing
+    // to change frame.
+    if (dialWatched) {
+      return;
+    }
+    dialWatched = true;
+    var onResize = function() {
+      if (dialMarks === null) {
+        return;          // nothing drawn yet: the first build measures
+      }                  // for itself
+      if ((dialNow === DIAL_NARROW) === narrowDial(dial)) {
+        return;          // still the frame already drawn
+      }
+      // Rebuilt, never adjusted: the frames do not draw the same
+      // elements (the narrow one names every other ring), so there is no
+      // set of marks to move from one to the other.  Turning a phone
+      // therefore costs one redraw of a drawing this script builds in a
+      // few milliseconds, and no fetch at all.  Changing frame does not
+      // change the element's width, so this cannot drive itself.
+      dialMarks = null;
+      renderGeo();
+    };
+    if (window.ResizeObserver) {
+      // The CONTAINER is watched, for dialBox's reason: the capped dial
+      // does not change size when the room around it does, so watching
+      // the dial itself would miss a window growing back.
+      new window.ResizeObserver(onResize).observe(dialBox(dial));
+    } else if (window.addEventListener) {
+      // No ResizeObserver: a window resize is the only signal left, and
+      // it misses a dial resized by its own container.  The frame is
+      // still right on load, which is the case that matters.
+      window.addEventListener('resize', onResize);
+    }
+  }
   var LOG_MIN = -2.6, LOG_MAX = 5.45;
   var TRAIL_N = 24, TRAIL_SEC = 3600;  // the last hour, in 150 s segments
   var EXTRAP_MAX = 120;                // stop extrapolating stale data (s)
@@ -407,11 +596,12 @@ var celestial = (function () {
   // there is nothing left to distrust.
   function rOfAu(au) {
     var lg = Math.log(au) / Math.LN10;
-    return R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
+    return dialNow.rIn + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN)
+                         * (dialNow.rOut - dialNow.rIn);
   }
   function dialXY(az, r) {
     var a = az * Math.PI / 180;
-    return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
+    return [dialNow.cx + r * Math.sin(a), dialNow.cy - r * Math.cos(a)];
   }
   var svgNS = 'http://www.w3.org/2000/svg';
   function svgEl(name, attrs, parent, text) {
@@ -425,6 +615,11 @@ var celestial = (function () {
     parent.appendChild(e);
     return e;
   }
+  var dialFixed = [];     // boxes of the labels that never move (the
+                          // cardinals, the Earth label): the seed every
+                          // placement pass starts from
+  var dialRings = [];     // the ring numbers, placed last of all
+  var pendingLabels = []; // this render's movable names, awaiting placement
   var dialMarks = null;   // per-body dial elements, built on first render
   var sunDialPt = null;   // the sun's dial point this render, the comet
                           // tails' anti-sunward anchor (null: no tail)
@@ -433,6 +628,24 @@ var celestial = (function () {
     if (!dial) {
       return null;
     }
+    // The frame this drawing is in, fixed for its whole life: a flip
+    // rebuilds from scratch (see watchDialFrame) rather than moving what
+    // is here, because the thinning changes which elements exist at all.
+    watchDialFrame(dial);
+    dialNow = narrowDial(dial) ? DIAL_NARROW : DIAL_WIDE;
+    while (dial.firstChild !== null) {
+      dial.removeChild(dial.firstChild);
+    }
+    dial.setAttribute('viewBox', '0 0 ' + dialNow.w + ' ' + dialNow.w);
+    // The frame's TYPE is the stylesheet's, keyed on this: the label
+    // classes are shared with weewx-skyfield's charts and a consumer
+    // restyles them there, so the sizes cannot live here.  The narrow
+    // frame's geometry was laid out around those sizes -- the ring
+    // labels thin because 15 unit type needs the room -- so the
+    // attribute and the numbers above are one decision in two files.
+    dial.setAttribute('data-frame', dialNow === DIAL_NARROW ? 'narrow' : 'wide');
+    dialFixed = [];
+    dialRings = [];
     // Distance rings, one per decade, labeled down the SSE radial (the
     // evening sky crowds the west and the label radial must not sit in
     // it; nothing guarantees a clear lane, but SSE collides least).
@@ -454,29 +667,56 @@ var celestial = (function () {
     // this end.  Weight chosen by eye against the measured alternatives
     // (mockups/celestial-dial-contrast).
     for (var lg = -2; lg <= 5; lg++) {
-      var rr = R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
-      svgEl('circle', {cx: CX, cy: CY, r: rr, 'class': 'cel-geo-ring', fill: 'none',
+      var rr = dialNow.rIn + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN)
+                             * (dialNow.rOut - dialNow.rIn);
+      svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: rr,
+                       'class': 'cel-geo-ring', fill: 'none',
                        'stroke-opacity': lg <= 1 ? 0.5 : 0.4}, dial);
-      var rp = dialXY(157.5, rr);
-      svgEl('text', {x: rp[0], y: rp[1] - 3, 'class': 'gridlab',
-                     'text-anchor': 'middle'}, dial, ringLabels[lg + 2]);
+      // Every RING is drawn in both frames -- the rings are the scale,
+      // and dropping one would misstate the distances.  It is the
+      // LABELS that thin: on the narrow frame the decades are 12.7 units
+      // apart and the type is 15, so naming every one would stack them.
+      // Every other decade is named, which keeps the two that carry the
+      // unit ("0.01 au" and "1 au") and leaves 25 units between labels.
+      if ((lg + 2) % dialNow.ringEvery === 0) {
+        var rp = dialXY(157.5, rr);
+        var rlab = svgEl('text', {x: rp[0], y: rp[1] + dialNow.ringDy,
+                                  'class': 'gridlab', 'text-anchor': 'middle'},
+                         dial, ringLabels[lg + 2]);
+        // Placed LAST of everything, so a ring number yields to a body's
+        // name rather than the other way about: the caption already says
+        // the rings step by ten, where an unnamed dot says nothing.
+        dialRings.push({el: rlab, text: ringLabels[lg + 2], x: rp[0],
+                        y: rp[1] + dialNow.ringDy});
+      }
     }
-    svgEl('circle', {cx: CX, cy: CY, r: 296, 'class': 'cel-geo-rim', fill: 'none'}, dial);
+    svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: dialNow.rim,
+                     'class': 'cel-geo-rim', fill: 'none'}, dial);
     for (var d = 0; d < 360; d += 45) {
-      var p1 = dialXY(d, 290), p2 = dialXY(d, 296);
+      var p1 = dialXY(d, dialNow.tickIn), p2 = dialXY(d, dialNow.rim);
       svgEl('line', {x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1],
                      'class': d % 90 === 0 ? 'cel-geo-tick cel-geo-tick-major' : 'cel-geo-tick'}, dial);
     }
     var cardinals = [[0, CARDINALS[0]], [90, CARDINALS[1]],
                      [180, CARDINALS[2]], [270, CARDINALS[3]]];
     for (var c = 0; c < cardinals.length; c++) {
-      var pc = dialXY(cardinals[c][0], 310);
-      svgEl('text', {x: pc[0], y: pc[1] + 4.5, 'class': 'cardinal',
-                     'text-anchor': 'middle'}, dial, cardinals[c][1]);
+      var pc = dialXY(cardinals[c][0], dialNow.cardR);
+      var card = svgEl('text', {x: pc[0], y: pc[1] + dialNow.cardDy,
+                                'class': 'cardinal', 'text-anchor': 'middle'},
+                       dial, cardinals[c][1]);
+      // At the CARDINAL's own size, which is larger than a body label's:
+      // asking the element rather than the frame gets that right without
+      // a second constant to keep in step.
+      dialFixed.push(labelBox(cardinals[c][1], pc[0], pc[1] + dialNow.cardDy,
+                              'middle', labelPx(card)));
     }
-    svgEl('circle', {cx: CX, cy: CY, r: 9, 'class': 'cel-fill-earth cel-geo-earth'}, dial);
-    svgEl('text', {x: CX, y: CY + 24, 'class': 'cel-earthlab'}, dial,
-          BODY_LABELS['earth'] || 'Earth');
+    svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: dialNow.earthR,
+                     'class': 'cel-fill-earth cel-geo-earth'}, dial);
+    var elab = BODY_LABELS['earth'] || 'Earth';
+    var earthLab = svgEl('text', {x: dialNow.cx, y: dialNow.cy + dialNow.earthDy,
+                                  'class': 'cel-earthlab'}, dial, elab);
+    dialFixed.push(labelBox(elab, dialNow.cx, dialNow.cy + dialNow.earthDy,
+                            'middle', labelPx(earthLab)));
     var trailsG = svgEl('g', {}, dial);
     var marks = {};
     GEO_BODIES.forEach(function(key) {
@@ -492,19 +732,19 @@ var celestial = (function () {
       // <title> child; renderGeo keeps the text live.
       m.title = svgEl('title', {}, g, m.label);
       if (key === 'sun') {
-        m.glow = svgEl('circle', {r: 13, 'class': 'cel-sunglow cel-fill-sun'}, g);
-        m.dot = svgEl('circle', {r: 8, 'class': 'cel-geodot cel-fill-sun'}, g);
+        m.glow = svgEl('circle', {r: dialNow.glowR, 'class': 'cel-sunglow cel-fill-sun'}, g);
+        m.dot = svgEl('circle', {r: dialNow.sunR, 'class': 'cel-geodot cel-fill-sun'}, g);
       } else if (key === 'moon') {
         // True-phase disc: dark disc, lit limb/terminator path, silver rim
         // (the rim keeps a new moon visible against the card).  The disc
         // has its own group so it can dim as one image below the horizon
         // while the rim, outside it, stays strong enough to find.
         var disc = svgEl('g', {'class': 'cel-moon-disc'}, g);
-        m.dot = svgEl('circle', {r: 8, 'class': 'cel-moon-dark'}, disc);
+        m.dot = svgEl('circle', {r: dialNow.moonR, 'class': 'cel-moon-dark'}, disc);
         m.lit = svgEl('path', {'class': 'cel-moon-lit'}, disc);
-        m.rim = svgEl('circle', {r: 8, 'class': 'cel-moon-rim', fill: 'none'}, g);
+        m.rim = svgEl('circle', {r: dialNow.moonR, 'class': 'cel-moon-rim', fill: 'none'}, g);
       } else {
-        m.dot = svgEl('circle', {r: 6.5, 'class': 'cel-geodot cel-fill-' + key}, g);
+        m.dot = svgEl('circle', {r: dialNow.dotR, 'class': 'cel-geodot cel-fill-' + key}, g);
       }
       m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
       marks[key] = m;
@@ -587,24 +827,127 @@ var celestial = (function () {
                        (0.2 + 0.8 * (i + 1) / TRAIL_N) * (altB < 0 ? 0.42 : 0.75));
     }
   }
-  function placeBodyLabel(lab, az, r) {
-    // Radially outward from Earth (inward for Proxima at the rim), the
-    // anchor following the azimuth so the text leads away from the dot.
-    var outward = (r <= 250);
-    var rr = outward ? r + 17 : r - 17;
-    var a = az * Math.PI / 180;
-    var sx = Math.sin(a) * (outward ? 1 : -1);
-    var anchor = 'middle';
-    if (sx > 0.35) {
-      anchor = 'start';
-    } else if (sx < -0.35) {
-      anchor = 'end';
+  // LABEL PLACEMENT.  Every name the dial draws is placed against the
+  // names already on it, and one that cannot find room is dropped --
+  // its mark keeps its <title>, so hover and tap still name it.
+  //
+  // Why this exists: through 9.5.1 each label was put radially outward
+  // from its own mark with no knowledge of any other, so two bodies at
+  // a similar bearing wrote over each other (Jupiter and Halley did,
+  // measured, on the desktop page).  The narrow frame does not create
+  // that fault but multiplies it, its type being 2.5x larger against
+  // the drawing: eight overlapping pairs at 390px against one at 1440.
+  //
+  // Boxes are ESTIMATED from the character count rather than measured
+  // with getBBox, which would force a layout per label per tick.  The
+  // estimate is deliberately generous, as weewx-skyfield's is and for
+  // the same reason: a label has to clear whatever face the reader's
+  // device actually falls back to, and a box slightly too wide costs a
+  // dropped name where one slightly too narrow costs an unreadable
+  // collision.
+  // A label's box, with a little air around it: two names that merely
+  // fail to overlap still read as one crowded word.  Swept over 120 real
+  // skies at 390px, the tightest pair the dial produced was 1.5px apart
+  // at a pad of 2 and 3.4px at 3 -- which is what the pad buys, and why
+  // it is 3.
+  //
+  // Deliberately NO drop counts here.  How many names a pad costs is a
+  // property of the station's latitude, its configured comets, the
+  // language its labels are in and the half-year sampled -- not of this
+  // code -- so a count written down would read as a fact and age into a
+  // lie.  What does hold, and what the sweep is for: no overlapping
+  // pair at any pad, and a larger pad trading names for air.
+  //
+  // The estimate the pad sits on is deliberately generous for the same
+  // reason the pad exists: a box slightly too wide costs a dropped name,
+  // where one slightly too narrow costs an unreadable collision.
+  var LABEL_PAD = 3;
+  // One character's width as a fraction of the type size, in the serif
+  // face these labels are set in.  It replaces the two per-frame glyph
+  // constants it was derived from -- 10.2px at 16px and 7.6px at 12px,
+  // the same ratio twice -- and it is applied to the size the
+  // stylesheet ACTUALLY RESOLVED, not the size this frame expects.
+  var GLYPH_PER_PX = 0.6375;
+  // A label's type size, read once and remembered on the element.  NOT
+  // the frame's own number: a skin embedding these panels sets .bodylab
+  // to whatever suits its page, and a box sized for this frame's type
+  // would then reserve the wrong room -- too much, and names are dropped
+  // that had somewhere to go; too little, and the names that remain are
+  // drawn over each other, which is the fault this whole pass exists to
+  // remove.  Measured on a consuming skin at 12px against a frame
+  // expecting 16, the reservation was a third too wide and cost names
+  // on every sky.  The cache dies with the element, and buildDial makes
+  // new ones whenever the frame changes.
+  function labelPx(el) {
+    if (el.celPx === undefined) {
+      var v = parseFloat(window.getComputedStyle(el).fontSize);
+      el.celPx = (isFinite(v) && v > 0) ? v : dialNow.labPx;
     }
-    lab.setAttribute('x', CX + rr * Math.sin(a));
-    lab.setAttribute('y', CY - rr * Math.cos(a) + 4);
-    lab.setAttribute('text-anchor', anchor);
+    return el.celPx;
   }
-
+  function labelBox(text, x, y, anchor, px) {
+    var w = String(text).length * px * GLYPH_PER_PX;
+    var left = anchor === 'start' ? x : (anchor === 'end' ? x - w : x - w / 2);
+    return {l: left - LABEL_PAD, r: left + w + LABEL_PAD,
+            t: y - px * 0.8 - LABEL_PAD, b: y + px * 0.25 + LABEL_PAD};
+  }
+  function boxesHit(a, b) {
+    return a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+  }
+  function newPlacer(taken) {
+    return {
+      boxes: taken.slice(),
+      // Try each candidate in turn; the first that clears everything
+      // already placed wins, and its box joins them.  None free means
+      // the label is dropped.
+      place: function(lab, cands) {
+        for (var i = 0; i < cands.length; i++) {
+          var c = cands[i];
+          var box = labelBox(c.text, c.x, c.y, c.anchor, c.px);
+          var free = true;
+          for (var j = 0; j < this.boxes.length; j++) {
+            if (boxesHit(box, this.boxes[j])) {
+              free = false;
+              break;
+            }
+          }
+          if (free) {
+            this.boxes.push(box);
+            lab.setAttribute('x', c.x);
+            lab.setAttribute('y', c.y);
+            lab.setAttribute('text-anchor', c.anchor);
+            lab.removeAttribute('display');
+            return true;
+          }
+        }
+        lab.setAttribute('display', 'none');
+        return false;
+      }
+    };
+  }
+  // The positions a body's name will accept, best first: radially
+  // outward from its mark (inward near the rim, where outward would
+  // leave the drawing), then the opposite side, then the two flanks.
+  function labelCandidates(text, az, r, px) {
+    var a = az * Math.PI / 180;
+    var out = [];
+    // Outward first (inward near the rim, where outward would leave the
+    // drawing), then the other side, then both again further off: a
+    // crowded name gets a second ring to sit in before it is given up,
+    // which is the difference between a comet keeping its name on a
+    // desk and losing it.
+    var base = (r <= dialNow.labIn) ? [1, -1] : [-1, 1];
+    var tries = [base[0], base[1], base[0] * 1.9, base[1] * 1.9];
+    for (var i = 0; i < tries.length; i++) {
+      var rr = r + tries[i] * dialNow.labOff;
+      var sx = Math.sin(a) * tries[i];
+      var anchor = sx > 0.35 ? 'start' : (sx < -0.35 ? 'end' : 'middle');
+      out.push({text: text, x: dialNow.cx + rr * Math.sin(a),
+                y: dialNow.cy - rr * Math.cos(a) + dialNow.labDy,
+                anchor: anchor, px: px});
+    }
+    return out;
+  }
   // ---- loop-data history and derived motion -------------------------------
   // Through 8.5 this script ran at window scope, where a `var history`
   // silently failed to bind (the browser's read-only History object) and
@@ -696,6 +1039,7 @@ var celestial = (function () {
     if (dialMarks === null) {
       dialMarks = buildDial();
     }
+    pendingLabels = [];
     // Extrapolate at the derived rates between loop refreshes, re-anchoring
     // to truth on every packet.  The interval is the stopwatch reading
     // since the packet arrived (packetAge -- never the browser's clock
@@ -776,7 +1120,8 @@ var celestial = (function () {
       m.dot.setAttribute('cy', p[1]);
       if (key === 'moon') {
         if (moonFrac !== null && m.lit !== null) {
-          m.lit.setAttribute('d', moonPath(p[0], p[1], 8, moonFrac / 100.0, litLeft));
+          m.lit.setAttribute('d',
+              moonPath(p[0], p[1], dialNow.moonR, moonFrac / 100.0, litLeft));
         }
         m.rim.setAttribute('cx', p[0]);
         m.rim.setAttribute('cy', p[1]);
@@ -797,14 +1142,39 @@ var celestial = (function () {
           ' \u00B7 ' +
           fmt('{dist} au',
               {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)}));
-      if (key === 'proxima_centauri') {
-        setText(m.lab, m.label + ' \u00B7 ' +
-                       fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)}));
+      var labText = m.label;
+      if (key === 'proxima_centauri' && dialNow.ly) {
+        // The distance rides on the name only where there is room for
+        // it.  On the narrow frame this one label is the worst collision
+        // on the dial -- it sits at the rim, where the ring numbers and
+        // the comets are -- and its distance is in the roster anyway.
+        labText = m.label + ' \u00B7 ' +
+                  fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)});
       }
-      placeBodyLabel(m.lab, azNow, r);
+      setText(m.lab, labText);
+      pendingLabels.push({lab: m.lab, text: labText, az: azNow, r: r, pri: 0});
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
     renderComets(dt);
+    placeLabels();
+  }
+  function placeLabels() {
+    // Bodies before comets, and within each the ones nearest Earth
+    // first: a crowded rim is where names are lost, and the inner dial
+    // is where the eye starts.  The ring numbers come last of all.
+    pendingLabels.sort(function(a, b) {
+      return a.pri !== b.pri ? a.pri - b.pri : a.r - b.r;
+    });
+    var placer = newPlacer(dialFixed);
+    for (var i = 0; i < pendingLabels.length; i++) {
+      var q = pendingLabels[i];
+      placer.place(q.lab, labelCandidates(q.text, q.az, q.r, labelPx(q.lab)));
+    }
+    for (var k = 0; k < dialRings.length; k++) {
+      var g = dialRings[k];
+      placer.place(g.el, [{text: g.text, x: g.x, y: g.y, anchor: 'middle',
+                           px: labelPx(g.el)}]);
+    }
   }
   function renderComets(dt) {
     // The comets, drawn AFTER the bodies so sunDialPt is this render's:
@@ -863,11 +1233,12 @@ var celestial = (function () {
       var below = altNow < 0;
       var r = rOfAu(auNow);
       var p = dialXY(azNow, r);
+      var cr = dialNow.cometR;
       m.dot.setAttribute('d',
-          'M ' + p[0].toFixed(1) + ',' + (p[1] - 5).toFixed(1) +
-          ' L ' + (p[0] + 5).toFixed(1) + ',' + p[1].toFixed(1) +
-          ' L ' + p[0].toFixed(1) + ',' + (p[1] + 5).toFixed(1) +
-          ' L ' + (p[0] - 5).toFixed(1) + ',' + p[1].toFixed(1) + ' Z');
+          'M ' + p[0].toFixed(1) + ',' + (p[1] - cr).toFixed(1) +
+          ' L ' + (p[0] + cr).toFixed(1) + ',' + p[1].toFixed(1) +
+          ' L ' + p[0].toFixed(1) + ',' + (p[1] + cr).toFixed(1) +
+          ' L ' + (p[0] - cr).toFixed(1) + ',' + p[1].toFixed(1) + ' Z');
       var mag = num(latest, 'almanac.' + key + '.mag');
       var bright = (mag !== null && mag <= 6.0);
       m.g.setAttribute('class', below ? 'cel-geocomet cel-below' : 'cel-geocomet');
@@ -887,7 +1258,7 @@ var celestial = (function () {
           uy = dy / dn;
         }
       }
-      var rayGeom = [[-0.18, 9.0], [0.0, 12.0], [0.18, 9.0]];
+      var rayGeom = dialNow.rays;
       for (var ri = 0; ri < 3; ri++) {
         var ray = m.rays[ri];
         if (ux === null) {
@@ -897,10 +1268,12 @@ var celestial = (function () {
         var ca = Math.cos(rayGeom[ri][0]), sa = Math.sin(rayGeom[ri][0]);
         var rx = ux * ca - uy * sa, ry = ux * sa + uy * ca;
         ray.removeAttribute('display');
-        ray.setAttribute('x1', (p[0] + 6.0 * rx).toFixed(1));
-        ray.setAttribute('y1', (p[1] + 6.0 * ry).toFixed(1));
-        ray.setAttribute('x2', (p[0] + (6.0 + rayGeom[ri][1]) * rx).toFixed(1));
-        ray.setAttribute('y2', (p[1] + (6.0 + rayGeom[ri][1]) * ry).toFixed(1));
+        ray.setAttribute('x1', (p[0] + dialNow.tailGap * rx).toFixed(1));
+        ray.setAttribute('y1', (p[1] + dialNow.tailGap * ry).toFixed(1));
+        ray.setAttribute('x2',
+            (p[0] + (dialNow.tailGap + rayGeom[ri][1]) * rx).toFixed(1));
+        ray.setAttribute('y2',
+            (p[1] + (dialNow.tailGap + rayGeom[ri][1]) * ry).toFixed(1));
       }
       m.lab.setAttribute('class', below ? 'bodylab cel-dim' : 'bodylab');
       var tip = m.label + ' \u00B7 ' +
@@ -913,7 +1286,7 @@ var celestial = (function () {
         tip += ' \u00B7 ' + fmt('mag {mag}', {mag: mag.toFixed(1)});
       }
       setText(m.title, tip);
-      placeBodyLabel(m.lab, azNow, r);
+      pendingLabels.push({lab: m.lab, text: m.label, az: azNow, r: r, pri: 1});
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
   }
@@ -953,15 +1326,50 @@ var celestial = (function () {
   // dome_svg's fixed geometry (viewBox 0 0 680 706): sky-chart
   // orientation, north up, EAST LEFT -- hence minus sine.  Mirrors
   // wxskyfield_sky._dome_xy; deliberately opposite the dial's east-right.
+  // The WIDE frame's geometry, which weewx-skyfield publishes and does
+  // not move: a 680x706 viewBox with the zenith at 340,348 and the
+  // horizon 296 out.  A NARROW drawing (weewx-skyfield 2.7) is 360 units
+  // across and declares its own on the <svg> root, so the projection is
+  // read PER DRAWING and never assumed -- a chart measured with the
+  // other frame's numbers puts every nudged body, every live satellite
+  // mark and every swept pass dot somewhere the sky is not.  The
+  // constants stay as the fallback, because a chart WITHOUT the
+  // attributes is a wide one: that is what every fragment written before
+  // 2.7 is.
   var DOME_CX = 340, DOME_CY = 348, DOME_R = 296;
-  function domeXY(az, alt) {
-    var rr = DOME_R * (90 - alt) / 90;
-    var a = az * Math.PI / 180;
-    return [DOME_CX - rr * Math.sin(a), DOME_CY - rr * Math.cos(a)];
+  function domeGeo(svg) {
+    var cx = parseFloat(svg.getAttribute('data-dome-cx'));
+    var cy = parseFloat(svg.getAttribute('data-dome-cy'));
+    var r = parseFloat(svg.getAttribute('data-dome-r'));
+    return {cx: isFinite(cx) ? cx : DOME_CX,
+            cy: isFinite(cy) ? cy : DOME_CY,
+            r: isFinite(r) ? r : DOME_R};
   }
-  function domeSvg() {
-    var wrap = document.getElementById('dome-svg');
-    return wrap === null ? null : wrap.querySelector('svg');
+  function domeXY(geo, az, alt) {
+    var rr = geo.r * (90 - alt) / 90;
+    var a = az * Math.PI / 180;
+    return [geo.cx - rr * Math.sin(a), geo.cy - rr * Math.cos(a)];
+  }
+  function isNarrowChart(svg) {
+    // The class weewx-skyfield puts on a narrow drawing's root.  Spelled
+    // the long way because this file is ES5 throughout: no classList.
+    return (' ' + (svg.getAttribute('class') || '') + ' ').indexOf(' sky-narrow ') >= 0;
+  }
+  // Every drawing inside a swap target.  Through 9.5 there was exactly
+  // one; 9.6 carries the wide and the narrow drawing in the one fragment
+  // and lets the stylesheet show whichever fits the screen, so the live
+  // layer moves the marks in BOTH.  The hidden drawing becomes the
+  // visible one the moment the viewer turns a phone, and a mark left
+  // where the almanac drew it would visibly jump on the turn -- there is
+  // no event to catch it, because nothing fetches and nothing renders:
+  // the flip is a style recalculation.
+  function svgsIn(id) {
+    var wrap = document.getElementById(id);
+    return wrap === null ? []
+                         : Array.prototype.slice.call(wrap.querySelectorAll('svg'));
+  }
+  function domeSvgs() {
+    return svgsIn('dome-svg');
   }
   // A mark's labels, plural: weewx-skyfield 2.5 lays the labels out once
   // per label scale inside the one chart (a layer per scale, one shown
@@ -993,31 +1401,35 @@ var celestial = (function () {
   // fetched backdrop from its circle's cx/cy; the nudge is a translate of
   // (live position - generated position) applied to the mark group and
   // its label.
+  // One record per drawing: the SVG, ITS OWN projection, its per-body
+  // baselines and its own live satellite marks.  Nothing here is shared
+  // between the two frames -- the marks are different elements at
+  // different coordinates in different geometry, and the only thing they
+  // have in common is the body they stand for.
   var domeBase = null;
   function readDomeBase() {
-    domeBase = {};
-    var svg = domeSvg();
-    if (svg === null) {
-      return;
-    }
-    DOME_BODIES.forEach(function(key) {
-      var g = svg.querySelector('g.dome-body[data-body="' + key + '"]');
-      if (g === null) {
-        return;              // below the horizon at generation time
-      }
-      var c = g.querySelector('circle');
-      if (c === null || !c.hasAttribute('cx')) {
-        return;
-      }
-      domeBase[key] = {g: g,
-                       labs: labelsFor(svg, key),
-                       x: parseFloat(c.getAttribute('cx')),
-                       y: parseFloat(c.getAttribute('cy'))};
+    domeBase = [];
+    domeSvgs().forEach(function(svg) {
+      var d = {svg: svg, geo: domeGeo(svg), bodies: {}, sats: null};
+      DOME_BODIES.forEach(function(key) {
+        var g = svg.querySelector('g.dome-body[data-body="' + key + '"]');
+        if (g === null) {
+          return;            // below the horizon at generation time
+        }
+        var c = g.querySelector('circle');
+        if (c === null || !c.hasAttribute('cx')) {
+          return;
+        }
+        d.bodies[key] = {g: g,
+                         labs: labelsFor(svg, key),
+                         x: parseFloat(c.getAttribute('cx')),
+                         y: parseFloat(c.getAttribute('cy'))};
+      });
+      domeBase.push(d);
     });
   }
   function renderDome(nowTs) {
-    var svg = domeSvg();
-    if (svg === null || latest === null) {
+    if (domeSvgs().length === 0 || latest === null) {
       return;
     }
     if (document.readyState === 'loading') {
@@ -1034,7 +1446,7 @@ var celestial = (function () {
       return;
     }
     if (domeChecked && !domeAsking(nowTs) && domeStaleFor() !== null) {
-      restoreDomeMarks(svg);
+      restoreDomeMarks();
       // domeChecked, so the freeze and the line that explains it begin
       // together: acting on a suspicion the page has not yet tested
       // would leave a visibly stopped dome with nothing under it saying
@@ -1081,7 +1493,7 @@ var celestial = (function () {
       // the backdrop's own geometry here too.  No second line under the
       // panel: the LIVE badge already owns the feed's fault, the same
       // reasoning that keeps the backdrop's fault off the badge.
-      restoreDomeMarks(svg);
+      restoreDomeMarks();
       return;
     }
     domeRestored = false;    // the live layer is running; a later freeze restores again
@@ -1089,32 +1501,34 @@ var celestial = (function () {
       readDomeBase();
     }
     var dt = packetAge();
-    DOME_BODIES.forEach(function(key) {
-      var b = domeBase[key];
-      if (!b) {
-        return;              // no mark to nudge; the next refetch draws it
-      }
-      var az = num(latest, 'almanac.' + key + '.az');
-      var alt = num(latest, 'almanac.' + key + '.alt');
-      if (az === null || alt === null) {
-        return;              // no live data: the mark stands as generated
-      }
-      var azNow = (az + (rateOf('almanac.' + key + '.az', true) || 0) * dt + 360) % 360;
-      var altNow = alt + (rateOf('almanac.' + key + '.alt', false) || 0) * dt;
-      if (altNow <= 0) {
-        // Set since generation: hide rather than pin to the rim.
-        setShown(b.g, false);
-        b.labs.forEach(function(l) { setShown(l, false); });
-        return;
-      }
-      setShown(b.g, true);
-      b.labs.forEach(function(l) { setShown(l, true); });
-      var p = domeXY(azNow, altNow);
-      var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
-      b.g.setAttribute('transform', tr);
-      b.labs.forEach(function(l) { l.setAttribute('transform', tr); });
+    domeBase.forEach(function(d) {
+      DOME_BODIES.forEach(function(key) {
+        var b = d.bodies[key];
+        if (!b) {
+          return;            // no mark to nudge; the next refetch draws it
+        }
+        var az = num(latest, 'almanac.' + key + '.az');
+        var alt = num(latest, 'almanac.' + key + '.alt');
+        if (az === null || alt === null) {
+          return;            // no live data: the mark stands as generated
+        }
+        var azNow = (az + (rateOf('almanac.' + key + '.az', true) || 0) * dt + 360) % 360;
+        var altNow = alt + (rateOf('almanac.' + key + '.alt', false) || 0) * dt;
+        if (altNow <= 0) {
+          // Set since generation: hide rather than pin to the rim.
+          setShown(b.g, false);
+          b.labs.forEach(function(l) { setShown(l, false); });
+          return;
+        }
+        setShown(b.g, true);
+        b.labs.forEach(function(l) { setShown(l, true); });
+        var p = domeXY(d.geo, azNow, altNow);
+        var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
+        b.g.setAttribute('transform', tr);
+        b.labs.forEach(function(l) { l.setAttribute('transform', tr); });
+      });
+      renderSats(d);
     });
-    renderSats(svg);
   }
   // The live satellite layer: our own marker (dot + name), created
   // inside the current backdrop and rebuilt after every swap.  Feature
@@ -1122,8 +1536,9 @@ var celestial = (function () {
   // satellite keys (older skyfield, no [[Satellites]], a station not
   // re-installed since its satellites changed) leaves the static dome
   // untouched; keys present but null mean
-  // unusable elements -- configured, but nothing to draw.
-  var satMarks = null;
+  // unusable elements -- configured, but nothing to draw.  The marks
+  // are per DRAWING (domeBase's records): each frame gets its own dot
+  // and name at its own coordinates.
   // NOTE (2026-08-06, tried and rejected -- do not re-add without a
   // better idea): easing the marker toward each packet's anchor
   // (first-order glide, TAU 0.8 and 1.6 both shot and compared) to
@@ -1145,20 +1560,29 @@ var celestial = (function () {
   // took the browser's 16 px default: nearly twice a 0.8 layer's body labels,
   // two-thirds of a 2.2 layer's.  A chart without layers gets one name
   // at 11 px beside its dot.
+  // What weewx-skyfield sets a body label at, per frame, before a
+  // layer's scale multiplies it -- its WIDE_TYPE_PX and NARROW_TYPE_PX
+  // `bodylab`.  The narrow frame is laid out at phone size, so its names
+  // are bigger in user units than the wide frame's: a live name drawn at
+  // 11 px among a narrow chart's 16 px names is the 9.4.1 fault again,
+  // one size too small instead of one too large.  Kept in step with the
+  // sibling; a test pins both numbers against it.
   var BODY_LABEL_PX = 11;
+  var NARROW_BODY_LABEL_PX = 16;
   function buildSatMark(svg) {
+    var base = isNarrowChart(svg) ? NARROW_BODY_LABEL_PX : BODY_LABEL_PX;
     var g = svgEl('g', {display: 'none'}, svg);
     var layers = svg.querySelectorAll('g.dome-labels');
     var labs = [];
     for (var i = 0; i < layers.length; i++) {
       var scale = parseFloat(layers[i].getAttribute('data-label-scale'));
       labs.push(svgEl('text', {'class': 'satlab', display: 'none',
-                               style: 'font-size:' + (BODY_LABEL_PX * (isFinite(scale) ? scale : 1)).toFixed(1) + 'px'},
+                               style: 'font-size:' + (base * (isFinite(scale) ? scale : 1)).toFixed(1) + 'px'},
                       layers[i]));
     }
     if (labs.length === 0) {
       labs.push(svgEl('text', {'class': 'satlab',
-                               style: 'font-size:' + BODY_LABEL_PX.toFixed(1) + 'px'}, g));
+                               style: 'font-size:' + base.toFixed(1) + 'px'}, g));
     }
     return {g: g,
             dot: svgEl('circle', {r: 4, 'class': 'cel-satdot'}, g),
@@ -1297,7 +1721,7 @@ var celestial = (function () {
                     false);
     });
   }
-  function restoreDomeMarks(svg) {
+  function restoreDomeMarks() {
     // Put every mark back where the backdrop drew it, once, as the
     // freeze engages.  Freezing in place is not enough: the marks may
     // have been nudged first -- a page restored from cache takes its
@@ -1334,33 +1758,41 @@ var celestial = (function () {
     // would abort there, for the life of the page (renderPass runs
     // ahead of it in the tick since 8.3.3, so it would survive; the
     // point stands).
-    Array.prototype.forEach.call(
-        svg.querySelectorAll('g.dome-body, text[data-body]'),
-        function(e) {
-          e.removeAttribute('transform');
-          e.removeAttribute('display');
-        });
-    if (satMarks !== null) {
-      SAT_NAMES.forEach(function(name) {
-        var m = satMarks[name];
-        if (m && m.g && m.g.parentNode !== null) {
-          m.g.parentNode.removeChild(m.g);
-        }
-        if (m && m.labs) {
-          m.labs.forEach(function(l) {
-            if (l.parentNode !== null) {
-              l.parentNode.removeChild(l);
-            }
+    domeSvgs().forEach(function(svg) {
+      Array.prototype.forEach.call(
+          svg.querySelectorAll('g.dome-body, text[data-body]'),
+          function(e) {
+            e.removeAttribute('transform');
+            e.removeAttribute('display');
           });
+    });
+    if (domeBase !== null) {
+      domeBase.forEach(function(d) {
+        if (d.sats === null) {
+          return;
         }
-        // (the generated marks were un-hidden by the sweep above)
+        SAT_NAMES.forEach(function(name) {
+          var m = d.sats[name];
+          if (m && m.g && m.g.parentNode !== null) {
+            m.g.parentNode.removeChild(m.g);
+          }
+          if (m && m.labs) {
+            m.labs.forEach(function(l) {
+              if (l.parentNode !== null) {
+                l.parentNode.removeChild(l);
+              }
+            });
+          }
+          // (the generated marks were un-hidden by the sweep above)
+        });
+        d.sats = null;
       });
-      satMarks = null;
     }
   }
-  function renderSats(svg) {
-    if (satMarks === null) {
-      satMarks = {};
+  function renderSats(d) {
+    var svg = d.svg;
+    if (d.sats === null) {
+      d.sats = {};
     }
     var dt = packetAge();
     SAT_NAMES.forEach(function(name) {
@@ -1376,10 +1808,10 @@ var celestial = (function () {
       var azNow = (az === null) ? null
                                 : (az + (recentRateOf(azKey, true) || 0) * dt + 360) % 360;
       var altNow = (alt === null) ? null : alt + (recentRateOf(altKey, false) || 0) * dt;
-      var m = satMarks[name];
+      var m = d.sats[name];
       var overhead = (azNow !== null && altNow !== null && altNow > 0);
       if (overhead && m === undefined) {
-        m = satMarks[name] = buildSatMark(svg);
+        m = d.sats[name] = buildSatMark(svg);
       }
       // The static generation-time marker is superseded whenever the loop
       // feed carries this satellite -- dot AND name label, since our own
@@ -1400,7 +1832,7 @@ var celestial = (function () {
       }
       m.g.removeAttribute('display');
       m.labs.forEach(function(l) { l.removeAttribute('display'); });
-      var p = domeXY(azNow, altNow);
+      var p = domeXY(d.geo, azNow, altNow);
       m.dot.setAttribute('cx', p[0].toFixed(1));
       m.dot.setAttribute('cy', p[1].toFixed(1));
       // Two orthogonal signals, composing.  Ring vs solid is the
@@ -1900,9 +2332,11 @@ var celestial = (function () {
       }
       appliedDomeFrag = ident;
       wrap.innerHTML = this.responseText;
+      fitFrames();           // a new wrapper, with its own data-frame-at
       hideSkytip();
-      domeBase = null;       // baselines belong to the old backdrop
-      satMarks = null;       // the live layer's elements were replaced too
+      domeBase = null;       // baselines, geometry and the live layer's
+                             // own elements all belonged to the fragment
+                             // that was just replaced
       domeRestored = false;  // a fresh sky is live again until it is not
       var swapTs = Date.now() / 1000;
       updateDomeStale(swapTs);   // a fresh sky clears the frozen line at once
@@ -2292,10 +2726,13 @@ var celestial = (function () {
   // rewritten each report cycle) swaps in the next chart once a pass
   // completes; a deliberately EMPTY fragment means no visible pass in the
   // elements' validity window and hides the panel.
+  // One baseline record per drawing, like the dome's: the chart also
+  // arrives in both frames, and the featured dot sweeps in whichever the
+  // screen is showing.  Each record carries its own drawing's
+  // projection, since the two place the same pass in different geometry.
   var passBase = null;
-  function passSvg() {
-    var wrap = document.getElementById('pass-chart');
-    return wrap === null ? null : wrap.querySelector('svg');
+  function passSvgs() {
+    return svgsIn('pass-chart');
   }
   function readPassBase() {
     // The featured satellite is named by the arc's own data-body; its
@@ -2307,35 +2744,34 @@ var celestial = (function () {
     // verdict -- so the sweep can flip and restore it (passDotLit below)
     // -- and the pass's OWN window, data-rise/data-set on the track
     // (skyfield 2.3.2), null on an older chart.
-    passBase = {tag: null};
-    var svg = passSvg();
-    if (svg === null) {
-      return;
-    }
-    var track = svg.querySelector('g.dome-track');
-    if (track === null) {
-      return;
-    }
-    var tag = track.getAttribute('data-body');
-    var g = svg.querySelector('g.dome-body[data-body="' + tag + '"]');
-    var c = g === null ? null : g.querySelector('circle');
-    if (c === null || !c.hasAttribute('cx')) {
-      return;
-    }
-    var ds = g.getAttribute('data-sunlit');
-    passBase = {tag: tag, g: g, c: c,
-                labs: labelsFor(svg, tag),
-                x: parseFloat(c.getAttribute('cx')),
-                y: parseFloat(c.getAttribute('cy')),
-                cls: c.getAttribute('class'),
-                clsSwap: skyPairSwap(c.getAttribute('class')),
-                genLit: ds === null ? null : ds !== '0',
-                // Freshly read from the chart, so it IS as the station
-                // drew it: see passStandsAsDrawn, which restores that
-                // state and must not rewrite it every tick to do so.
-                asDrawn: true,
-                rise: attrNum(track, 'data-rise'),
-                set: attrNum(track, 'data-set')};
+    passBase = [];
+    passSvgs().forEach(function(svg) {
+      var track = svg.querySelector('g.dome-track');
+      if (track === null) {
+        return;
+      }
+      var tag = track.getAttribute('data-body');
+      var g = svg.querySelector('g.dome-body[data-body="' + tag + '"]');
+      var c = g === null ? null : g.querySelector('circle');
+      if (c === null || !c.hasAttribute('cx')) {
+        return;
+      }
+      var ds = g.getAttribute('data-sunlit');
+      passBase.push({tag: tag, g: g, c: c, geo: domeGeo(svg),
+                     labs: labelsFor(svg, tag),
+                     x: parseFloat(c.getAttribute('cx')),
+                     y: parseFloat(c.getAttribute('cy')),
+                     cls: c.getAttribute('class'),
+                     clsSwap: skyPairSwap(c.getAttribute('class')),
+                     genLit: ds === null ? null : ds !== '0',
+                     // Freshly read from the chart, so it IS as the
+                     // station drew it: see passStandsAsDrawn, which
+                     // restores that state and must not rewrite it every
+                     // tick to do so.
+                     asDrawn: true,
+                     rise: attrNum(track, 'data-rise'),
+                     set: attrNum(track, 'data-set')});
+    });
   }
   function skyPairSwap(cls) {
     // The inversion of a weewx-skyfield 2.4 mark's class pair.
@@ -2471,7 +2907,7 @@ var celestial = (function () {
     b.c.setAttribute('class', lit === b.genLit ? b.cls : b.clsSwap);
   }
   function renderPass() {
-    if (passSvg() === null) {
+    if (passSvgs().length === 0) {
       return;
     }
     if (passBase === null) {
@@ -2480,10 +2916,13 @@ var celestial = (function () {
       }
       readPassBase();
     }
-    var b = passBase;
-    if (b.tag === null) {
-      return;
-    }
+    // Every drawing the fragment carries, each swept in its own
+    // geometry.  A chart with no track (no pass in the window, or an
+    // older skyfield with no hooks) contributed no record at all, so an
+    // empty list is the do-nothing case the single null tag used to be.
+    passBase.forEach(renderPassMark);
+  }
+  function renderPassMark(b) {
     if (latest === null) {
       // No packet, so no position to sweep to -- the dot's az and alt
       // come from the feed, and no clock however good supplies them --
@@ -2575,7 +3014,7 @@ var celestial = (function () {
     if (sl !== undefined) {
       passDotLit(b, sl !== false);
     }
-    var p = domeXY(azNow, altNow);
+    var p = domeXY(b.geo, azNow, altNow);
     var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
     // Swept off the drawn position -- and the lit toggle just above may
     // have left the drawn look too.  Both are undone by the next
@@ -2650,6 +3089,12 @@ var celestial = (function () {
       if (sec !== null) {
         sec.removeAttribute('hidden');
       }
+      // AFTER the unhides, never before: a chart arriving into a hidden
+      // area measures zero, fitFrames would decline to judge it, and the
+      // fragment would keep the stylesheet's default width -- wrong for
+      // any set that declares a label_scale of its own.  This is the
+      // ordinary "no pass in window, then a pass appears" transition.
+      fitFrames();           // a new wrapper, with its own data-frame-at
       passBase = null;       // baselines belong to the old chart
       // Synchronous, in this same task, so a chart whose pass is already
       // over is hidden before anything is painted -- once a packet is in
@@ -3421,6 +3866,7 @@ var celestial = (function () {
     }
     setInterval(localTick, 1000);
     addLoadEvent(renderOnLoad);
+    addLoadEvent(watchFrames);
     FRAGMENT_ROOT = config.root;
     setInterval(refreshDome, DOME_REFRESH * 1000);
     addLoadEvent(refetchDomeOnLoad);

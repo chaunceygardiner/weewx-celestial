@@ -28,6 +28,12 @@ advances each readout at the body's own derived rate, re-anchoring to truth
 on the next packet and freezing rather than inventing data if the feed goes
 stale.
 
+It reads on a phone, too.  Below about 620 pixels of chart width the sky
+dome, the Next Visible Pass chart and the Geocentric dial are drawn
+again at phone size — a different drawing, not the desktop's shrunk
+down — so every label stays legible instead of landing at five pixels.
+Turning the phone switches between them instantly, with nothing fetched.
+
 ![Celestial Sample Report](CelestialSampleReport.png)
 
 **Countdown central** — countdown chips for the soonest visible satellite
@@ -112,7 +118,7 @@ later.**
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) is
 optional but is what the page is built for: without it you get the
 Geocentric dial on PyEphem's positions and nothing else — no sky dome, no
-pass chart, no comets, no meteor showers.  **If you run it, it must be 2.6
+pass chart, no comets, no meteor showers.  **If you run it, it must be 2.7
 or later**, which this release is pinned to; the installer refuses to
 install beside an older one.  Having none at all is not a refusal.
 
@@ -120,10 +126,10 @@ install beside an older one.  Having none at all is not a refusal.
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    7.0+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.6+, per their instructions.  (The installer refuses to run beside an
+   2.7+, per their instructions.  (The installer refuses to run beside an
    older weewx-loopdata, whose per-report field declaration is the only
    way the page's live values reach it — and beside a weewx-skyfield
-   older than 2.6, which 9.4 is pinned to.)
+   older than 2.7, which 9.6 is pinned to.)
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)

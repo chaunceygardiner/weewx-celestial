@@ -267,13 +267,15 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.6.1** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
-| **weewx-skyfield 2.6.1**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
+| **weewx-skyfield 2.7** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.7**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |
 
-**Older than 2.6.1 is not a tier.**  9.5 is pinned to weewx-skyfield 2.6.1
+**Older than 2.7 is not a tier.**  9.6 is pinned to weewx-skyfield 2.7
 and the installer refuses an older one, naming the version it found: the
+sky dome and the Next Visible Pass chart are drawn for a phone as well as
+a desk and the phone drawing is 2.7's, the
 sky charts' dates and clock times read [Texts] keys 2.6.1 renamed, the
 panels' colors are 2.6's contrast palette, a fragment set's narrow label
 layer is drawn by 2.5, the light plate's brass is 2.4's value, and the Next
@@ -409,31 +411,51 @@ the files kept in a subdirectory:
 | Key | What it does |
 |---|---|
 | `prefix` | The set's file names: `<prefix>.txt`, `<prefix>-1..9.txt`, `<prefix>-pass.txt`.  Default `dome-svg`, whose pass fragment keeps the name `pass-chart.txt`.  One set per prefix, whatever their directories; two sets that would *write* the same file are refused separately, judged by what `kind` says each writes |
-| `label_scale` | The chart labels' scale, passed to weewx-skyfield; default 1.0 |
+| `label_scale` | The chart labels' scale, passed to weewx-skyfield; default 1.2, which is what puts the smallest label at 11px on a chart rendered at its 640px cap |
 | `theme` | `dark`, `light` or `auto`, spelled exactly as the report option is; default the report's own |
 | `directory` | Where under the report's `HTML_ROOT` the set is written; default `HTML_ROOT` itself.  A plain relative path — nothing that could leave `HTML_ROOT` |
 | `kind` | Which fragments the set is for — `dome`, `pass` or `both` (the default).  A skin showing the dome on one page and the chart on another, at different label scales, declares a set for each; without this each would write the other's files every cycle for a page that never fetches them |
-| `narrow_label_scale` | A second label scale for narrow screens (9.3, needs weewx-skyfield 2.5): the chart's labels are laid out again at this scale inside the same drawing, and a media rule in the chart's own style picks which layout shows.  Both this and `narrow_media`, or neither; positive, and not the set's `label_scale` |
+| `narrow_label_scale` | A second label scale *inside the desk drawing* (9.3): its labels are laid out again at this scale, and a media rule in the chart's own style picks which layout shows.  Since 9.6 this no longer reaches a phone — below the set's frame threshold the desk drawing is hidden entirely and the phone drawing shows instead — so it is useful only for widths **above** that threshold.  Both this and `narrow_media`, or neither; positive, and not the set's `label_scale` (which now defaults to 1.2, so a narrow layer of 1.2 is refused) |
 | `narrow_media` | The CSS media query that selects the narrow layout — `"(max-width: 600px)"`, **quoted**, or an unquoted comma splits it into a list.  It is written into the chart's own style block, so it may contain only letters, digits, spaces and `: ( ) , . -`, with its parentheses balanced; anything else is refused when the section is read, naming the set |
 
 The page names the set it embeds in the call
 (`$celestial.dome_html($almanac, set='astro')`), so scale, plate, file
 names and directory all follow from the one declaration.  The bundled
-Celestial skin declares no section at all: one set, `dome-svg`, at scale
-1.0 on the report's own plate, in `HTML_ROOT`.
+Celestial skin declares no section at all: one set, `dome-svg`, at the
+default scale on the report's own plate, in `HTML_ROOT`.
 
-A skin that serves phones from the same page as desktops gives its set a
-narrow layer rather than a second set:
+### Two drawings, and the width that chooses between them
+
+Since 9.6 every fragment a set writes carries the chart **twice** — once
+in weewx-skyfield's desk frame and once in its phone frame, which is a
+different drawing rather than the same one with larger words.  You do not
+ask for this and cannot turn it off; a skin that serves phones from the
+same page as desktops gets it for free.
+
+Which one shows is decided by **how wide the chart itself renders**, not
+by the viewport, and the width it changes at is derived from the set's
+own `label_scale`: a chart's smallest label is 10 units times that scale
+in a 680-unit frame, so it reaches the 11px floor at 935px of glass on a
+set scaled 0.8, at 623px on the default 1.2, and at 534px on one scaled
+1.4.  Each fragment carries its own figure, so setting a `label_scale`
+gets you the right switching width without computing one.
+
+A narrow *label layer* is a different and older thing — a second label
+layout inside the desk drawing — and it is now useful only for widths
+above that threshold, where the desk drawing is still what shows:
 
 ```
 [CelestialFragments]
     [[stars]]
-        label_scale = 0.8
         narrow_label_scale = 2.2
-        narrow_media = "(max-width: 600px)"
+        narrow_media = "(max-width: 900px)"
 ```
 
-Every dome backdrop and pass chart the set writes then carries both
-label layouts, and a phone shows the narrow one from first paint with
-nothing extra fetched.  The scale reaches only the text: the star dots,
-markers and rings are drawn once, the same at every scale.
+Note what is *not* here: a `label_scale`.  The set takes the default, so
+its threshold is 623px and the 900px query sits above it.  Declaring
+`label_scale = 0.8` would move the threshold to 935px, and the layer
+would never show — below 935px this drawing is hidden and the phone one
+is shown instead.
+
+The scale reaches only the text: the star dots, markers and rings are
+drawn once, the same at every scale.

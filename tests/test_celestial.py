@@ -330,6 +330,25 @@ def make_sky_page(texts=None, theme=None):
     return wxskyfield_sky.SkyPage(skin_dict)
 
 
+def wide_only(markup):
+    """A fragment with its NARROW drawing cut out, leaving the wrapper and
+    the wide drawing exactly as they stand.
+
+    9.6 puts both of weewx-skyfield 2.7's frames in the one fragment, wide
+    first.  A test that asks what ONE frame writes -- the 8.5 parity gate
+    above all, which is what proves the wide drawing did not move -- cuts
+    the other one out rather than being taught to expect two, so the
+    comparison stays byte for byte."""
+    narrow = celestial_page.FRAME_MARK % 'narrow'
+    if narrow not in markup:
+        return markup          # one frame: emitted bare, nothing to unwrap
+    wide = celestial_page.FRAME_MARK % 'wide'
+    i, j = markup.index(wide), markup.index(narrow)
+    assert markup[j - 6:j] == '</div>', 'the wide box does not close before the narrow'
+    assert markup.endswith('</div></div>'), 'the narrow box does not close at the end'
+    return markup[:i] + markup[i + len(wide):j - 6] + markup[-6:]
+
+
 def rewindow_pass_chart(markup, rise, sset):
     """Move a rendered pass chart's OWN window (skyfield 2.3.2's
     data-rise/data-set on the track) to the given epochs.  The fixture
@@ -894,7 +913,9 @@ class TestSampleSkinRenders:
         # ISS pass under its dated head line, with the data-body hook the
         # live sweep drives, and the chart's own SVG ids beside the
         # dome's so the two coexist on one page.
-        assert html.count('<g class="dome-track"') == 1
+        # Two since 9.6: the fragment carries the wide drawing and the
+        # narrow one, so every mark in it exists once per frame.
+        assert html.count('<g class="dome-track"') == 2
         assert '<g class="dome-track" data-body="iss" ' in html
         assert '<section id="pass-sec">' in html
         # 'Iss' is the title-cased fallback: this harness almanac carries
@@ -1163,7 +1184,7 @@ class TestSampleSkinRenders:
         """theme = light is the WHOLE page: the class the stylesheet's
         light plate hangs on, and the embedded dome rendered on
         skyfield's matching paper palette.  A night dome inside a light
-        page (the LiveSeasons shape, correct there) is the one outcome
+        page (the Tempestas shape, correct there) is the one outcome
         this page must never produce, so the night plate's own gradient
         stop is asserted ABSENT rather than the paper one merely
         present."""
@@ -1715,9 +1736,13 @@ class TestSampleSkinRenders:
         text."""
         out = self.render_pass_fragment(wxskyfield_sat_almanac, make_sky_page())
         # Wrapped since 9.0 like a dome fragment: the set's plate and the
-        # report's theme, then skyfield's head line and chart.
+        # report's theme, and since 9.6 each frame's own box, then
+        # skyfield's head line and chart inside the wide one.
         assert out.lstrip().startswith('<div class="passfrag" data-pass-palette="night" '
-                                       'data-page-theme="dark"><div class="passhead">')
+                                       'data-page-theme="dark" data-frames="both" '
+                                       'data-frame-at="623.3">'
+                                       '<div class="cel-frame" data-frame="wide">'
+                                       '<div class="passhead">')
         assert '<svg' in out
         assert '<g class="dome-track" data-body="iss" ' in out
         empty = self.render_pass_fragment(wxskyfield_sat_almanac, None)
@@ -2260,7 +2285,7 @@ class TestSampleSkinRenders:
         # the fixture noon), no live satellite marker (the ISS is below the
         # horizon), and the ISS countdown row went live (the javascript
         # rewrites the first-paint line with its own date · countdown).
-        assert out['dome'] == 1
+        assert out['dome'] == 2        # the wide drawing and the narrow one
         assert out['nudged'] >= 1
         assert out['satdots'] == 0
         assert 'Jun 22' in out['satline']
@@ -2277,7 +2302,7 @@ class TestSampleSkinRenders:
         # load-after-set case, a page opened after the pass ended and
         # before the next chart arrived, which 8.3.3 fixes by reading the
         # chart's window rather than remembering whether it swept.
-        assert out['passchart'] == 1
+        assert out['passchart'] == 2       # the wide drawing and the narrow one
         assert '3:11 AM' in out['passwhen']
         assert out['passnudged'] == 0
         if re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
@@ -2911,7 +2936,9 @@ class TestSampleSkinRenders:
         # disc where a hollow white ring belongs.
         assert out['shadow'] == [out['lit'][1], out['lit'][0]], (out['shadow'], out['lit'])
         assert 'rgb(0, 0, 0)' not in out['shadow'] + out['lit'], out
-        assert out['swept'] == 1           # still mid-pass at the final sample
+        # One swept dot per drawing: the hidden frame is kept true so
+        # that turning the phone shows a dot already on its arc.
+        assert out['swept'] == 2           # still mid-pass at the final sample
         assert served['n'] >= 5            # every phase of the walk was served
 
     def test_pass_sweep_dot_hides_when_the_pass_ends_in_a_real_browser(
@@ -3094,9 +3121,10 @@ class TestSampleSkinRenders:
             "           'cx': page.get_attribute(G + ' circle', 'cx')}\n"
             '    # A refetch of the unchanged chart: the swapped-in chart is\n'
             '    # judged on its own window and comes up hidden at once.\n'
-            "    page.evaluate('() => { window.__g0 = passBase.g; }')\n"
+            "    page.evaluate('() => { window.__g0 = passBase[0].g; }')\n"
             "    page.evaluate('refreshPass()')\n"
-            "    page.wait_for_function('() => passBase !== null && passBase.g !== window.__g0',\n"
+            "    page.wait_for_function('() => passBase !== null && passBase.length > 0 "
+            "&& passBase[0].g !== window.__g0',\n"
             '                           timeout=10000)\n'
             "    out['display_after_refetch'] = page.get_attribute(G, 'display')\n"
             "    out['transform_after_refetch'] = page.get_attribute(G, 'transform')\n"
@@ -3237,7 +3265,7 @@ class TestSampleSkinRenders:
             "        'muts': page.evaluate('() => window.__muts'),\n"
             "        'display': page.get_attribute(G, 'display'),\n"
             "        'transform': page.get_attribute(G, 'transform'),\n"
-            "        'asDrawn': page.evaluate('() => passBase.asDrawn'),\n"
+            "        'asDrawn': page.evaluate('() => passBase[0].asDrawn'),\n"
             '    }\n'
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -3389,7 +3417,8 @@ class TestSampleSkinRenders:
         # can call refreshDome does so only to make a refetch that was
         # asked for while the document was still parsing (see below).
         handlers = re.findall(r'^\s*addLoadEvent\((\w+)\);', src, re.M)
-        assert handlers == ['updateCurrent', 'renderOnLoad', 'refetchDomeOnLoad'], handlers
+        assert handlers == ['updateCurrent', 'renderOnLoad', 'watchFrames',
+                            'refetchDomeOnLoad'], handlers
         body = re.search(r'function refetchDomeOnLoad\(\) \{(.*?)\n  \}', src, re.S).group(1)
         assert re.search(r'if \(domeRefetchWanted\) \{\s*domeRefetchWanted = false;\s*refreshDome\(\);',
                          body), 'an unguarded load-time refetch is back'
@@ -4521,7 +4550,7 @@ class TestSampleSkinRenders:
             "    page.goto('http://127.0.0.1:%(port)d/index.html', wait_until='commit')\n"
             '    # The packet lands mid-stall: catch the page in that state.\n'
             "    page.wait_for_function('typeof latestTs !== \"undefined\" && latestTs > 0', timeout=15000)\n"
-            "    mid = page.evaluate('({ready: document.readyState, baseNull: domeBase === null, svgParsed: domeSvg() !== null})')\n"
+            "    mid = page.evaluate('({ready: document.readyState, baseNull: domeBase === null, svgParsed: domeSvgs().length > 0})')\n"
             "    page.wait_for_load_state('load')\n"
             '    # The refetch the load handler owes, answered and applied;\n'
             '    # anything else it started has been answered too, so a\n'
@@ -4566,7 +4595,7 @@ class TestSampleSkinRenders:
         # from the half-parsed dome (skyfield's sibling finding, 8.3.5).
         assert out['mid']['baseNull'] is True, 'domeBase was read from a half-parsed dome'
         assert int(out['dome_ts']) == page_dome_ts + 60     # the newer sky applied
-        assert out['svgs'] == 1                              # into a whole wrapper, once
+        assert out['svgs'] == 2               # both frames, into a whole wrapper, once
         assert out['wanted'] is False
 
     def test_first_packet_before_the_chips_parse_is_repainted_at_load_in_a_real_browser(
@@ -5746,7 +5775,7 @@ class TestSampleSkinRenders:
         assert any('Halley' in t and 'mag 25.6' in t for t in out['titles'])
         # The embedded dome's comet marks pass through the live machinery
         # untouched: present, never nudged (comets are in no nudge list).
-        assert out['dome_halley'] == 1
+        assert out['dome_halley'] == 2     # one per drawing
         assert out['dome_halley_nudged'] == 0
         assert out['au_cell'].endswith(' au')  # the roster cell went live
         # A comet ABSENT from the feed (mcnaught: real elements, no
@@ -5995,6 +6024,146 @@ class TestSampleSkinRenders:
 
         assert (skytip_rule(os.path.join(SKIN_DIR, 'celestial.css'))
                 == skytip_rule(os.path.join(sky_skin, 'sky.css')))
+
+    def test_narrow_frame_in_step_with_skyfield(self):
+        """The narrow frame's vocabulary and type are weewx-skyfield's,
+        copied in -- the same cross-repo rule as the palette below.
+
+        Three things have to agree or a phone shows two sizes of one
+        kind of label side by side, or shows nothing at all: the CLASS
+        skyfield marks a narrow drawing with, which the page switches
+        frames by; the size skyfield gives a BODY LABEL in each frame,
+        which the script draws a live satellite's name at (9.4.1's bug,
+        which a second frame revives in the other direction -- 11 px
+        among a narrow chart's 16 px names); and the SIZES the dial's
+        own narrow frame sets its labels at, which are skyfield's
+        NARROW_TYPE_PX for the same class names, so the dial and the
+        dome beside it read as one drawing.  Skips when no
+        weewx-skyfield is available."""
+        sky_py = next((os.path.join(d, 'wxskyfield_sky.py')
+                       for d in WXSKYFIELD_DIRS
+                       if os.path.exists(os.path.join(d, 'wxskyfield_sky.py'))),
+                      None)
+        if sky_py is None:
+            pytest.skip('weewx-skyfield is not available')
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('_wxsky_frames', sky_py)
+        sky = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sky)
+        if not hasattr(sky, 'NARROW_TYPE_PX'):
+            pytest.skip('this weewx-skyfield has no narrow frame')
+
+        # The name is depended on by the two ASSETS, not by any Python
+        # constant -- the javascript tests a chart's class list for it,
+        # and the stylesheet caps a lone narrow drawing by it.  Pinning
+        # a constant instead would pass the moment someone edited the
+        # constant, leaving both literals stale, and the drift is
+        # silent: the live satellite name would go back to 11px among a
+        # narrow chart's 16px names, and a lone narrow drawing would
+        # lose its cap and stretch to 640px.
+        js = open(JS_PATH, encoding='utf-8').read()
+        cls = sky.NARROW_CLASS
+        assert " '%s '" % cls in js or "' %s '" % cls in js, \
+            'celestial.js does not test for %r' % cls
+        css_text = open(os.path.join(SKIN_DIR, 'celestial.css'),
+                        encoding='utf-8').read()
+        assert 'svg.%s' % cls in css_text, \
+            'celestial.css does not cap a lone %r drawing' % cls
+
+        def js_num(name):
+            m = re.search(r'var %s = ([0-9.]+);' % name, js)
+            assert m is not None, name
+            return float(m.group(1))
+
+        assert js_num('BODY_LABEL_PX') == sky.WIDE_TYPE_PX['bodylab']
+        assert js_num('NARROW_BODY_LABEL_PX') == sky.NARROW_TYPE_PX['bodylab']
+
+        css = open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8').read()
+
+        def dial_px(cls):
+            m = re.search(r'#dial\[data-frame="narrow"\] \.%s\{font-size:([0-9.]+)px\}' % cls,
+                          css)
+            assert m is not None, cls
+            return float(m.group(1))
+
+        for cls in ('gridlab', 'bodylab', 'cardinal'):
+            assert dial_px(cls) == sky.NARROW_TYPE_PX[cls], cls
+        # The Earth label is the dial's own class -- skyfield has no such
+        # mark -- and it is a body's name, so it takes a body's size.
+        assert dial_px('cel-earthlab') == sky.NARROW_TYPE_PX['bodylab']
+
+    def test_the_frame_threshold_is_one_number(self):
+        """The script and the stylesheet change frame at the same width.
+
+        They cannot share a value -- one is javascript and one is CSS --
+        so this is the contract between two copies, which is the one
+        thing a source pin is for.  If they drift, a page gets a narrow
+        dial beside a desk-sized dome, or the reverse, and reads as two
+        pages stapled together.
+
+        Neither number is read and compared to the other: both are
+        DERIVED here from the same rule -- a drawing is shown while its
+        smallest label reaches 11px -- and checked against what the
+        files say.  The charts are a 680 unit frame with 10 unit labels
+        times the default scale; the dial is a 660 unit frame with the
+        12 unit labels this skin gives it.  They are different numbers
+        on purpose."""
+        js = open(JS_PATH, encoding='utf-8').read()
+        m = re.search(r'var NARROW_BELOW = ([\d.]+);', js)
+        assert m is not None, 'the script names no threshold'
+        css = open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8').read()
+        # The dial takes the DEFAULT SET's width -- the number ITSELF,
+        # not a rounded neighbor.  Rounding it up left a band where the
+        # dial called itself narrow and the fragments, comparing against
+        # the unrounded figure, called themselves wide: a phone-sized
+        # dial beside desk-sized charts, which is what sharing the
+        # number is for.
+        default_at = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE)
+        assert float(m.group(1)) == round(default_at, 1), (m.group(1), default_at)
+        # Which its own type must of course still clear.
+        dial_px = float(re.search(
+            r'#dial\[data-frame="wide"\] \.gridlab\{font-size:([\d.]+)px\}', css).group(1))
+        assert dial_px * float(m.group(1)) / 660.0 >= celestial_page.LABEL_FLOOR_PX
+        # And the stylesheet's own, which is the DEFAULT scale's: the
+        # last width still narrow, a hair under the first wide one,
+        # since a container query has no `not`.
+        queries = re.findall(r'@container \(max-width: ([\d.]+)px\)\{?', css)
+        assert queries, 'no @container query switches the frames'
+        want_css = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE)
+        assert len(set(queries)) == 1, queries
+        assert 0 < want_css - float(queries[0]) < 0.05, (queries[0], want_css)
+        # And it is the DRAWING that is measured, never the window: a
+        # @media query here would be the bug this replaced.
+        blocks = re.findall(r'@media ([^{]+)\{((?:[^{}]|\{[^{}]*\})*)\}', css)
+        assert not [q for q, body in blocks if 'data-frame=' in body], \
+            'a frame switch is keyed to the viewport'
+
+    def test_the_label_scale_default_clears_the_floor(self):
+        """The default label scale and the frame threshold are one
+        decision, so they are checked against each other rather than
+        each being a number someone typed.
+
+        Each drawing is checked at the narrowest glass IT is ever shown
+        on -- its own threshold, not the other's -- where its smallest
+        label must still reach the floor.  A chart's is 10 units times
+        the set's scale in a 680 unit frame; the dial's is the size this
+        skin gives it, in a 660 unit frame."""
+        floor = celestial_page.LABEL_FLOOR_PX
+        scale = celestial_page.DEFAULT_LABEL_SCALE
+        at = celestial_page.frame_threshold(scale)
+        assert 10.0 * scale * at / 680.0 == pytest.approx(floor), (scale, at)
+        # A set at any other scale is the same sum, which is the point of
+        # deriving it per set rather than fixing it.
+        for other in (0.8, 1.35, 2.2):
+            assert (10.0 * other * celestial_page.frame_threshold(other) / 680.0
+                    == pytest.approx(floor)), other
+        # The dial's own wide type, at the width the script gives it.
+        js = open(JS_PATH, encoding='utf-8').read()
+        dial_at = float(re.search(r'var NARROW_BELOW = ([\d.]+);', js).group(1))
+        css = open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8').read()
+        m = re.search(r'#dial\[data-frame="wide"\] \.gridlab\{font-size:([\d.]+)px\}', css)
+        assert m is not None, 'the dial declares no wide grid label size'
+        assert float(m.group(1)) * dial_at / 660.0 >= floor, (m.group(1), dial_at)
 
     def test_chart_palette_in_step_with_skyfield(self):
         """The dial's grid color, its Mars dot and the three dome label
@@ -6471,7 +6640,10 @@ class TestFragmentGenerator:
         label_scale that is not a number is refused naming the set."""
         default = celestial_page.fragment_sets({})
         assert default == [celestial_page.DEFAULT_SET]
-        assert default[0].prefix == 'dome-svg' and default[0].label_scale == 1.0
+        assert default[0].prefix == 'dome-svg'
+        # 1.2 since 9.6, and derived rather than chosen: see
+        # DEFAULT_LABEL_SCALE and test_the_label_scale_default_clears_the_floor.
+        assert default[0].label_scale == celestial_page.DEFAULT_LABEL_SCALE == 1.2
         assert default[0].theme is None
         assert celestial_page.fragment_sets({'CelestialFragments': {}}) == default
         assert celestial_page.fragment_sets({'CelestialFragments': 'junk'}) == default
@@ -6560,12 +6732,30 @@ class TestFragmentGenerator:
         for theme in ('dark', 'light'):
             sky_page = make_sky_page(theme=theme)
             page = celestial_page.CelestialPage({}, sky_page=sky_page)
+            # The 8.5 templates call skyfield with no label_scale, so the
+            # generator is asked for the same: 9.6 raised the DEFAULT to
+            # 1.2 for legibility, which is a deliberate change of drawing
+            # and not something this comparison is about.
+            at_one = celestial_page.DEFAULT_SET._replace(label_scale=1.0)
             for interval in (300, 350, 7200):
                 search = {'almanac': wxskyfield_sat_almanac, 'sky_page': sky_page,
                           'current': self.current(interval)}
                 for k in range(10):
                     want = self.render_85_dome(k, search, tmp_path).strip()
-                    got = page.dome_fragment(wxskyfield_sat_almanac, k, interval).strip()
+                    got = page.dome_fragment(wxskyfield_sat_almanac, k, interval,
+                                             at_one).strip()
+                    # 9.6 carries a second, narrow drawing in the same
+                    # fragment and says so on the wrapper; cut both away
+                    # and what is left must still be 8.5's bytes, which
+                    # is the proof that THIS change did not move the wide
+                    # drawing.  Both sides render through whatever
+                    # weewx-skyfield is installed, so it says nothing
+                    # about what a skyfield upgrade moves -- 2.7's ring
+                    # numbers move in both and cancel.
+                    if want:
+                        assert 'data-frames="both"' in got, (theme, interval, k)
+                        got = re.sub(r' data-frames="both" data-frame-at="[\d.]+"', '',
+                                     wide_only(got), count=1)
                     # 9.0 adds the report's theme to the wrapper (the
                     # javascript's flip check); everything else is 8.5's.
                     if want:
@@ -6576,9 +6766,12 @@ class TestFragmentGenerator:
                         assert 'data-dome-slot="%d"' % k in got
             search = {'almanac': wxskyfield_sat_almanac, 'sky_page': sky_page}
             want = self.render_85_pass(search).strip()
-            got = page.pass_fragment(wxskyfield_sat_almanac).strip()
+            got = page.pass_fragment(wxskyfield_sat_almanac, at_one).strip()
             # 9.0 wraps the chart the way the dome fragments are wrapped;
             # inside the wrapper it is what the 8.5 template wrote.
+            assert 'data-frames="both"' in got, theme
+            got = re.sub(r' data-frames="both" data-frame-at="[\d.]+"', '',
+                         wide_only(got), count=1)
             head = '<div class="passfrag" data-pass-palette="%s" data-page-theme="%s">' % (
                 'light' if theme == 'light' else 'night', theme)
             assert got.startswith(head) and got.endswith('</div>'), theme
@@ -6703,8 +6896,8 @@ class TestFragmentGenerator:
                 'narrow_label_scale': 'huge', 'narrow_media': '(max-width: 600px)'},
             'narrow_label_scale = \'0\' is not a positive number': {
                 'narrow_label_scale': '0', 'narrow_media': '(max-width: 600px)'},
-            "narrow_label_scale = '1.0' is the set's label_scale": {
-                'narrow_label_scale': '1.0', 'narrow_media': '(max-width: 600px)'},
+            "narrow_label_scale = '1.2' is the set's label_scale": {
+                'narrow_label_scale': '1.2', 'narrow_media': '(max-width: 600px)'},
             'narrow_media = [\'(max-width: 600px)\', \'print\'] is a list': {
                 'narrow_label_scale': '2.2', 'narrow_media': ['(max-width: 600px)', 'print']},
             # What weewx-skyfield would refuse at every draw, refused here
@@ -6713,8 +6906,8 @@ class TestFragmentGenerator:
             # unclosed parenthesis.
             'narrow_label_scale = \'inf\' is not a positive number': {
                 'narrow_label_scale': 'inf', 'narrow_media': '(max-width: 600px)'},
-            "narrow_label_scale = '1.0000001' is the set's label_scale": {
-                'narrow_label_scale': '1.0000001', 'narrow_media': '(max-width: 600px)'},
+            "narrow_label_scale = '1.2000001' is the set's label_scale": {
+                'narrow_label_scale': '1.2000001', 'narrow_media': '(max-width: 600px)'},
             "narrow_media = '(width < 600px)' is not a usable media query": {
                 'narrow_label_scale': '2.2', 'narrow_media': '(width < 600px)'},
             "narrow_media = '(max-width: 600px' is not a usable media query": {
@@ -6870,6 +7063,54 @@ class TestFragmentGenerator:
         # ... with the traceback, whose frame is what identifies a bug
         # in weewx-skyfield: the raising function is named.
         assert any('flaky' in r.getMessage() for r in caplog.records)
+
+    def test_a_drawing_that_raises_keeps_the_old_file(self, wxskyfield_sat_almanac,
+                                                      tmp_path, monkeypatch, caplog):
+        """A SKYFIELD DRAW that raises must reach the generator, so the
+        file already on disk stays there.
+
+        Distinct from the test above, which makes dome_fragment itself
+        raise -- above the two-frame render entirely.  This raises where
+        the drawing happens, INSIDE _both_frames, which is the path 9.6
+        introduced.  That path guards each frame separately so one
+        failing frame does not discard the other; the danger is that it
+        then swallows a failure of BOTH, in which case the generator
+        would write a well-formed EMPTY fragment over a good one -- and
+        an empty fragment is not neutral, it is the shape the javascript
+        reads as "no visible pass", which hides the panel.  A total
+        failure therefore goes on up."""
+        root = self.html_root(tmp_path)
+        root.mkdir()
+        (root / 'dome-svg-3.txt').write_text('THE OLD SKY')
+        (root / 'pass-chart.txt').write_text('THE OLD CHART')
+        real_dome = celestial_page.CelestialPage._draw_dome
+
+        class Cursed:
+            """A SkyPage whose drawings fail, in both frames."""
+
+            def can_draw(self):
+                return True
+
+            def dome_svg(self, alm, palette='night', **kw):
+                raise RuntimeError('the sky is cursed')
+
+            def pass_chart_html(self, alm, palette='night', **kw):
+                raise RuntimeError('the chart is cursed')
+
+            def theme(self):
+                return 'dark'
+
+        monkeypatch.setattr(celestial_page, 'sky_page_from_shim',
+                            lambda generator: Cursed())
+        gen = self.make_generator(tmp_path)
+        with caplog.at_level(logging.ERROR, logger='celestial_page'):
+            gen.run()
+        # Untouched, both of them: the page keeps the last sky that worked.
+        assert (root / 'dome-svg-3.txt').read_text() == 'THE OLD SKY'
+        assert (root / 'pass-chart.txt').read_text() == 'THE OLD CHART'
+        assert not list(root.glob('*.tmp'))
+        assert any('cursed' in r.getMessage() for r in caplog.records)
+        assert real_dome is celestial_page.CelestialPage._draw_dome
 
     def test_a_write_that_fails_keeps_the_old_file(self, wxskyfield_sat_almanac, tmp_path,
                                                    caplog):
@@ -7666,7 +7907,7 @@ class TestConsumerSkin:
                 out = results['http://127.0.0.1:%d/%s/index.html' % (port, where)]
                 assert out['errors'] == [] and out['warnings'] == [], (layout, where, out)
                 assert out['root'] == '../' and out['url'] == '../astro/x.txt', (layout, where)
-                assert out['dots'] >= 9 and out['dome'] == 1 and out['passchart'] == 1, (layout, where)
+                assert out['dots'] >= 9 and out['dome'] == 2 and out['passchart'] == 2, (layout, where)
                 assert out['marks'] == 6 and out['hints'] == 0 and out['theme'] == 'theme-dark'
                 assert 'Jun 22' in out['satline'], (layout, where)   # the row went live
                 assert out['late_warnings'] == [
@@ -8358,24 +8599,33 @@ class TestPanels:
         # one each, and are not skyfield's.
         assert not re.search(r'\bb\.lab\b', code), 'a baseline still holds one label'
 
-    def test_a_narrow_layer_reaches_skyfield(self, wxskyfield_sat_almanac):
-        """The narrow layer goes to weewx-skyfield as label_layers on the
-        dome AND the chart, page and fragments alike; a set without a
-        layer passes no label_layers at all.  9.3 requires skyfield 2.5,
-        so there is no probe and no fallback to test."""
+    def test_each_chart_is_asked_for_in_both_frames(self, wxskyfield_sat_almanac):
+        """Every chart is drawn TWICE (9.6): once in the wide frame,
+        carrying the set's label_scale and its narrow layer, and once in
+        weewx-skyfield 2.7's narrow frame, carrying NEITHER.
+
+        The narrow frame is laid out at phone size already, so a scale
+        would multiply type that is right (a set at 1.35 would ask for
+        22 px), and a layer keyed to the phone breakpoint would fire
+        inside the one drawing that is only ever shown below it.  A set
+        with no layer passes no label_layers on the wide frame either."""
         calls = []
 
         class Sky:
             def can_draw(self):
                 return True
 
-            def dome_svg(self, alm, palette='night', label_scale=1.0, label_layers=None):
-                calls.append(('dome_svg', label_scale, label_layers))
-                return '<svg>%s</svg>' % label_layers
+            def dome_svg(self, alm, palette='night', label_scale=None,
+                         label_layers=None, narrow=False):
+                calls.append(('dome_svg', label_scale, label_layers, narrow))
+                return '<svg class="sky%s">%s</svg>' % (
+                    ' sky-narrow' if narrow else '', label_layers)
 
-            def pass_chart_html(self, alm, palette='night', label_scale=1.0, label_layers=None):
-                calls.append(('pass_chart_html', label_scale, label_layers))
-                return '<svg>%s</svg>' % label_layers
+            def pass_chart_html(self, alm, palette='night', label_scale=None,
+                                label_layers=None, narrow=False):
+                calls.append(('pass_chart_html', label_scale, label_layers, narrow))
+                return '<svg class="sky%s">%s</svg>' % (
+                    ' sky-narrow' if narrow else '', label_layers)
 
             def theme(self):
                 return 'dark'
@@ -8389,31 +8639,923 @@ class TestPanels:
         page.pass_html(alm, set='stars')
         page.dome_fragment(alm, 3, 300, page._set('stars', 't'))
         page.pass_fragment(alm, page._set('stars', 't'))
-        assert calls == [('dome_svg', 0.8, [(2.2, '(max-width: 600px)')]),
-                         ('pass_chart_html', 0.8, [(2.2, '(max-width: 600px)')]),
-                         ('dome_svg', 0.8, [(2.2, '(max-width: 600px)')]),
-                         ('pass_chart_html', 0.8, [(2.2, '(max-width: 600px)')])], calls
+        wide_dome = ('dome_svg', 0.8, [(2.2, '(max-width: 600px)')], False)
+        wide_pass = ('pass_chart_html', 0.8, [(2.2, '(max-width: 600px)')], False)
+        narrow_dome = ('dome_svg', None, None, True)
+        narrow_pass = ('pass_chart_html', None, None, True)
+        assert calls == [wide_dome, narrow_dome, wide_pass, narrow_pass,
+                         wide_dome, narrow_dome, wide_pass, narrow_pass], calls
         del calls[:]
         page.dome_html(alm, set='plain')
         page.pass_html(alm, set='plain')
-        assert calls == [('dome_svg', 1.35, None), ('pass_chart_html', 1.35, None)], calls
+        assert calls == [('dome_svg', 1.35, None, False),
+                         ('dome_svg', None, None, True),
+                         ('pass_chart_html', 1.35, None, False),
+                         ('pass_chart_html', None, None, True)], calls
+
+    def test_a_narrow_layer_at_the_new_default_says_where_the_base_came_from(self):
+        """A set declaring narrow_label_scale = 1.2 and no label_scale of
+        its own was valid through 9.5.1 and is refused now, because 9.6
+        moved the default base from 1.0 to 1.2 and the two layers would
+        carry the same name.
+
+        The refusal is correct -- weewx-skyfield names layers by %g, so
+        two at 1.2 collide -- but a section refused writes NO fragments,
+        so the message has to say where a base the set never declared
+        came from.  changes.txt carries it as ACTION REQUIRED."""
+        def refusal(keys):
+            with pytest.raises(ValueError) as e:
+                celestial_page.fragment_sets({'CelestialFragments': {'s': dict(keys)}})
+            return str(e.value)
+
+        took_default = refusal({'narrow_label_scale': '1.2',
+                                'narrow_media': '(max-width: 600px)'})
+        assert 'the default since 9.6' in took_default, took_default
+        assert '(1.2,' in took_default, took_default
+        # A set that DID declare the base is told so instead, since
+        # nothing changed under it.
+        declared = refusal({'label_scale': '1.2', 'narrow_label_scale': '1.2',
+                            'narrow_media': '(max-width: 600px)'})
+        assert 'this set' in declared and 'the default since 9.6' not in declared, declared
+        # And the value that was valid before still is, at any other scale.
+        sets = celestial_page.fragment_sets({'CelestialFragments': {'s': {
+            'label_scale': '1.0', 'narrow_label_scale': '1.2',
+            'narrow_media': '(max-width: 600px)'}}})
+        assert sets[0].narrow_label_scale == 1.2 and sets[0].label_scale == 1.0
+
+    def test_a_lone_narrow_drawing_is_capped_in_a_real_browser(self, tmp_path):
+        """A frame that draws alone is emitted bare, with no box -- so the
+        cap that keeps a phone drawing at its design size has to reach the
+        drawing by its own class too.
+
+        Without it #dome-wrap svg's 640px cap stretches a 360 unit
+        drawing to 640px, with ~26px labels: the exact fault the cap
+        exists to prevent, arrived at through the degraded path where
+        skyfield's wide draw failed and its narrow one did not.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        # The shape _both_frames emits when only the narrow frame drew:
+        # no .cel-frame box, no data-frames, the drawing bare.
+        svg = ('<svg viewBox="0 0 360 360" class="sky sky-night sky-narrow" '
+               'data-dome-cx="180" data-dome-cy="178" data-dome-r="148" role="img" '
+               'aria-label="dome"><circle cx="180" cy="178" r="148" fill="#123"/></svg>')
+        wide = svg.replace('sky-narrow', 'sky-wide').replace('0 0 360 360', '0 0 680 706')
+        (tmp_path / 'index.html').write_text(
+            '<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+            '<title>cap</title><link rel="stylesheet" href="celestial.css"></head><body>'
+            '<div id="dome-wrap"><div id="dome-svg">'
+            '<div class="domefrag" data-dome-palette="night">%s</div></div></div>'
+            '<div id="pass-wrap"><div id="pass-chart">'
+            '<div class="passfrag" data-pass-palette="night">%s</div></div></div>'
+            '</body></html>' % (svg, wide), encoding='utf-8')
+        write_assets(tmp_path)
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    pg = b.new_page(viewport={"width": 1400, "height": 900})\n'
+            '    pg.goto("http://127.0.0.1:%d/index.html")\n'
+            '    print(json.dumps(pg.evaluate("""() => ({\n'
+            '        narrow: Math.round(document.querySelector('
+            '"#dome-svg svg").getBoundingClientRect().width),\n'
+            '        wide: Math.round(document.querySelector('
+            '"#pass-chart svg").getBoundingClientRect().width)})""")))\n'
+            '    b.close()\n' % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        # Its design size, in a column with room for far more.
+        assert out['narrow'] == 360, out
+        # And a lone WIDE drawing is untouched by it, at the 640px cap
+        # every desk drawing has always had.
+        assert out['wide'] == 640, out
+
+    def test_a_chart_arriving_into_a_hidden_area_is_still_fitted_in_a_real_browser(
+            self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
+        """A pass chart that arrives while its area is hidden must still
+        be measured against its own set's width.
+
+        The ordinary transition: no visible pass in the window, so the
+        chart area first-paints hidden; a pass comes into range and the
+        refetch swaps one in.  A fragment measured while still hidden
+        has no width, so the judgment has to happen AFTER the unhide --
+        otherwise no data-frame-fit is written and the drawing falls
+        back to the stylesheet's default width, which is wrong for every
+        set that declares a label_scale of its own.
+
+        Driven at 800px with a set at 0.8, deliberately: the stylesheet
+        would say wide there (784px of glass, over its 623px), and the
+        set's own width is 935px, so the two disagree and only the
+        fitted answer is right.  And driven with no ResizeObserver,
+        also deliberately: with one, an early measurement is healed as
+        soon as the area is shown and the ordering cannot be tested.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        alm = wxskyfield_sat_almanac
+        page = self.sets_page(make_sky_page(),
+                              {'s': {'prefix': 'dome-svg', 'label_scale': '0.8'}},
+                              interval_s=300)
+        fs = page._set('s', 't')
+        panel = page.pass_html(alm, set='s')
+        assert 'data-frame-at="935.0"' in panel
+        # The state this is about: the area hidden, as it first paints
+        # when no satellite has a visible pass in the window.
+        # #pass-wrap is what the first paint hides when the chart is
+        # empty, and what refreshPass unhides -- not #pass-chart.
+        hidden = panel.replace('<div id="pass-wrap" ', '<div id="pass-wrap" hidden ', 1)
+        assert 'id="pass-wrap" hidden' in hidden
+        (tmp_path / 'index.html').write_text(
+            '<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+            '<link rel="stylesheet" href="celestial.css">'
+            '<script src="celestial.js"></script></head><body>%s'
+            '<section id="pass-sec" hidden><h2>p</h2>%s</section></body></html>'
+            % (page.config_script(alm), hidden), encoding='utf-8')
+        _domes, pass_name = celestial_page.fragment_names(fs)
+        (tmp_path / pass_name).write_text(page.pass_fragment(alm, fs), encoding='utf-8')
+        write_assets(tmp_path, unwrapped=True)   # the runner calls refreshPass
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    pg = b.new_page(viewport={"width": 800, "height": 900})\n'
+            '    # No ResizeObserver, which is the whole point: WITH one,\n'
+            '    # a fragment measured too early is healed the moment the\n'
+            '    # area becomes visible, and the ordering bug is\n'
+            '    # invisible.  Without one, watchFrames falls back to a\n'
+            '    # window resize listener that never fires here, so the\n'
+            '    # judgment at swap time is the only one there is.\n'
+            '    pg.add_init_script("delete window.ResizeObserver;")\n'
+            '    errs = []\n'
+            "    pg.on('pageerror', lambda e: errs.append(str(e)))\n"
+            '    pg.goto("http://127.0.0.1:%d/index.html")\n'
+            '    pg.wait_for_function("() => typeof refreshPass === \'function\'")\n'
+            '    pg.evaluate("() => refreshPass()")\n'
+            '    pg.wait_for_function("() => document.querySelector('
+            '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
+            '    out = pg.evaluate("""() => {\n'
+            '      const w = document.querySelector(".passfrag");\n'
+            '      const vis = f => { const e = document.querySelector('
+            '".cel-frame[data-frame=" + f + "]");\n'
+            '        return e !== null && e.getBoundingClientRect().width > 0; };\n'
+            '      return {fit: w.getAttribute("data-frame-fit"),\n'
+            '              at: w.getAttribute("data-frame-at"),\n'
+            '              box: Math.round(w.getBoundingClientRect().width),\n'
+            '              wide: vis("wide"), narrow: vis("narrow")};\n'
+            '    }""")\n'
+            '    out["errors"] = errs\n'
+            '    print(json.dumps(out))\n'
+            '    b.close()\n' % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == [], out['errors']
+        assert out['at'] == '935.0', out
+        # The band where the stylesheet and the set disagree.
+        assert 624 < out['box'] < 935, out
+        assert out['fit'] == 'narrow', out
+        assert out['narrow'] is True and out['wide'] is False, out
+
+    def test_each_set_carries_the_width_its_own_labels_need(self, wxskyfield_sat_almanac):
+        """The width a fragment changes frame at is the SET's, not a
+        constant, and the fragment carries it.
+
+        A chart's smallest label is 10 units times the set's label_scale
+        in a 680 unit frame, so the width at which it reaches the 11px
+        floor moves with the scale: 935px at 0.8, 623px at the 1.2
+        default, 534px at 1.4.  A single number would hand the phone
+        drawing to a column that could carry the detailed one and -- far
+        worse -- the detailed one to a column that cannot."""
+        assert celestial_page.frame_threshold(1.0) == 748.0
+        for scale, want in ((0.8, 935.0), (1.2, 623.3), (1.35, 554.1), (1.4, 534.3)):
+            assert round(celestial_page.frame_threshold(scale), 1) == want, scale
+        # The floor the derivation stands on, spelled out rather than
+        # folded into a magic number.
+        assert celestial_page.LABEL_FLOOR_PX == 11.0
+        alm = wxskyfield_sat_almanac
+        for scale, want in ((0.8, '935.0'), (celestial_page.DEFAULT_LABEL_SCALE, '623.3')):
+            page = self.sets_page(make_sky_page(),
+                                  {'s': {'prefix': 'dome-svg', 'label_scale': str(scale)}},
+                                  interval_s=300)
+            fs = page._set('s', 't')
+            for markup in (page.dome_html(alm, set='s'), page.pass_html(alm, set='s'),
+                           page.dome_fragment(alm, 0, 300, fs), page.pass_fragment(alm, fs)):
+                assert 'data-frame-at="%s"' % want in markup, (scale, markup[:200])
+        # A fragment with one drawing switches nothing, so it declares
+        # no width either.
+        assert 'data-frame-at' not in celestial_page.CelestialPage._frames_attr('<svg></svg>')
+
+    def test_a_sets_own_threshold_beats_the_stylesheets_in_a_real_browser(
+            self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
+        """A set at a label scale of its own changes frame where ITS
+        labels stop reading, not where the stylesheet's default says.
+
+        The case: label_scale 0.8 in a 700px column.  The stylesheet
+        switches at 623.29px, so left to itself it shows the DESK
+        drawing there -- and that drawing's smallest label is 10 x 0.8 x
+        700 / 680 = 8.2px, under the floor, which is the whole fault
+        this release removes.  The set's own width is 935px, so the
+        phone drawing is the right one and celestial.js says so.
+
+        Also pinned: the stylesheet alone (no javascript) still gets the
+        DEFAULT scale right, which is what a page without the script
+        keeps.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        alm = wxskyfield_sat_almanac
+        page = self.sets_page(make_sky_page(),
+                              {'s': {'prefix': 'dome-svg', 'label_scale': '0.8'}},
+                              interval_s=300)
+        body = page.dome_html(alm, set='s')
+        assert 'data-frame-at="935.0"' in body
+        html = ('<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+                '<link rel="stylesheet" href="celestial.css">'
+                '<script src="celestial.js"></script></head><body>%s'
+                '<section><h2>d</h2>%s</section></body></html>'
+                % (page.config_script(alm), body))
+        (tmp_path / 'index.html').write_text(html, encoding='utf-8')
+        # The same page with the script withheld: the stylesheet alone.
+        (tmp_path / 'nojs.html').write_text(
+            html.replace('<script src="celestial.js"></script>', ''), encoding='utf-8')
+        write_assets(tmp_path)
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'BASE = "http://127.0.0.1:%d/"\n'
+            'PROBE = """() => {\n'
+            '  const w = document.querySelector(".domefrag");\n'
+            '  const vis = f => { const e = document.querySelector(\n'
+            '      ".cel-frame[data-frame=" + f + "]");\n'
+            '    return e !== null && e.getBoundingClientRect().width > 0; };\n'
+            '  return {at: w.getAttribute("data-frame-at"),\n'
+            '          fit: w.getAttribute("data-frame-fit"),\n'
+            '          box: Math.round(w.getBoundingClientRect().width),\n'
+            '          wide: vis("wide"), narrow: vis("narrow")};\n'
+            '}"""\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    for name, path in (("js", "index.html"), ("nojs", "nojs.html")):\n'
+            '        pg = b.new_page(viewport={"width": 716, "height": 900})\n'
+            '        errs = []\n'
+            "        pg.on('pageerror', lambda e: errs.append(str(e)))\n"
+            '        pg.goto(BASE + path)\n'
+            '        pg.wait_for_function("() => document.querySelector(\'.domefrag\') !== null")\n'
+            '        pg.evaluate("() => new Promise(r => requestAnimationFrame('
+            '() => requestAnimationFrame(r)))")\n'
+            '        out[name] = pg.evaluate(PROBE)\n'
+            '        out[name]["errors"] = errs\n'
+            '        pg.close()\n'
+            '    b.close()\n'
+            'print(json.dumps(out))\n'
+            % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=180)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        js, nojs = out['js'], out['nojs']
+        assert js['errors'] == [], js['errors']
+        # The column really is in the band where the two answers differ:
+        # wider than the stylesheet's 624, narrower than this set's 935.
+        assert 624 < js['box'] < 935, js
+        assert js['at'] == '935.0', js
+        # The script's verdict, and the drawing it produces.
+        assert js['fit'] == 'narrow', js
+        assert js['narrow'] is True and js['wide'] is False, js
+        # Without the script the stylesheet's default width governs, and
+        # in this band it shows the desk drawing -- which is exactly why
+        # the script has to refine it.
+        assert nojs['fit'] is None, nojs
+        assert nojs['wide'] is True and nojs['narrow'] is False, nojs
+
+    def test_the_label_box_tracks_the_size_css_resolved_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The room the dial reserves for a name follows the size the
+        STYLESHEET resolved, never the size this frame expects.
+
+        These panels drop into somebody else's page, and that page sets
+        .bodylab to whatever suits it.  A box sized for the frame's own
+        type is then wrong in both directions: too wide, and names are
+        dropped that had somewhere to go -- measured on a consuming skin
+        at 12px against a frame expecting 16, the reservation was a
+        third too wide -- and too narrow, and the names that survive are
+        drawn over each other, which is the fault the placement pass
+        exists to remove.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        alm = wxskyfield_sat_almanac
+        page = self.sets_page(make_sky_page(), {}, interval_s=300)
+        (tmp_path / 'index.html').write_text(
+            '<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+            '<link rel="stylesheet" href="celestial.css">'
+            '<style>#dial[data-frame="wide"] .bodylab,'
+            '#dial[data-frame="narrow"] .bodylab{font-size:12px}</style>'
+            '<script src="celestial.js"></script></head><body>%s'
+            '<section><h2>g</h2>%s</section></body></html>'
+            % (page.config_script(alm), page.geocentric_html(alm)), encoding='utf-8')
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    pg = b.new_page(viewport={"width": 1400, "height": 900})\n'
+            '    pg.goto("http://127.0.0.1:%d/index.html")\n'
+            '    pg.wait_for_function("() => typeof labelBox === \'function\'")\n'
+            '    print(json.dumps(pg.evaluate("""() => {\n'
+            '      const at = px => {\n'
+            '        const b = labelBox("Mercury", 500, 500, "middle", px);\n'
+            '        return Math.round((b.r - b.l) * 100) / 100;\n'
+            '      };\n'
+            '      // A label the page really drew, at the size the sheet\n'
+            '      // above set rather than the frame\'s own 12/16.\n'
+            '      const el = document.createElementNS(\n'
+            '          "http://www.w3.org/2000/svg", "text");\n'
+            '      el.setAttribute("class", "bodylab");\n'
+            '      document.getElementById("dial").appendChild(el);\n'
+            '      return {w12: at(12), w16: at(16), w24: at(24),\n'
+            '              resolved: labelPx(el),\n'
+            '              computed: parseFloat(getComputedStyle(el).fontSize),\n'
+            '              frameSays: (typeof dialNow === "object") ? dialNow.labPx : null};\n'
+            '    }""")))\n'
+            '    b.close()\n' % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        # The reservation scales with the size it is given.  The padding
+        # is a constant, so the TEXT part is what grows: seven
+        # characters, each a fixed fraction of the type size.
+        assert out['w16'] - out['w12'] == pytest.approx(7 * 4 * 0.6375, abs=0.05), out
+        assert out['w24'] - out['w16'] == pytest.approx(7 * 8 * 0.6375, abs=0.05), out
+        # And the size it asks for is the one CSS RESOLVED for that
+        # element, whatever rule won -- not the frame's own figure.  (On
+        # this page the dial is never built, having no feed, so it wears
+        # no data-frame and the bare .bodylab rule governs: 11px, which
+        # is neither frame's number and is exactly the point.)
+        assert out['resolved'] == out['computed'], out
+        assert out['resolved'] != out['frameSays'], out
+
+    def test_a_lone_drawing_is_emitted_bare(self, wxskyfield_sat_almanac):
+        """A frame that does not draw leaves the other one BARE -- no
+        box, no data-frames -- so the stylesheet's switch cannot hide it.
+
+        The switch says "show the frame this screen wants", and a
+        fragment holding one drawing has no such choice to make: hiding
+        it would turn one frame's failure into a blank panel at half the
+        widths in the world.  weewx-skyfield's own methods are guarded
+        and answer '' for any failure, so this is the shape a real
+        failure arrives in."""
+        class Sky:
+            def __init__(self, fails):
+                self.fails = fails
+
+            def can_draw(self):
+                return True
+
+            def dome_svg(self, alm, palette='night', narrow=False, **kw):
+                return '' if narrow == self.fails else '<svg class="sky">w</svg>'
+
+            def pass_chart_html(self, alm, palette='night', narrow=False, **kw):
+                return '' if narrow == self.fails else '<svg class="sky">w</svg>'
+
+            def theme(self):
+                return 'dark'
+
+        alm = wxskyfield_sat_almanac
+        for fails in (True, False):
+            page = self.sets_page(Sky(fails), {}, interval_s=300)
+            for markup in (page.dome_fragment(alm, 0, 300),
+                           page.pass_fragment(alm)):
+                assert 'data-frames' not in markup, (fails, markup)
+                assert 'cel-frame' not in markup, (fails, markup)
+                assert markup.count('<svg') == 1, (fails, markup)
+        # And with neither frame drawing, the fragment is the deliberate
+        # EMPTY the javascript knows how to read -- an empty wrapper, not
+        # a wrapper full of empty boxes.
+        class Blank(Sky):
+            def dome_svg(self, alm, palette='night', narrow=False, **kw):
+                return ''
+
+            def pass_chart_html(self, alm, palette='night', narrow=False, **kw):
+                return ''
+
+        page = self.sets_page(Blank(True), {}, interval_s=300)
+        empty = page.pass_fragment(alm)
+        assert re.match(r'^<div class="passfrag"[^>]*></div>$', empty), empty
+
+    def test_panel_text_clears_the_floor_under_a_shrinking_root_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """No panel text renders under 11 px, even on a host that scales
+        its root font down with the viewport.
+
+        These panels drop into somebody else's page.  One host scales its
+        root with the screen -- about 5.5 px at 390 -- and every
+        em-relative rule this stylesheet ships then renders at a third of
+        what it does here.  The floor is one-way (max), so this also
+        pins the other half: a host scaling type UP still wins, and the
+        floor never becomes a size.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        alm = wxskyfield_sat_almanac
+        page = self.sets_page(make_sky_page(), {}, interval_s=300)
+        # Every panel that carries text of its own, with no script: the
+        # floor is the stylesheet's alone.
+        html = ('<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+                '<link rel="stylesheet" href="celestial.css"></head><body>%s%s%s%s'
+                '</body></html>'
+                % (page.countdown_html(alm), page.geocentric_html(alm),
+                   page.dome_roster_html(alm), page.pass_roster_html(alm)))
+        (tmp_path / 'index.html').write_text(html, encoding='utf-8')
+        write_assets(tmp_path)
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'URL = "http://127.0.0.1:%d/index.html"\n'
+            '# The smallest rendered text anywhere in the panels, and the\n'
+            '# size of one known rule, so a floor that swallowed every\n'
+            '# size would show up as well as one that let text through.\n'
+            'PROBE = """() => {\n'
+            '  const px = [];\n'
+            '  document.querySelectorAll("body *").forEach(e => {\n'
+            '    if (e.closest("svg") !== null) { return; }\n'
+            '    const t = Array.from(e.childNodes).some(\n'
+            '        n => n.nodeType === 3 && n.textContent.trim() !== "");\n'
+            '    if (t) { px.push(parseFloat(getComputedStyle(e).fontSize)); }\n'
+            '  });\n'
+            '  const sub = document.querySelector(".cel-rsub");\n'
+            '  return {n: px.length, smallest: Math.min.apply(null, px),\n'
+            '          rsub: sub === null ? null : parseFloat(getComputedStyle(sub).fontSize)};\n'
+            '}"""\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page(viewport={"width": 390, "height": 900})\n'
+            '    page.goto(URL)\n'
+            '    out["normal"] = page.evaluate(PROBE)\n'
+            '    # A host whose root font shrinks with the screen.\n'
+            '    page.add_style_tag(content="html{font-size:5.5px}")\n'
+            '    out["shrunk"] = page.evaluate(PROBE)\n'
+            '    # And one that scales type UP, which the floor must not touch.\n'
+            '    page.add_style_tag(content="html{font-size:24px}")\n'
+            '    out["grown"] = page.evaluate(PROBE)\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['normal']['n'] > 20, out['normal']     # the panels really rendered
+        # On a 16 px root nothing was near the floor to begin with; under
+        # a 5.5 px root the floor is what holds the line.
+        assert out['normal']['smallest'] >= 11.0, out['normal']
+        assert out['shrunk']['smallest'] >= 11.0, out['shrunk']
+        assert out['shrunk']['rsub'] == 11.0, out['shrunk']
+        # One-way: at a 24 px root the em wins and the floor is invisible.
+        assert out['grown']['rsub'] == pytest.approx(18.0, abs=0.5), out['grown']
+
+    def test_the_frame_follows_the_drawings_own_width_in_a_real_browser(
+            self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
+        """One page, three screens, two drawings of everything (9.6).
+
+        Every sky chart is drawn twice into the one fragment -- weewx-
+        skyfield 2.7's wide frame and its narrow one -- and the dial is
+        built twice by this script's own two frames.  Which one shows is
+        asked of THE DRAWING'S OWN WIDTH and never of the window: the
+        stylesheet by @container, the dial by measuring itself, both at
+        624px.  The last leg proves that is not the same question as the
+        viewport -- a 1400px window whose panel is squeezed into a narrow
+        column gets the narrow drawing, which a media query could not
+        see, and which is what a consuming skin's chrome does to these
+        panels every day.  Nothing is fetched to make any of it happen.
+
+        Four things this pins that nothing else does:
+          - the pass chart's dated HEAD LINE, which rides beside the
+            drawing rather than inside it, is visible exactly ONCE.  It
+            is why a frame is boxed instead of the <svg> being hidden;
+          - the live layer moves the marks in the HIDDEN drawing too, so
+            turning a phone shows a sky already true rather than one
+            holding generation-time positions until the next packet;
+          - the dial redraws into the other frame on the turn, with its
+            viewBox following;
+          - on a phone every drawn label on the dial clears 11 px ON THE
+            GLASS, measured through the SVG's own scale, which is the
+            whole reason the narrow frame exists.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        sky_page = make_sky_page()
+        alm = wxskyfield_sat_almanac
+        page = self.sets_page(sky_page, {}, interval_s=300)
+        html = ('<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width">'
+                '<link rel="stylesheet" href="celestial.css">'
+                '<script src="celestial.js"></script></head><body>%s'
+                '<section><h2>g</h2>%s</section>'
+                '<section><h2>d</h2>%s</section>'
+                '<section id="pass-sec"><h2>p</h2>%s</section></body></html>'
+                % (page.config_script(alm), page.geocentric_html(alm),
+                   page.dome_html(alm), page.pass_html(alm)))
+        # Both charts really do carry two drawings, and say so.
+        assert html.count('data-frames="both"') == 2, 'both charts carry two drawings'
+        assert html.count('<div class="cel-frame" data-frame="narrow">') == 2
+        (tmp_path / 'index.html').write_text(html, encoding='utf-8')
+        fs = celestial_page.DEFAULT_SET
+        domes, pass_name = celestial_page.fragment_names(fs)
+        for k, name in enumerate(domes):
+            (tmp_path / name).write_text(page.dome_fragment(alm, k, 300, fs), encoding='utf-8')
+        (tmp_path / pass_name).write_text(page.pass_fragment(alm, fs), encoding='utf-8')
+        mod, _ = load_wxskyfield()
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            packet = sat_feed_packets(TIME_TS + 10)[0]
+        record = jsonlib.loads(packet)[REPORT_NAME]
+        record['almanac.iss.az'], record['almanac.iss.alt'] = 120.0, 45.0
+        (tmp_path / 'loop.txt').write_bytes(loop_file(record).encode())
+        write_assets(tmp_path)          # the shipped build
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'URL = "http://127.0.0.1:%d/index.html"\n'
+            'PROBE = """() => {\n'
+            '  const shown = e => e !== null && e.getBoundingClientRect().width > 0;\n'
+            '  const box = (root, frame) =>\n'
+            '    shown(document.querySelector(root + " .cel-frame[data-frame=" + frame + "]"));\n'
+            '  // A mark carrying a nudge transform inside each frame box.\n'
+            '  const nudged = frame => document.querySelectorAll(\n'
+            '      "#dome-svg .cel-frame[data-frame=" + frame + "] g.dome-body[transform]").length;\n'
+            '  const dial = document.getElementById("dial");\n'
+            '  // Every drawn label on the dial, in pixels ON THE GLASS: its\n'
+            '  // font-size is in user units, so the SVG\'s own scale converts.\n'
+            '  const rect = dial.getBoundingClientRect();\n'
+            '  const vb = dial.getAttribute("viewBox").split(" ")[2];\n'
+            '  const scale = rect.width / parseFloat(vb);\n'
+            '  const glass = Array.from(dial.querySelectorAll("text")).map(\n'
+            '      t => parseFloat(getComputedStyle(t).fontSize) * scale);\n'
+            '  // Type this size in a frame laid out for smaller type clips at\n'
+            '  // the edges, which is the other half of what the frame fixes.\n'
+            '  // Every pair of drawn labels whose boxes overlap.  Type\n'
+            '  // large enough to read in geometry laid out for smaller\n'
+            '  // type COLLIDES as well as clipping, and the collision is\n'
+            '  // the half that makes a chart unreadable.\n'
+            '  const vis = Array.from(dial.querySelectorAll("text"))\n'
+            '      .filter(t => t.getBoundingClientRect().width > 0);\n'
+            '  const hits = [];\n'
+            '  for (let i = 0; i < vis.length; i++)\n'
+            '    for (let j = i + 1; j < vis.length; j++) {\n'
+            '      const a = vis[i].getBoundingClientRect();\n'
+            '      const b = vis[j].getBoundingClientRect();\n'
+            '      if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 &&\n'
+            '          Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5)\n'
+            '        hits.push(vis[i].textContent.trim() + " x " +\n'
+            '                  vis[j].textContent.trim());\n'
+            '    }\n'
+            '  const spill = Array.from(dial.querySelectorAll("text")).filter(t => {\n'
+            '    const r = t.getBoundingClientRect();\n'
+            '    return r.width > 0 && (r.left < rect.left - 0.5 || r.right > rect.right + 0.5 ||\n'
+            '                           r.top < rect.top - 0.5 || r.bottom > rect.bottom + 0.5);\n'
+            '  }).map(t => t.textContent);\n'
+            '  return {\n'
+            '    domeWide: box("#dome-svg", "wide"), domeNarrow: box("#dome-svg", "narrow"),\n'
+            '    passWide: box("#pass-chart", "wide"), passNarrow: box("#pass-chart", "narrow"),\n'
+            '    heads: Array.from(document.querySelectorAll("#pass-chart .passhead"))\n'
+            '        .filter(shown).length,\n'
+            '    nudgedWide: nudged("wide"), nudgedNarrow: nudged("narrow"),\n'
+            '    viewBox: dial.getAttribute("viewBox"),\n'
+            '    rings: dial.querySelectorAll("text.gridlab").length,\n'
+            '    labels: dial.querySelectorAll("text").length,\n'
+            '    smallest: glass.length ? Math.min.apply(null, glass) : 0,\n'
+            '    spill: spill,\n'
+            '    hits: hits,\n'
+            '    names: vis.map(t => t.textContent.trim()),\n'
+            '    marks: dial.querySelectorAll("circle").length};\n'
+            '}"""\n'
+            '# A body nudged in BOTH drawings: the first packet is drawn.\n'
+            'LIVE = """() => document.querySelectorAll(\n'
+            '  "#dome-svg .cel-frame g.dome-body[transform]").length >= 2 &&\n'
+            '  document.querySelector("#dial text") !== null"""\n'
+            'FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    for name, w in (("desk", 1400), ("phone", 390), ("small", 600)):\n'
+            '        page = browser.new_page(viewport={"width": w, "height": 900})\n'
+            '        errors, fetched = [], []\n'
+            "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "        page.on('request', lambda r: fetched.append(r.url.split('/')[-1].split('?')[0]) if '.txt' in r.url and 'loop' not in r.url else None)\n"
+            '        page.goto(URL)\n'
+            '        page.wait_for_function(LIVE, timeout=15000)\n'
+            '        leg = {"errors": errors, "before": page.evaluate(PROBE)}\n'
+            '        page.set_viewport_size({"width": 1790 - w, "height": 900})\n'
+            '        page.evaluate(FRAMES)\n'
+            '        leg["after"] = page.evaluate(PROBE)\n'
+            '        leg["fetched"] = fetched\n'
+            '        out[name] = leg\n'
+            '        page.close()\n'
+            '    # A desk-sized WINDOW whose panels are squeezed into a\n'
+            '    # narrow column, which is what a host skin can do to them.\n'
+            '    page = browser.new_page(viewport={"width": 1400, "height": 900})\n'
+            '    errs = []\n'
+            "    page.on('pageerror', lambda e: errs.append(str(e)))\n"
+            '    page.goto(URL)\n'
+            '    page.wait_for_function(LIVE, timeout=15000)\n'
+            '    # A host squeezes the COLUMN, never the drawing itself,\n'
+            '    # so the panel roots are what is narrowed here.\n'
+            '    page.add_style_tag(content=(".cel-geo-body{display:block;max-width:400px}"\n'
+            '                                "#dome-svg,#pass-chart{max-width:400px}"))\n'
+            '    page.evaluate(FRAMES)\n'
+            '    out["squeezed"] = {"errors": errs, "before": page.evaluate(PROBE)}\n'
+            '    page.close()\n'
+            '    browser.close()\n'
+            'print(json.dumps(out))\n'
+            % httpd.server_address[1])
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=240)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        for name in ('desk', 'phone', 'small'):
+            assert out[name]['errors'] == [], (name, out[name]['errors'])
+            # The one set's files are the ones the page already holds, on
+            # either screen and across the turn.
+            assert out[name]['fetched'] == [], (name, out[name]['fetched'])
+        assert out['squeezed']['errors'] == [], out['squeezed']['errors']
+
+        def wide_state(probe):
+            return (probe['domeWide'], probe['domeNarrow'],
+                    probe['passWide'], probe['passNarrow'])
+
+        WIDE = (True, False, True, False)
+        NARROW = (False, True, False, True)
+        # A 1400px window draws them wide; 390 and 600 draw them narrow.
+        # This page carries only the panel stylesheet, so its chrome is a
+        # browser's default body margin and the drawing is the window
+        # less 16px -- 584px at 600, under the 624 the wide frame needs
+        # to carry an 11px label.
+        assert wide_state(out['desk']['before']) == WIDE, out['desk']['before']
+        assert wide_state(out['phone']['before']) == NARROW, out['phone']['before']
+        assert wide_state(out['small']['before']) == NARROW, out['small']['before']
+        # And the turn swaps them with nothing fetched: 1400 -> 390,
+        # 390 -> 1400, 600 -> 1190.
+        assert wide_state(out['desk']['after']) == NARROW, out['desk']['after']
+        assert wide_state(out['phone']['after']) == WIDE, out['phone']['after']
+        assert wide_state(out['small']['after']) == WIDE, out['small']['after']
+        # THE POINT: a desk-sized window is not a wide drawing.  Squeeze
+        # the panels into a 400px column at 1400px and all three hand over
+        # to the narrow frame -- the dial included, which measures itself
+        # rather than reading the same query.
+        assert wide_state(out['squeezed']['before']) == NARROW, out['squeezed']['before']
+        assert out['squeezed']['before']['viewBox'] == '0 0 360 360', out['squeezed']['before']
+        for name in ('desk', 'phone', 'small'):
+            for when in ('before', 'after'):
+                probe = out[name][when]
+                # The pass chart's head line comes with each drawing; only
+                # one may ever be on the page.
+                assert probe['heads'] == 1, (name, when, probe['heads'])
+                # The live layer reached the hidden drawing as well.
+                assert probe['nudgedWide'] >= 1, (name, when, probe)
+                assert probe['nudgedNarrow'] >= 1, (name, when, probe)
+        # The dial: its own two frames, at the same width, redrawn on
+        # the turn.
+        assert out['desk']['before']['viewBox'] == '0 0 660 660'
+        assert out['small']['before']['viewBox'] == '0 0 360 360'
+        assert out['phone']['before']['viewBox'] == '0 0 360 360'
+        assert out['desk']['after']['viewBox'] == '0 0 360 360'
+        assert out['phone']['after']['viewBox'] == '0 0 660 660'
+        # Thinned, not shrunk: the narrow dial names every other decade
+        # and keeps every body name, so it carries fewer labels in total
+        # but the same marks.
+        assert out['phone']['before']['rings'] == 4, out['phone']['before']
+        assert out['desk']['before']['rings'] == 8, out['desk']['before']
+        assert out['phone']['before']['labels'] < out['desk']['before']['labels']
+        assert out['phone']['before']['marks'] == out['desk']['before']['marks']
+        # THE STANDARD, wherever the narrow frame is the one drawn: no
+        # text under 11 px on the glass.  Both narrow states are checked
+        # -- the page loaded at 390, and the page turned down to 391 --
+        # because a frame arrived at by a resize must be the same drawing
+        # as one arrived at by a load.
+        for name in ('desk', 'phone', 'small'):
+            for when in ('before', 'after'):
+                assert out[name][when]['smallest'] >= 11.0, \
+                    (name, when, out[name][when]['smallest'])
+        assert out['squeezed']['before']['smallest'] >= 11.0, out['squeezed']['before']
+        # And nothing is clipped by the edge of the drawing, in EITHER
+        # frame: the narrow frame's cardinals sit outside a rim placed to
+        # leave room for 17 unit type, and that is the arithmetic most
+        # easily got wrong.
+        for name in ('desk', 'phone', 'small'):
+            for when in ('before', 'after'):
+                assert out[name][when]['spill'] == [], (name, when, out[name][when]['spill'])
+        assert out['squeezed']['before']['spill'] == [], out['squeezed']['before']['spill']
+        # AND no label written over another, in any frame at any width.
+        # Through 9.5.1 the dial placed each name radially outward from
+        # its own mark knowing nothing of any other, so two bodies at a
+        # similar bearing overlapped -- Jupiter and Halley did on the
+        # desktop page, and a phone had eight such pairs.  The placement
+        # pass drops a name it cannot fit rather than stacking it; the
+        # mark keeps its <title>.
+        for name in ('desk', 'phone', 'small'):
+            for when in ('before', 'after'):
+                assert out[name][when]['hits'] == [], (name, when, out[name][when]['hits'])
+        assert out['squeezed']['before']['hits'] == [], out['squeezed']['before']['hits']
+        # WHAT THE ORDER GUARANTEES, which is not "every name survives"
+        # -- how many fit depends on where the sky has put things.  The
+        # cardinals and the Earth label are placed before anything that
+        # moves, so they are always there; the bodies are placed nearest
+        # Earth outward, so the moon and the sun are the first two names
+        # tried and cannot be crowded out by a planet or a comet.  That
+        # is the whole of the promise, and it is what the dial is read
+        # by.
+        phone = out['phone']['before']['names']
+        for must in ('N', 'E', 'S', 'W', 'Earth', 'Moon', 'Sun'):
+            assert must in phone, (must, phone)
+        # A dropped name is dropped, not moved somewhere useless: what
+        # is shown on the phone is a subset of what the desk shows,
+        # allowing for Proxima carrying its distance only where there
+        # is room for it.
+        desk_texts = set(out['desk']['before']['names'])
+        for shown in phone:
+            assert shown in desk_texts or shown.startswith('Proxima'), (shown, desk_texts)
+        # The desk is not thinned to keep the phone company: it has room
+        # for more names and shows them.  HOW MANY is a question about
+        # where the sky has put things -- a crowded bearing can cost a
+        # comet its name on a desk too, and that is the right outcome,
+        # since the alternative is two names written over each other.
+        desk = out['desk']['before']['names']
+        assert len(desk) > len(phone), (len(desk), len(phone))
+        for must in ('N', 'E', 'S', 'W', 'Earth', 'Moon', 'Sun'):
+            assert must in desk, (must, desk)
+        # Including the WIDE frame, which through 9.5.1 put 9.7px grid
+        # labels on every desktop there has ever been: its own type is
+        # 12 units now, and the frame hands over to the narrow drawing
+        # before it can render them under 11px.
 
     def test_a_narrow_layer_shows_by_width_and_moves_with_its_mark_in_a_real_browser(
             self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
-        """One page, two screens, one fragment set (9.3 with weewx-skyfield
-        2.5).  The dome and the chart carry two label layouts -- the
-        set's own scale and its narrow one -- and the browser shows the
-        one its width calls for: at 1200 px the 0.8 layer alone, at 390
-        px the 2.2 layer alone, on both charts, and turning the one page
-        from one to the other swaps layers with NOTHING fetched, since
-        no second set exists.  A body nudged by the live layer carries
-        the same transform on its mark and on EVERY layer's label, so the
-        hidden layout is right the moment it becomes the visible one.  A
-        live satellite's name is drawn in each layer at that layer's
-        body-label size, shows only in the layer the width shows, and
-        hides with its dot when the satellite sets.
+        """One page, two screens, one fragment set: the label layers of
+        9.3, INSIDE the wide drawing, which is where they still live.
+
+        Re-aimed at 9.6.  A layer is a second label layout in one
+        drawing, and it is still the answer for a window narrower than a
+        desk -- but no longer where the drawing itself gets narrow,
+        because there the wide drawing is hidden entirely and
+        weewx-skyfield 2.7's narrow frame is what shows
+        (test_the_frame_follows_the_drawings_own_width).  So the set here
+        declares its layer for a 1000px band and the two screens are 1400
+        and 800, both of them widths where the wide drawing is the one on
+        the glass.
+
+        At 1400 the 0.8 layer alone, at 800 the 2.2 layer alone, on both
+        charts, and turning the one page from one to the other swaps
+        layers with NOTHING fetched, since no second set exists.  A body
+        nudged by the live layer carries the same transform on its mark
+        and on EVERY layer's label, so the hidden layout is right the
+        moment it becomes the visible one.  A live satellite's name is
+        drawn in each layer at that layer's body-label size, shows only
+        in the layer the width shows, and hides with its dot when the
+        satellite sets.
         Skips when the playwright env is absent, or when the sibling
-        skyfield has no label layers."""
+        skyfield has no label layers yet."""
         import http.server
         import json as jsonlib
         import socketserver
@@ -8431,7 +9573,7 @@ class TestPanels:
 
         alm = wxskyfield_sat_almanac
         sets = {'stars': {'prefix': 'dome-svg', 'label_scale': 0.8,
-                          'narrow_label_scale': 2.2, 'narrow_media': '(max-width: 600px)'}}
+                          'narrow_label_scale': 2.2, 'narrow_media': '(max-width: 1000px)'}}
         page = self.sets_page(sky_page, sets, interval_s=300)
         html = ('<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
                 '<meta name="viewport" content="width=device-width">'
@@ -8445,6 +9587,11 @@ class TestPanels:
             'both charts carry the layer set'
         assert html.count('class="dome-labels" data-label-scale="0.8"') == 2
         assert html.count('class="dome-labels" data-label-scale="2.2"') == 2
+        # The NARROW drawing of each chart takes no layer at all: it is
+        # laid out at phone size already, so it carries its own single
+        # layout at scale 1.
+        assert len(re.findall(r'<svg[^>]*data-label-layers="1"', html)) == 2, \
+            'each chart also carries a narrow drawing, unlayered'
         assert 'data-dome-alt' not in html and 'data-pass-alt' not in html
         (tmp_path / 'index.html').write_text(html, encoding='utf-8')
         fs = page._set('stars', 't')
@@ -8490,18 +9637,19 @@ class TestPanels:
             'SET_FILE = %r\n'
             'LOOP_FILE = %r\n'
             'PROBE = """() => {\n'
-            '  const layers = root => Array.from(document.querySelectorAll(root + " g.dome-labels"))\n'
+            '  const W = " .cel-frame[data-frame=wide] ";\n'
+            '  const layers = root => Array.from(document.querySelectorAll(root + W + "g.dome-labels"))\n'
             '      .map(g => [g.getAttribute("data-label-scale"), getComputedStyle(g).display]);\n'
-            '  const moved = Array.from(document.querySelectorAll("#dome-svg g.dome-body[transform]"));\n'
+            '  const moved = Array.from(document.querySelectorAll("#dome-svg" + W + "g.dome-body[transform]"));\n'
             '  const nudge = moved.map(g => {\n'
             '    const key = g.getAttribute("data-body");\n'
-            '    const labs = Array.from(document.querySelectorAll(\'#dome-svg text[data-body="\' + key + \'"]\'));\n'
+            '    const labs = Array.from(document.querySelectorAll(\'#dome-svg .cel-frame[data-frame=wide] text[data-body="\' + key + \'"]\'));\n'
             '    return [key, g.getAttribute("transform"), labs.map(t => t.getAttribute("transform"))];\n'
             '  });\n'
-            '  const sats = Array.from(document.querySelectorAll("#dome-svg text.satlab:not([data-body])"))\n'
+            '  const sats = Array.from(document.querySelectorAll("#dome-svg" + W + "text.satlab:not([data-body])"))\n'
             '      .map(t => [t.parentNode.getAttribute("data-label-scale"), getComputedStyle(t).fontSize,\n'
             '                 t.getBoundingClientRect().width > 0, t.textContent]);\n'
-            '  const bodies = Array.from(document.querySelectorAll("#dome-svg g.dome-labels text.bodylab"))\n'
+            '  const bodies = Array.from(document.querySelectorAll("#dome-svg" + W + "g.dome-labels text.bodylab"))\n'
             '      .map(t => [t.parentNode.getAttribute("data-label-scale"), getComputedStyle(t).fontSize]);\n'
             '  return {dome: layers("#dome-svg"), pass: layers("#pass-chart"), nudge: nudge,\n'
             '          sats: sats, bodies: bodies};\n'
@@ -8509,13 +9657,13 @@ class TestPanels:
             '# The first packet has landed and been drawn: a body nudged and\n'
             '# the live satellite named in both layers.\n'
             'LIVE = """() => document.querySelector("#dome-svg g.dome-body[transform]") !== null &&\n'
-            '  document.querySelectorAll("#dome-svg text.satlab:not([data-body])").length === 2"""\n'
+            '  document.querySelectorAll("#dome-svg .cel-frame[data-frame=wide] text.satlab:not([data-body])").length === 2"""\n'
             '# Two frames: a resize has been laid out and its listeners run.\n'
             'FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"\n'
             'out = {}\n'
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
-            '    for name, w in (("desktop", 1200), ("phone", 390)):\n'
+            '    for name, w in (("desktop", 1400), ("band", 800)):\n'
             '        page = browser.new_page(viewport={"width": w, "height": 800})\n'
             '        errors, fetched = [], []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
@@ -8525,17 +9673,17 @@ class TestPanels:
             '        page.goto(URL)\n'
             '        page.wait_for_function(LIVE, timeout=15000)\n'
             '        leg = {"errors": errors, "fetched": fetched, "before": page.evaluate(PROBE)}\n'
-            '        page.set_viewport_size({"width": 1590 - w, "height": 800})\n'
+            '        page.set_viewport_size({"width": 2200 - w, "height": 800})\n'
             '        page.evaluate(FRAMES)\n'
             '        leg["after"] = page.evaluate(PROBE)\n'
             '        out[name] = leg\n'
             '        page.close()\n'
             '    SAT = """() => [\n'
-            '      Array.from(document.querySelectorAll("#dome-svg text.satlab:not([data-body])"))\n'
+            '      Array.from(document.querySelectorAll("#dome-svg .cel-frame[data-frame=wide] text.satlab:not([data-body])"))\n'
             '        .filter(t => t.getBoundingClientRect().width > 0).length,\n'
-            '      Array.from(document.querySelectorAll("#dome-svg .cel-satdot"))\n'
+            '      Array.from(document.querySelectorAll("#dome-svg .cel-frame[data-frame=wide] .cel-satdot"))\n'
             '        .filter(c => c.getBoundingClientRect().width > 0).length]"""\n'
-            '    page = browser.new_page(viewport={"width": 1200, "height": 800})\n'
+            '    page = browser.new_page(viewport={"width": 1400, "height": 800})\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             '    page.goto(URL)\n'
@@ -8558,7 +9706,7 @@ class TestPanels:
         out = jsonlib.loads(proc.stdout)
         wide = [['0.8', 'inline'], ['2.2', 'none']]
         narrow = [['0.8', 'none'], ['2.2', 'inline']]
-        for name, first, then in (('desktop', wide, narrow), ('phone', narrow, wide)):
+        for name, first, then in (('desktop', wide, narrow), ('band', narrow, wide)):
             leg = out[name]
             assert leg['errors'] == [], (name, leg['errors'])
             # Nothing fetched, on either screen or on the turn: the one
@@ -8616,7 +9764,8 @@ class TestPanels:
         dome = page.dome_html(alm, set='sp')
         assert '<div id="dome-svg" data-dome-prefix="dome-svg-sp" data-dome-dir="">' in dome
         assert ('<div class="domefrag" data-dome-ts="%d" data-dome-step="60" data-dome-count="6" '
-                'data-dome-interval="350" data-dome-palette="light" data-page-theme="dark">'
+                'data-dome-interval="350" data-dome-palette="light" data-page-theme="dark" '
+                'data-frames="both" data-frame-at="340.0">'
                 % TIME_TS) in dome
         assert '#efece2' in dome.lower() and '#161f3d' not in dome.lower()
         assert 'id="dome-stale" hidden' in dome and 'skyhint' not in dome
@@ -8626,12 +9775,14 @@ class TestPanels:
                                 % celestial.CELESTIAL_VERSION +
                                 'data-pass-fragment="dome-svg-sp-pass.txt" data-pass-dir="">'
                                 '<div class="passfrag" data-pass-palette="light" '
-                                'data-page-theme="dark">')
+                                'data-page-theme="dark" data-frames="both" '
+                                'data-frame-at="340.0">')
         assert '#efece2' in passp.lower()
         # The report's theme rides the page's wrapper too, beside the set's
         # plate: the flip check's input, on a fragment set that is not
         # the page's plate.
-        assert 'data-dome-palette="light" data-page-theme="dark">' in dome
+        assert ('data-dome-palette="light" data-page-theme="dark" data-frames="both" '
+                'data-frame-at="340.0">') in dome
         # Both rosters and the predicate stand behind the SAME set's dome
         # (memoized): one draw for the set, whatever the call order.
         page.dome_roster_html(alm, set='sp')
@@ -8644,7 +9795,9 @@ class TestPanels:
         dome = page.dome_html(alm)
         assert 'data-dome-prefix="dome-svg"' in dome and 'data-dome-palette="night"' in dome
         assert ('data-pass-fragment="pass-chart.txt" data-pass-dir=""><div class="passfrag" '
-                'data-pass-palette="night" data-page-theme="dark">' in page.pass_html(alm))
+                'data-pass-palette="night" data-page-theme="dark" data-frames="both" '
+                'data-frame-at="935.0">'
+                in page.pass_html(alm))
         assert dome != default
 
     def test_a_panel_declared_by_the_skin_carries_no_line(self, wxskyfield_sat_almanac,
@@ -9844,11 +10997,19 @@ class TestContrast:
         return text
 
     def _prop(self, css, selector, prop):
-        rule = re.search(r'(?:^|\}[ \t]*)' + re.escape(selector) + r'\{([^}]*)\}', css, re.M)
-        assert rule is not None, selector
-        m = re.search(r'(?:^|;)\s*%s:\s*([^;]+)' % re.escape(prop), rule.group(1))
-        assert m is not None, (selector, prop)
-        return m.group(1).strip()
+        """The value a selector is given for a property, from whichever
+        rule declares it.  A selector appears in more than one rule when
+        it joins a grouped one -- the text floor names every panel root
+        in a single rule -- and only one of them carries the color."""
+        found = False
+        for rule in re.finditer(r'(?:^|\}[ \t]*)' + re.escape(selector) + r'\{([^}]*)\}',
+                                css, re.M):
+            found = True
+            m = re.search(r'(?:^|;)\s*%s:\s*([^;]+)' % re.escape(prop), rule.group(1))
+            if m is not None:
+                return m.group(1).strip()
+        assert found, selector
+        raise AssertionError((selector, prop))
 
     def _pairs(self):
         """(name, plate, color, opacity, grounds, bars) for every piece of
@@ -12984,19 +14145,22 @@ class TestInstallerLoader:
         assert 'weewx-loopdata 7.0 or later' in message
         assert 'none is installed' in message
 
-    # ---- the weewx-skyfield 2.6.1 floor (9.5) --------------------------
+    # ---- the weewx-skyfield 2.7 floor (9.6) ----------------------------
     #
     # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or the
-    # built-in almanac -- so ABSENCE must not refuse.  But 9.5 is pinned
-    # to 2.6.1, whose [Texts] keys the charts' dates and clock times read
-    # (2.6 brought the contrast palette the panels copy, 2.5 the
-    # label_layers that draw a set's narrow label scale, and 2.4 the pass
-    # dot's role classes; 2.6 carries all of them).  A skyfield that IS
-    # there and is too old refuses, rather than a fallback logging on
-    # every report cycle.
+    # built-in almanac -- so ABSENCE must not refuse.  But 9.6 is pinned
+    # to 2.7, which draws the narrow frame every fragment now carries
+    # beside the wide one (2.6.1 brought the [Texts] keys the charts'
+    # dates and clock times read, 2.6 the contrast palette the panels
+    # copy, 2.5 the label_layers that draw a set's narrow label scale,
+    # and 2.4 the pass dot's role classes; 2.7 carries all of them).  An
+    # older skyfield does not take the narrow argument and would raise
+    # inside every draw, which the panel guard turns into a page with no
+    # charts at all -- so a skyfield that IS there and is too old
+    # refuses, rather than a fallback logging on every report cycle.
 
-    @pytest.mark.parametrize('version', ['2.6.1', '2.6.2', '2.7', '3.0', '2.6.1a1', '2.6.1b1'])
-    def test_loads_with_skyfield_2_6_1(self, monkeypatch, version):
+    @pytest.mark.parametrize('version', ['2.7', '2.7.1', '2.8', '3.0', '2.7a1', '2.7b1'])
+    def test_loads_with_skyfield_2_7(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
         monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
@@ -13004,11 +14168,11 @@ class TestInstallerLoader:
 
     # The floor means what WeeWX's own version_compare says, exactly as
     # the weewx-loopdata floor above does.  Measured against '2.6.1':
-    # '2.6.1a1' and '2.6.1b1' compare as later (a dev build of 2.6.1 is
-    # 2.6.1), '2.6.0b1' and '2.5.9b1' as earlier -- and '2.6b1' as LATER,
-    # which is why it is not here: no skyfield version is spelled that way.
-    @pytest.mark.parametrize('version', ['2.6', '2.6.0', '2.6.0b1', '2.5', '2.5.1', '2.4',
-                                         '2.3.5', '1.16', '2.5.9b1'])
+    # '2.7a1' and '2.7b1' compare as later (a dev build of 2.7 is 2.7),
+    # '2.6.9b1' and '2.5.9b1' as earlier.
+    @pytest.mark.parametrize('version', ['2.6.2', '2.6.1', '2.6', '2.6.0', '2.6.9b1',
+                                         '2.5', '2.5.1', '2.4', '2.3.5', '1.16',
+                                         '2.5.9b1'])
     def test_refuses_an_older_skyfield(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
@@ -13016,7 +14180,7 @@ class TestInstallerLoader:
         with pytest.raises(SystemExit) as info:
             load_installer().loader()
         message = str(info.value)
-        assert 'weewx-skyfield 2.6.1 or later' in message
+        assert 'weewx-skyfield 2.7 or later' in message
         assert 'found %s' % version in message
 
     def test_no_skyfield_at_all_still_installs(self, monkeypatch):

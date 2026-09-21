@@ -124,6 +124,27 @@ edge in its own color: the outline of its dot, of its dashed
 below-horizon shape, of its motion trail, and a ring inside its roster
 chip.  It is the same body, wearing the same color, with an edge on it.
 
+## On a phone, a different drawing
+
+Open the page on a phone and the three charts are not the desktop's
+charts shrunk down — they are drawn again, at phone size.  Since 9.6 each
+one is generated twice and the page shows whichever fits the width the
+chart is actually rendered at.
+
+What you gain is type you can read: every label on a phone clears 11
+pixels, where the desktop drawing squeezed into a phone's width put them
+between 5 and 7.  What you give up is some detail, which is what makes
+the room: the dome carries stars to magnitude 4.0 instead of 5.0 and
+names only the brightest, a constellation is named only where its figure
+is wide enough to hold the name, and the Geocentric's distance rings are
+labeled every other decade.  Every body, satellite, comet and radiant is
+drawn and named on both.
+
+Turning the phone switches between them immediately — both drawings are
+already on the page, so nothing is fetched and nothing is recomputed —
+and the live layer keeps both current, so the one that appears is
+already showing the right sky rather than catching up.
+
 ## The Geocentric
 
 Earth sits at the center.  Every body is placed by **compass bearing** —

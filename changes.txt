@@ -1,6 +1,98 @@
 weewx-celestial change history
 ------------------------------
 
+9.6 2026/09/20
+--------------
+- ACTION REQUIRED: this release requires weewx-skyfield 2.7 or later if
+  you run weewx-skyfield at all.  Upgrade weewx-skyfield FIRST, then
+  this; the installer refuses an older one and says so.  The sky dome
+  and the Next Visible Pass chart are now drawn twice -- once for a desk
+  and once for a phone -- and the phone drawing is 2.7's.
+- ACTION REQUIRED, only for a skin that embeds these panels and declares
+  a [CelestialFragments] set whose narrow_label_scale is 1.2 and which
+  does NOT declare a label_scale of its own: that set is now REFUSED,
+  and a refused section writes no fragments at all.  A set's label_scale
+  defaults to 1.2 as of this release (it was 1.0), so a narrow layer of
+  1.2 that used to be a second scale is now the same scale, and the two
+  layers would collide.  Give the set a label_scale, give the layer a
+  different scale, or -- since a narrow layer no longer reaches a phone,
+  below -- drop the layer.  The refusal names the value and says where
+  the base came from.
+- ACTION REQUIRED, only for a skin that embeds these panels and declares
+  its own [CelestialFragments] sets: a set's narrow_label_scale and
+  narrow_media no longer reach a reader on a narrow screen.  Those keys
+  add a second label layout inside the DESK drawing, and where that
+  drawing renders too narrow to be read it is no longer what shows.
+  They are still accepted and still work above that, so a set asking for
+  larger labels in the band between a phone and a desk keeps working; a
+  set whose narrow_media is a phone breakpoint should simply drop both
+  keys, since a phone now gets a drawing made for it.  The bundled
+  Celestial page declares no such set and needs no change.
+- The sky dome, the Next Visible Pass chart and the Geocentric dial are
+  drawn for a phone wherever they render narrow, and for a desk
+  otherwise.  It is a second DRAWING, not the same one with bigger
+  words: the phone frame is 360 units across -- about one unit to the
+  pixel -- with type sized for it, fewer names on the dome (stars to
+  magnitude 4.0, and a constellation named only where its figure has
+  room), and the dial's distance rings labeled every other decade.
+  Enlarging labels inside a drawing laid out for a desk makes them
+  collide and clip, which is why the frame changes instead.  Every body,
+  satellite, comet and radiant is still drawn and still named.
+- WHICH frame is asked of the DRAWING's own width, not the window's, and
+  the width it changes at is derived rather than chosen -- and derived
+  PER SET, since a set's label_scale moves it: a chart's smallest label
+  is 10 units times that scale, so it reaches 11px at 935px of glass on
+  a set scaled 0.8, at 623px on the 1.2 default and at 534px on one
+  scaled 1.4.  Each fragment carries its own width and the page honors
+  it, so no set can quietly show a drawing its labels have stopped
+  reading on.  The two questions -- how wide the drawing is, and how
+  wide the window is -- are not the same one.  On the previous release a 1000px
+  window drew the dome 640px and a 1001px window drew it 459px, because
+  at 1001 the panel becomes a grid and the chart shares the row with the
+  roster; and in a skin of your own the width depends on that skin's
+  chrome, which this one cannot know.
+- The Geocentric dial no longer writes one label over another.  Each
+  name is now placed against the names already on the dial, trying a
+  few positions before giving up, and one that cannot be fitted is
+  dropped rather than stacked -- its mark keeps its tooltip, so hover
+  and tap still name it.  Cardinals and the Earth label are placed
+  first, then the bodies from Earth outward, then the comets, then the
+  ring numbers, so what yields under pressure is a distance figure
+  rather than a body's name.  This fixes the desk page as well, where
+  Jupiter and Halley have been overlapping.
+- Desk labels are larger.  A chart's smallest label had been rendering
+  at 9.4px on every desktop, and the dial's at 9.7px, because a drawing
+  capped at 640px carries 10-unit type at less than 10px.  A set's
+  default label_scale is 1.2 now, and the dial's own desk type is 12
+  units, so both clear 11px everywhere they are shown.
+- Both drawings ride in the same fragment, so a screen that changes
+  width switches them with nothing fetched.  The live layer keeps both
+  true, so the drawing that appears is already in the right place.
+- The panels no longer squeeze the chart beside their roster on a
+  middling window: the two-column layout now waits until there is room
+  for both, and a phone spends less of its width on this page's own
+  padding.
+- The desk drawing is otherwise what it has always been, geometry for
+  geometry.  Two things in it do change: the label SIZE, since a set's
+  default label_scale moves from 1.0 to 1.2 (above), and the two ring
+  numbers (below).  A fragment diffed across the upgrade therefore
+  differs in every label's inline font-size as well.
+- The sky dome's and the Next Visible Pass chart's two altitude ring
+  numbers were crossed and are now right: the label reading 30 sat on
+  the 60 ring and the one reading 60 on the 30 ring.  On these charts
+  the zenith is the center and the horizon is the rim, so altitude
+  counts down as the radius counts up, and the first ring out from the
+  middle is 60.  The fix is weewx-skyfield 2.7's and arrives with it;
+  it is the only thing that moves in the desk drawing.
+- No text in the panels renders under 11px any more, even inside a host
+  skin whose root font shrinks with the viewport.  The floor is one-way:
+  a host that scales type UP still gets what it asked for.
+- For a skin embedding the panels: a fragment carrying both drawings
+  wraps each in <div class="cel-frame" data-frame="wide|narrow"> and
+  says data-frames="both" on the fragment wrapper.  A fragment carrying
+  one drawing is unchanged.  Anything reading a fragment and expecting
+  one <svg> now finds two.
+
 9.5.1 2026/09/16
 ----------------
 - ?pageUpdate=<page_update_pwd> keeps the page from expiring even when

@@ -297,7 +297,7 @@ directory — declares them:
 | Key | What it does |
 |---|---|
 | `prefix` | The set's file names: `<prefix>.txt`, `<prefix>-1..9.txt`, `<prefix>-pass.txt`.  Default `dome-svg`, whose pass fragment keeps the name `pass-chart.txt`.  One set per prefix, whatever their directories — a page that names no set finds its set by prefix.  Two sets are refused separately for *writing* the same file, which follows `kind`: a dome-only set never claims the pass fragment its prefix spells, nor a pass-only set the ten dome slots |
-| `label_scale` | Passed to weewx-skyfield's chart labels; default 1.0 |
+| `label_scale` | Passed to weewx-skyfield's chart labels; default 1.2 (see [The two drawings](#the-two-drawings)) |
 | `theme` | `dark`, `light` or `auto`, spelled exactly as the report option is; default the report's own.  A set on a plate of its own is drawn on that plate and keeps its own label colors — that is how a night dome sits inside a light page |
 | `directory` | Where under `HTML_ROOT` the set is written; default `HTML_ROOT` itself.  A plain relative path — no leading slash, nothing that could leave `HTML_ROOT` |
 | `kind` | Which fragments the set is for: `dome` (the ten backdrops), `pass` (the chart) or `both`, the default.  A skin with the dome on one page and the chart on another, at different label scales, wants a set for each — and without this each writes the other's files every cycle for a page that never asks.  A call for the panel a set does not write is **refused**, with the line below and the reason in the log, rather than pointed at a file nothing will ever write |
@@ -312,17 +312,107 @@ and file names in one:
     $celestial.pass_html($almanac, set='astro')
 ```
 
+### The two drawings
+
+Since 9.6 every dome and pass chart is drawn **twice** into the one
+fragment — once in weewx-skyfield's desk frame and once in its phone
+frame — and the stylesheet shows the one that fits.  You get this without
+asking for it, and the bundled page needs no setting for it.
+
+**The choice is made on the drawing's own width, not the window's.**  It
+is a `@container` query, which matters most to *you*: the width a chart
+renders at depends on your chrome, your columns and your breakpoints, and
+nothing in this extension can know any of them.  A window rule would be
+wrong in your skin by exactly as much as your layout differs from this
+one.
+
+**The width is derived per set, not fixed.**  A chart's smallest label is
+10 units times the set's `label_scale`, so the width at which it reaches
+11px moves with the scale: 935px at 0.8, 623px at the 1.2 default, 534px
+at 1.4.  Each fragment carries its own as `data-frame-at`, and
+`celestial.js` applies it.  The stylesheet's own `@container` rule states
+the default scale's width, which is what a page with no javascript keeps
+— correct for any set on the default, and the only number a stylesheet
+can state, since a container query's condition takes no variable.  So if
+you set a `label_scale`, you get the right switching width for free; you
+do not have to compute or maintain one.
+
+The phone drawing is a different drawing, not the desk one with larger
+words: 360 units across instead of 680, its own type sizes, and its
+content thinned to make room for them (stars to magnitude 4.0, a
+constellation named only where its figure is wide enough).  Every body,
+satellite, comet and radiant is drawn and named in both.  The Geocentric
+dial does the same thing in the browser, in this extension's own script.
+
+What that means for your markup, if you read a fragment or style one:
+
+```html
+<div class="domefrag" ... data-frames="both">
+  <div class="cel-frame" data-frame="wide">...</div>
+  <div class="cel-frame" data-frame="narrow">...</div>
+</div>
+```
+
+- The **box** is what is hidden, not the `<svg>`.  A pass chart is its
+  drawing *plus* the pass's dated head line, and hiding only the drawing
+  would leave that line on the page twice.
+- `data-frames="both"` appears only when the fragment really holds two
+  drawings.  If one frame fails to draw, the other is emitted bare, with
+  no boxes and no attribute, so it shows at every width — the switch can
+  never be the reason a panel is blank.
+- Anything of yours that reads a fragment and expects one `<svg>` finds
+  two.  Take the one inside the box you mean, or act on both.
+- You do **not** need to match a breakpoint: the panels measure
+  themselves.  If you want your chrome to change at the same moment the
+  drawings do, put your own `@container` query on the same wrapper
+  rather than guessing a viewport width.
+
+**A set's `narrow_label_scale` and `narrow_media` no longer reach a
+narrow screen.**  They add a second label layout inside the *desk*
+drawing, and where that drawing renders too narrow to be read it is not
+what shows.  They are still accepted and still do their work above that,
+so a set asking for larger labels in the band between a phone and a desk
+— say `"(max-width: 900px)"` — keeps working exactly as it did.  A set
+whose `narrow_media` is a phone breakpoint should drop both keys: a
+phone now gets a drawing made for it, which is what those keys were
+reaching for.
+
+**The dial's label placement follows your type size.**  The Geocentric
+dial places each name against the names already on it and drops one it
+cannot fit rather than stacking it.  The room it reserves is derived
+from the size your stylesheet resolves for `.bodylab` and friends, not
+from the size this skin expects — so if you set your own, the placer
+reserves proportionally and keeps as many names as will fit.  What it
+cannot do is make room that is not there: on a narrow dial carrying
+large type, expect names to be dropped, and expect *which* ones to vary
+with where the sky has put things.  A dropped name is still reachable —
+its mark keeps its tooltip.
+
+**A set's `label_scale` now defaults to 1.2**, not 1.0.  A chart is
+capped at 640px of glass and its smallest label is 10 units in a 680
+unit frame, which rendered at 9.4px — under any legibility standard, on
+every desktop.  If you set a scale of your own, check it the same way:
+your smallest label is `10 × scale` units, and it wants to reach 11px at
+the narrowest width you show the desk drawing at.
+
+### Two label layouts in one drawing
+
 A skin with two label scales for two screen sizes — a desktop column
-and a phone — does not need two sets or two pages.  Give the set a
+and a narrower one — does not need two sets or two pages.  Give the set a
 narrow layer:
 
 ```
 [CelestialFragments]
     [[stars]]
-        label_scale = 0.8
         narrow_label_scale = 2.2
-        narrow_media = "(max-width: 600px)"
+        narrow_media = "(max-width: 900px)"
 ```
+
+The set takes the default `label_scale`, so its frame threshold is 623px
+and a 900px query sits above it — which is what makes the layer reachable
+at all.  Declaring `label_scale = 0.8` here instead would move the
+threshold to 935px and the query would never show anything, because below
+935px this drawing is hidden and the phone one is shown in its place.
 
 ```
     $celestial.dome_html($almanac, set='stars')
@@ -337,7 +427,10 @@ first paint; nothing is fetched that a desktop does not fetch.  The
 scale reaches only the text: dots, markers and rings are drawn once.
 Hold the query in `skin.conf` to the breakpoint in your stylesheet with a
 test of your own; the browser cannot report a mistyped query, it simply
-never matches.  The keys arrived with weewx-skyfield 2.5; 9.4 requires 2.6.
+never matches.  The keys arrived with weewx-skyfield 2.5; 9.6 requires
+2.7.  Keep the query **above** your set's frame threshold: below it this
+drawing is hidden and its layers with it (see
+[The two drawings](#the-two-drawings)).
 
 A skin may still choose its set per page if it wants to, and `set=`
 takes a Cheetah variable — **unquoted**, since Cheetah does not
@@ -676,20 +769,30 @@ as their release notes ask, and it is not your problem.
 - **Your skin's own upgrade path.**  The copied assets are yours once
   copied, under whatever names you gave them: re-copy them from
   `skins/Celestial/` after upgrading this extension, exactly as you would
-  weewx-skyfield's `sky.js`.  The version-tag trick the bundled page uses
-  (`celestial.css?v=…`) is worth copying too — a browser holding a stale
-  script against a fresh config block is a confusing few minutes.
+  weewx-skyfield's `sky.js`.  **Version-tag the URLs** as the bundled
+  page does (`celestial.css?v=…`); since 9.6 this is not a nicety.
 
   Know what forgetting looks like, because it does not look like an
-  error: the panels render (the markup is new) but arrive unstyled, and
-  the dial never draws, because an old stylesheet and an old script are
-  looking for class names the new markup no longer uses.  Nothing fails
-  and nothing is logged.  The script does announce a version-mismatched
-  config in the browser console, which catches its half on a real
-  upgrade; the stylesheet carries no version and cannot.  If a page
-  looks like plain text with a blank dial after you upgrade, this is
-  why.  Note also that `copy_once` will not overwrite a file that is
-  already there — copying is yours to do.
+  error.  A browser holding 9.5.1's stylesheet against 9.6's markup
+  shows **both drawings at once**, stacked — the desk chart and the
+  phone chart, and the pass chart's dated head line twice — because the
+  rules that hide one of them are in the new stylesheet and the old one
+  has never heard of `.cel-frame`.  An old *script* against new markup
+  is quieter and just as wrong: nothing switches frames, and the live
+  layer misplaces every mark on a narrow chart, because it reads the
+  wide frame's geometry instead of the `data-dome-cx/-cy/-r` the drawing
+  declares.  Nothing fails and nothing is logged.  The script does
+  announce a version-mismatched config in the browser console, which
+  catches its half on a real upgrade; the stylesheet carries no version
+  and cannot.
+
+  What `copy_once` does and does not do is worth being exact about,
+  because it is easy to get backwards.  It copies on the FIRST report
+  cycle of each weewxd run, and it *overwrites* — so restarting weewxd
+  refreshes your HTML root from your skin directory.  What it cannot do
+  is refresh your SKIN from this extension: re-copying the assets out of
+  `skins/Celestial/` after an upgrade is yours to do, and until you do
+  it a restart faithfully re-copies the old ones.
 
 ## If you are building a live page of your own instead
 
