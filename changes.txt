@@ -1,6 +1,53 @@
 weewx-celestial change history
 ------------------------------
 
+9.6.1 2026/09/20
+----------------
+- ACTION REQUIRED, for a skin of your own that embeds these panels: after
+  upgrading, RE-COPY celestial.js from skins/Celestial/ into your skin
+  and restart WeeWX.  Your skin keeps its own copy of that file, and
+  upgrading this extension does not replace it, so nothing below reaches
+  your pages until you do.  The bundled Celestial report needs no such
+  step.
+- Fixed: on a skin that gives the Geocentric dial's labels a second size
+  inside one frame -- a media query of its own, a container growing, a
+  root font that scales with the viewport -- the dial wrote names over
+  each other.  The room reserved for a name was built from a type size
+  read once and remembered on the label, and nothing but a change of
+  frame ever cleared it, so a size that changed without one was never
+  noticed.  The dial now MEASURES each name as the browser actually drew
+  it, and there is no remembered size left to go stale.
+- The same measurement replaces the character count and the glyph ratio
+  the reserved room was also built from.  Neither could tell a narrow
+  letter from a wide one, so two names of the same length were given the
+  same room however different the letters in them; measured, two such
+  names on this page differ in width by two and a half times.
+- Fixed: the room reserved for the cardinal points and the Earth label
+  was worked out once when the dial was built and kept for the life of
+  the drawing, so a stylesheet that changed their size could leave a
+  body's name placed over the N.
+- Fixed: a name the previous pass dropped is hidden, and a hidden
+  element has no box to measure, so it is shown before it is measured.
+- Fixed: resizing a window could leave the dial's names where the OLD
+  type size had put them, so they could be written over each other for
+  about a second until the next redraw.  It needed a resize that changed
+  what your stylesheet resolves for a label without changing which of
+  the two drawings is shown -- a media or container query of your own
+  between the two -- and the dial then re-measured only on its next
+  redraw.  It re-places as soon as the resize happens now.
+- Fixed: a skin that sets these labels in a webfont measured them in
+  whatever face the browser fell back to if the real one had not arrived
+  yet, so the first drawing could overlap until the next one a second
+  later.  The dial now takes the boxes again when the document reports
+  its faces settled.
+- The bundled Celestial page DOES change, slightly: because the room
+  reserved for each name is now the name's real width, the dial keeps
+  some names it used to give up and gives up some it used to keep.  On
+  the sample page a desk-width dial gains a body name and a phone-width
+  dial drops one distance-ring number -- the ring numbers are placed
+  last, and yield to a body's name by design.  Nothing else about the
+  page changes, and nothing in weewx.conf or the skin has to change.
+
 9.6 2026/09/20
 --------------
 - ACTION REQUIRED: this release requires weewx-skyfield 2.7 or later if

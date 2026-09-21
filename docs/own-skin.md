@@ -377,12 +377,17 @@ whose `narrow_media` is a phone breakpoint should drop both keys: a
 phone now gets a drawing made for it, which is what those keys were
 reaching for.
 
-**The dial's label placement follows your type size.**  The Geocentric
-dial places each name against the names already on it and drops one it
-cannot fit rather than stacking it.  The room it reserves is derived
-from the size your stylesheet resolves for `.bodylab` and friends, not
-from the size this skin expects — so if you set your own, the placer
-reserves proportionally and keeps as many names as will fit.  What it
+**The dial's label placement measures your type, it does not assume
+it.**  The Geocentric dial places each name against the names already on
+it and drops one it cannot fit rather than stacking it.  The room it
+reserves is the browser's own measurement of the glyphs it drew — your
+face, at your size, in your language, including whatever the reader's
+device fell back to — taken afresh on every redraw.  So you may size
+`.bodylab` and friends however suits your page, and you may give them
+more than one size within a single frame: a media query of your own, a
+container that grows, a root font that scales with the viewport.  The
+placement follows without being told, and it is never working from a
+size it read earlier.  What it
 cannot do is make room that is not there: on a narrow dial carrying
 large type, expect names to be dropped, and expect *which* ones to vary
 with where the sky has put things.  A dropped name is still reachable —

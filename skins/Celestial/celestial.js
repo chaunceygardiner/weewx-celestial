@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.6';
+  var CELESTIAL_JS_VERSION = '9.6.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -529,6 +529,36 @@ var celestial = (function () {
       window.addEventListener('resize', fitFrames);
     }
   }
+  var fontsWatched = false;
+  function watchFonts() {
+    // A WEBFONT THAT HAS NOT ARRIVED YET measures as whatever the
+    // browser fell back to, and a fallback face is a different width,
+    // so the first drawing of a page whose labels are still loading
+    // reserves the wrong room for every one of them.  Measuring every
+    // redraw already heals it -- the next one is a second later and
+    // takes the real face -- so what is left is that one second, in
+    // which names can be written over each other on first paint.  This
+    // removes it: when the document says its faces have settled, take
+    // the boxes again.
+    //
+    // The bundled skin sets these labels in Charter/Georgia/serif and
+    // can never see this.  A skin that embeds the panels and loads a
+    // face can, and it has no way to ask for the re-measure itself --
+    // start() is the whole of what this file publishes.
+    if (fontsWatched || !document.fonts || !document.fonts.ready
+        || !document.fonts.ready.then) {
+      return;                // no Font Loading API: nothing to wait for
+    }
+    fontsWatched = true;
+    document.fonts.ready.then(function () {
+      // Re-measure and re-place.  A no-op to look at when the face was
+      // already there, and it costs one redraw either way.
+      renderGeo();
+    }, function () {
+      // A rejected font promise is not this drawing's problem: the
+      // labels stand as they were last measured.
+    });
+  }
   var dialWatched = false;
   function watchDialFrame(dial) {
     // Armed by the first buildDial, not by start(): start() runs from
@@ -545,7 +575,21 @@ var celestial = (function () {
         return;          // nothing drawn yet: the first build measures
       }                  // for itself
       if ((dialNow === DIAL_NARROW) === narrowDial(dial)) {
-        return;          // still the frame already drawn
+        // The frame is the one already drawn -- but the resize can still
+        // have changed what the stylesheet resolves for a label, through
+        // a media or container query of a consuming skin's own, and a
+        // box measured at the old size is a name in the wrong place.
+        // Returning here without re-placing is what left that window
+        // open: the names stayed where the old type had put them until
+        // the next redraw about a second later, and until then they
+        // could be written over each other.
+        //
+        // placeLabels alone, not a redraw: a CSS size change moves no
+        // MARK.  Every mark's position is in user units, which a resize
+        // does not touch -- only the label boxes change -- so re-placing
+        // is both the correct answer and the cheaper one.
+        placeLabels();
+        return;
       }
       // Rebuilt, never adjusted: the frames do not draw the same
       // elements (the narrow one names every other ring), so there is no
@@ -615,9 +659,12 @@ var celestial = (function () {
     parent.appendChild(e);
     return e;
   }
-  var dialFixed = [];     // boxes of the labels that never move (the
-                          // cardinals, the Earth label): the seed every
-                          // placement pass starts from
+  var dialFixedLabels = []; // the labels that never move (the cardinals,
+                          // the Earth name), the seed every placement
+                          // pass starts from.  Their BOXES are measured
+                          // afresh each pass rather than kept from build
+                          // time: a stylesheet can change their size
+                          // without this drawing ever being rebuilt.
   var dialRings = [];     // the ring numbers, placed last of all
   var pendingLabels = []; // this render's movable names, awaiting placement
   var dialMarks = null;   // per-body dial elements, built on first render
@@ -632,6 +679,7 @@ var celestial = (function () {
     // rebuilds from scratch (see watchDialFrame) rather than moving what
     // is here, because the thinning changes which elements exist at all.
     watchDialFrame(dial);
+    watchFonts();
     dialNow = narrowDial(dial) ? DIAL_NARROW : DIAL_WIDE;
     while (dial.firstChild !== null) {
       dial.removeChild(dial.firstChild);
@@ -644,7 +692,7 @@ var celestial = (function () {
     // labels thin because 15 unit type needs the room -- so the
     // attribute and the numbers above are one decision in two files.
     dial.setAttribute('data-frame', dialNow === DIAL_NARROW ? 'narrow' : 'wide');
-    dialFixed = [];
+    dialFixedLabels = [];
     dialRings = [];
     // Distance rings, one per decade, labeled down the SSE radial (the
     // evening sky crowds the west and the label radial must not sit in
@@ -704,19 +752,19 @@ var celestial = (function () {
       var card = svgEl('text', {x: pc[0], y: pc[1] + dialNow.cardDy,
                                 'class': 'cardinal', 'text-anchor': 'middle'},
                        dial, cardinals[c][1]);
-      // At the CARDINAL's own size, which is larger than a body label's:
-      // asking the element rather than the frame gets that right without
-      // a second constant to keep in step.
-      dialFixed.push(labelBox(cardinals[c][1], pc[0], pc[1] + dialNow.cardDy,
-                              'middle', labelPx(card)));
+      // Recorded, never measured here: the box is taken at placement
+      // time, so a size the stylesheet resolves differently later is
+      // never read off a number this build left behind.
+      dialFixedLabels.push({el: card, text: cardinals[c][1], x: pc[0],
+                            y: pc[1] + dialNow.cardDy, anchor: 'middle'});
     }
     svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: dialNow.earthR,
                      'class': 'cel-fill-earth cel-geo-earth'}, dial);
     var elab = BODY_LABELS['earth'] || 'Earth';
     var earthLab = svgEl('text', {x: dialNow.cx, y: dialNow.cy + dialNow.earthDy,
                                   'class': 'cel-earthlab'}, dial, elab);
-    dialFixed.push(labelBox(elab, dialNow.cx, dialNow.cy + dialNow.earthDy,
-                            'middle', labelPx(earthLab)));
+    dialFixedLabels.push({el: earthLab, text: elab, x: dialNow.cx,
+                          y: dialNow.cy + dialNow.earthDy, anchor: 'middle'});
     var trailsG = svgEl('g', {}, dial);
     var marks = {};
     GEO_BODIES.forEach(function(key) {
@@ -838,18 +886,19 @@ var celestial = (function () {
   // that fault but multiplies it, its type being 2.5x larger against
   // the drawing: eight overlapping pairs at 390px against one at 1440.
   //
-  // Boxes are ESTIMATED from the character count rather than measured
-  // with getBBox, which would force a layout per label per tick.  The
-  // estimate is deliberately generous, as weewx-skyfield's is and for
-  // the same reason: a label has to clear whatever face the reader's
-  // device actually falls back to, and a box slightly too wide costs a
-  // dropped name where one slightly too narrow costs an unreadable
-  // collision.
+  // Boxes are MEASURED, with getBBox, once per redraw in a single pass.
+  // Through 9.6 they were estimated -- character count x a glyph ratio x
+  // a type size -- and all three were numbers that had to stay in step
+  // with what the browser actually draws.  See labelMetrics for what
+  // that cost and why one batched pass is not the layout-per-label the
+  // estimate was avoiding.
   // A label's box, with a little air around it: two names that merely
-  // fail to overlap still read as one crowded word.  Swept over 120 real
-  // skies at 390px, the tightest pair the dial produced was 1.5px apart
-  // at a pad of 2 and 3.4px at 3 -- which is what the pad buys, and why
-  // it is 3.
+  // fail to overlap still read as one crowded word.  The pad goes on
+  // every side, so two names that both survive the pass stand at least
+  // 2 x LABEL_PAD apart in the drawing -- a GUARANTEE now that a box is
+  // the glyphs themselves, where an estimated box could only make it
+  // likely.  The value was chosen by sweeping real skies at a pad of 2
+  // and of 3 and reading the tightest pair each produced.
   //
   // Deliberately NO drop counts here.  How many names a pad costs is a
   // property of the station's latitude, its configured comets, the
@@ -858,38 +907,97 @@ var celestial = (function () {
   // lie.  What does hold, and what the sweep is for: no overlapping
   // pair at any pad, and a larger pad trading names for air.
   //
-  // The estimate the pad sits on is deliberately generous for the same
-  // reason the pad exists: a box slightly too wide costs a dropped name,
-  // where one slightly too narrow costs an unreadable collision.
+  // The pad is now the whole of the margin.  While the box was estimated
+  // the pad sat on top of a deliberately generous guess, so most of the
+  // air between two names was insurance against the guess being wrong;
+  // measured, that slack is gone and the pad is the real clearance.
   var LABEL_PAD = 3;
-  // One character's width as a fraction of the type size, in the serif
-  // face these labels are set in.  It replaces the two per-frame glyph
-  // constants it was derived from -- 10.2px at 16px and 7.6px at 12px,
-  // the same ratio twice -- and it is applied to the size the
-  // stylesheet ACTUALLY RESOLVED, not the size this frame expects.
-  var GLYPH_PER_PX = 0.6375;
-  // A label's type size, read once and remembered on the element.  NOT
-  // the frame's own number: a skin embedding these panels sets .bodylab
-  // to whatever suits its page, and a box sized for this frame's type
-  // would then reserve the wrong room -- too much, and names are dropped
-  // that had somewhere to go; too little, and the names that remain are
-  // drawn over each other, which is the fault this whole pass exists to
-  // remove.  Measured on a consuming skin at 12px against a frame
-  // expecting 16, the reservation was a third too wide and cost names
-  // on every sky.  The cache dies with the element, and buildDial makes
-  // new ones whenever the frame changes.
-  function labelPx(el) {
-    if (el.celPx === undefined) {
-      var v = parseFloat(window.getComputedStyle(el).fontSize);
-      el.celPx = (isFinite(v) && v > 0) ? v : dialNow.labPx;
+  // A LABEL'S SIZE IS THE BROWSER'S ANSWER, NOT A CALCULATION.  getBBox
+  // reports the glyphs actually drawn -- the real face, including
+  // whatever the device fell back to, at the size the stylesheet really
+  // resolved, in the language the label is really in -- and it reports
+  // them in the dial's own user units, which is the space the candidate
+  // positions are computed in, so it needs no conversion.
+  //
+  // What it replaces was three numbers, each of which had to stay in
+  // step with what the browser does: a character count, wrong for every
+  // proportional face; a glyph ratio, wrong for a fallback face and for
+  // any language whose names are not the ones it was fitted to; and a
+  // type size, which was read once and REMEMBERED on the element.  The
+  // remembered size is the one that broke.  Nothing cleared it but a
+  // frame flip, so a skin that changed its label size without changing
+  // frame -- a media query of its own, a container growing, a root font
+  // that scales with the viewport -- went on booking every box at the
+  // old size and wrote names over each other, which is the exact fault
+  // this pass exists to remove.  Invalidating that cache would have
+  // repaired one of the three numbers, and only for the trigger that
+  // happened to be noticed; measuring removes all three and needs no
+  // trigger at all.
+  //
+  // The cost is one layout per REDRAW, which is what the estimate was
+  // avoiding when it said a layout per label per tick.  placeLabels
+  // reads every box in one pass with no write in between, then places.
+  // Interleaving a read and a write per label is what thrashes; a batch
+  // does not.
+  function labelMetrics(el, text) {
+    if (el.getBBox) {
+      try {
+        var b = el.getBBox();
+        if (b && isFinite(b.width) && b.width > 0) {
+          // The element's y IS its baseline, so the ascent and descent
+          // fall out of the measured box rather than being guessed at.
+          var y = parseFloat(el.getAttribute('y'));
+          if (!isFinite(y)) {
+            y = 0;           // never positioned: the box is about zero
+          }
+          return {w: b.width, above: y - b.y, below: b.y + b.height - y};
+        }
+      } catch (e) {
+        // Some engines throw for an unrendered element rather than
+        // answering an empty box.  Both mean the same thing here.
+      }
     }
-    return el.celPx;
+    return estimateMetrics(el, text);
   }
-  function labelBox(text, x, y, anchor, px) {
-    var w = String(text).length * px * GLYPH_PER_PX;
-    var left = anchor === 'start' ? x : (anchor === 'end' ? x - w : x - w / 2);
-    return {l: left - LABEL_PAD, r: left + w + LABEL_PAD,
-            t: y - px * 0.8 - LABEL_PAD, b: y + px * 0.25 + LABEL_PAD};
+  // A label already at its final position -- the cardinals, the Earth
+  // name -- is simply its own measured box, which also settles what its
+  // text-anchor resolved to without this code having to know.
+  function fixedBox(f) {
+    if (f.el.getBBox) {
+      try {
+        var b = f.el.getBBox();
+        if (b && isFinite(b.width) && b.width > 0) {
+          return {l: b.x - LABEL_PAD, r: b.x + b.width + LABEL_PAD,
+                  t: b.y - LABEL_PAD, b: b.y + b.height + LABEL_PAD};
+        }
+      } catch (e) {
+        // as above
+      }
+    }
+    return labelBox(f.x, f.y, f.anchor, estimateMetrics(f.el, f.text));
+  }
+  // THE DEGRADED PATH, and the honest claim about it: there is no
+  // remembered number on the path that runs.  This one is reached only
+  // where the browser will not measure -- no getBBox at all, or an
+  // element with no rendered box -- and it estimates as 9.6 did, but at
+  // the size the stylesheet resolves NOW, never one kept from earlier.
+  function estimateMetrics(el, text) {
+    var px = labelPx(el);
+    return {w: String(text).length * px * GLYPH_PER_PX,
+            above: px * 0.8, below: px * 0.25};
+  }
+  // One character's width as a fraction of the type size, in the serif
+  // face these labels are set in: the estimate's ratio, reached only
+  // from estimateMetrics and nowhere else.
+  var GLYPH_PER_PX = 0.6375;
+  function labelPx(el) {
+    var v = parseFloat(window.getComputedStyle(el).fontSize);
+    return (isFinite(v) && v > 0) ? v : dialNow.labPx;
+  }
+  function labelBox(x, y, anchor, m) {
+    var left = anchor === 'start' ? x : (anchor === 'end' ? x - m.w : x - m.w / 2);
+    return {l: left - LABEL_PAD, r: left + m.w + LABEL_PAD,
+            t: y - m.above - LABEL_PAD, b: y + m.below + LABEL_PAD};
   }
   function boxesHit(a, b) {
     return a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
@@ -900,10 +1008,10 @@ var celestial = (function () {
       // Try each candidate in turn; the first that clears everything
       // already placed wins, and its box joins them.  None free means
       // the label is dropped.
-      place: function(lab, cands) {
+      place: function(lab, cands, m) {
         for (var i = 0; i < cands.length; i++) {
           var c = cands[i];
-          var box = labelBox(c.text, c.x, c.y, c.anchor, c.px);
+          var box = labelBox(c.x, c.y, c.anchor, m);
           var free = true;
           for (var j = 0; j < this.boxes.length; j++) {
             if (boxesHit(box, this.boxes[j])) {
@@ -928,7 +1036,7 @@ var celestial = (function () {
   // The positions a body's name will accept, best first: radially
   // outward from its mark (inward near the rim, where outward would
   // leave the drawing), then the opposite side, then the two flanks.
-  function labelCandidates(text, az, r, px) {
+  function labelCandidates(az, r) {
     var a = az * Math.PI / 180;
     var out = [];
     // Outward first (inward near the rim, where outward would leave the
@@ -942,9 +1050,9 @@ var celestial = (function () {
       var rr = r + tries[i] * dialNow.labOff;
       var sx = Math.sin(a) * tries[i];
       var anchor = sx > 0.35 ? 'start' : (sx < -0.35 ? 'end' : 'middle');
-      out.push({text: text, x: dialNow.cx + rr * Math.sin(a),
+      out.push({x: dialNow.cx + rr * Math.sin(a),
                 y: dialNow.cy - rr * Math.cos(a) + dialNow.labDy,
-                anchor: anchor, px: px});
+                anchor: anchor});
     }
     return out;
   }
@@ -1159,21 +1267,67 @@ var celestial = (function () {
     placeLabels();
   }
   function placeLabels() {
+    // THERE IS DELIBERATELY NO "IS THIS DRAWING VISIBLE" GUARD HERE, and
+    // it is worth saying why, because skipping the pass for a drawing
+    // nobody can see is the obvious idea and it is wrong twice over.
+    //
+    // It is not needed.  A dial inside a collapsed card or an unopened
+    // tab cannot be measured at all -- every getBBox on it answers an
+    // empty box -- but that does not put a zero into the placement:
+    // labelMetrics falls back to the estimate, exactly as 9.6 computed
+    // it, and the layout that comes out is the one 9.6 produced.  The
+    // first redraw after the panel opens measures properly and corrects
+    // it.
+    //
+    // And it does damage.  buildDial creates a body's label with NO x or
+    // y, and renderGeo unhides it before this pass runs, so a label this
+    // pass does not place is a label sitting at user-space (0,0).  Skip
+    // the pass for a dial built while hidden and the reader sees every
+    // name piled in the top-left corner the moment the panel opens --
+    // measured, ten of them -- until the next redraw a second later.
+    // Placing on an estimate is strictly better than not placing.
     // Bodies before comets, and within each the ones nearest Earth
     // first: a crowded rim is where names are lost, and the inner dial
     // is where the eye starts.  The ring numbers come last of all.
     pendingLabels.sort(function(a, b) {
       return a.pri !== b.pri ? a.pri - b.pri : a.r - b.r;
     });
-    var placer = newPlacer(dialFixed);
-    for (var i = 0; i < pendingLabels.length; i++) {
+    var queue = [], i;
+    for (i = 0; i < pendingLabels.length; i++) {
       var q = pendingLabels[i];
-      placer.place(q.lab, labelCandidates(q.text, q.az, q.r, labelPx(q.lab)));
+      queue.push({el: q.lab, text: q.text, cands: labelCandidates(q.az, q.r)});
     }
-    for (var k = 0; k < dialRings.length; k++) {
-      var g = dialRings[k];
-      placer.place(g.el, [{text: g.text, x: g.x, y: g.y, anchor: 'middle',
-                           px: labelPx(g.el)}]);
+    for (i = 0; i < dialRings.length; i++) {
+      var g = dialRings[i];
+      queue.push({el: g.el, text: g.text,
+                  cands: [{x: g.x, y: g.y, anchor: 'middle'}]});
+    }
+    // SHOWN BEFORE MEASURED.  A name the last pass dropped is still
+    // display:none, and an element with no box cannot be measured: it
+    // would fall back to the estimate, which is the thing this pass
+    // stopped trusting -- two names of equal length can differ in drawn
+    // width by more than twofold.  Nothing breaks if that happens, but
+    // the name would be placed on a guess while every name around it
+    // was placed on a measurement.  Everything queued is a name this
+    // render means to draw; the placement below hides again whichever
+    // of them it cannot fit.
+    for (i = 0; i < queue.length; i++) {
+      queue[i].el.removeAttribute('display');
+    }
+    // ONE LAYOUT.  Every box on the dial is read here, with no write in
+    // between, and the pass that moves the labels runs afterwards and
+    // only writes.  This is the whole of the cost the estimate was
+    // avoiding, and it is per redraw rather than per label.
+    for (i = 0; i < queue.length; i++) {
+      queue[i].m = labelMetrics(queue[i].el, queue[i].text);
+    }
+    var seed = [];
+    for (i = 0; i < dialFixedLabels.length; i++) {
+      seed.push(fixedBox(dialFixedLabels[i]));
+    }
+    var placer = newPlacer(seed);
+    for (i = 0; i < queue.length; i++) {
+      placer.place(queue[i].el, queue[i].cands, queue[i].m);
     }
   }
   function renderComets(dt) {

@@ -396,6 +396,189 @@ def step_until(page, js, limit):
     assert page.evaluate(js), js
 '''
 
+# The runner for the measured-label-box test: one browser, one page, one
+# dial, and every leg a step in that session rather than a load of its
+# own.  PORT is substituted by the test.
+RUNNER_BODY = '''
+OVERLAPS = """() => {
+  const ls = Array.from(document.querySelectorAll('#dial text'))
+      .filter(t => t.getAttribute('display') !== 'none'
+                   && t.textContent.trim() !== '')
+      .map(t => { const b = t.getBBox();
+                  return {t: t.textContent, l: b.x, r: b.x + b.width,
+                          u: b.y, d: b.y + b.height}; })
+      .filter(b => b.r > b.l && b.d > b.u);
+  const hits = [];
+  for (let i = 0; i < ls.length; i++) {
+    for (let j = i + 1; j < ls.length; j++) {
+      const a = ls[i], b = ls[j];
+      if (a.l < b.r && b.l < a.r && a.u < b.d && b.u < a.d) {
+        hits.push([a.t, b.t]);
+      }
+    }
+  }
+  return hits;
+}"""
+SIZE = """cls => {
+  const el = document.querySelector('#dial ' + cls);
+  return el === null ? null : parseFloat(getComputedStyle(el).fontSize);
+}"""
+def restyle(page, css):
+    page.evaluate("""css => {
+      const s = document.createElement('style');
+      s.textContent = css;
+      document.head.appendChild(s);
+    }""", css)
+
+FONT_STUB = """(() => {
+  let settle;
+  const ready = new Promise(r => { settle = r; });
+  Object.defineProperty(document, 'fonts', {
+    value: {ready: ready}, configurable: true});
+  window.__settleFonts = () => settle();
+})()"""
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    # Installed BEFORE the script parses, so the page's faces are still
+    # loading as far as it can tell, and stay that way until leg 5.
+    page.add_init_script(FONT_STUB)
+    open_paused(page, 'http://127.0.0.1:PORT/index.html', T0)
+    page.wait_for_function('() => dialMarks !== null', timeout=10000)
+    step(page)
+    step(page)
+    out = {'errors': errors}
+    frame = "() => document.getElementById('dial').getAttribute('data-frame')"
+    out['frame0'] = page.evaluate(frame)
+    out['labels0'] = page.evaluate(
+        "() => document.querySelectorAll('#dial text').length")
+    out['bodyPx0'] = page.evaluate(SIZE, '.bodylab')
+    out['cardPx0'] = page.evaluate(SIZE, '.cardinal')
+    out['hits0'] = page.evaluate(OVERLAPS)
+
+    # LEG 1 -- a body label grows, inside the same frame.
+    restyle(page, '#dial[data-frame="wide"] .bodylab,'
+                  '#dial[data-frame="narrow"] .bodylab{font-size:19px}')
+    page.evaluate('() => renderGeo()')
+    out['bodyPx1'] = page.evaluate(SIZE, '.bodylab')
+    out['hits1'] = page.evaluate(OVERLAPS)
+
+    # LEG 2 -- a cardinal grows; its box used to be frozen at build time.
+    restyle(page, '#dial[data-frame="wide"] .cardinal,'
+                  '#dial[data-frame="narrow"] .cardinal{font-size:30px}')
+    page.evaluate('() => renderGeo()')
+    out['cardPx2'] = page.evaluate(SIZE, '.cardinal')
+    out['hits2'] = page.evaluate(OVERLAPS)
+
+    # Legs 3 and 4 watch what the placement pass MEASURES, because the
+    # estimate fallback makes both faults survivable rather than fatal
+    # and neither one shows up as a collision on this particular sky.
+    # Counting the calls is what distinguishes them: leg 3 must measure
+    # nothing that is hidden, leg 4 must measure nothing at all.
+    WATCH = """() => {
+      if (!window.__mx) {
+        const orig = labelMetrics;
+        window.__mx = {calls: 0, hidden: 0};
+        labelMetrics = function (el, text) {
+          window.__mx.calls += 1;
+          if (el.getAttribute('display') === 'none') {
+            window.__mx.hidden += 1;
+          }
+          return orig(el, text);
+        };
+      }
+      window.__mx.calls = 0;
+      window.__mx.hidden = 0;
+    }"""
+
+    # LEG 3 -- a ring number the last pass dropped is display:none, and
+    # nothing but this pass ever shows one again.  Measured while hidden
+    # it falls back to the estimate, which this file has just shown can
+    # be 36% too narrow for wide glyphs -- so it must be SHOWN first and
+    # really measured.
+    page.evaluate("""() => {
+      const t = document.querySelector('#dial text.gridlab');
+      if (t !== null) { t.setAttribute('display', 'none'); }
+    }""")
+    page.evaluate(WATCH)
+    page.evaluate('() => renderGeo()')
+    out['watch3'] = page.evaluate('() => window.__mx')
+    out['hits3'] = page.evaluate(OVERLAPS)
+
+    # LEG 4 -- the drawing is BUILT while it is not rendered at all: a
+    # collapsed card, a tab that has not been opened.  Nothing on it can
+    # be measured, so every box falls back to the estimate -- and the
+    # pass must still RUN, because buildDial creates a label with no x
+    # and no y and renderGeo unhides it before the pass, so a name this
+    # pass does not place is a name sitting at the drawing's origin.
+    page.evaluate("() => { document.getElementById('dial').style.display = 'none'; }")
+    page.evaluate('() => { dialMarks = null; }')
+    page.evaluate(WATCH)
+    page.evaluate('() => renderGeo()')
+    out['watch4'] = page.evaluate('() => window.__mx')
+    page.evaluate("() => { document.getElementById('dial').style.display = ''; }")
+    # Read BEFORE any redraw can correct it: this is the first frame the
+    # reader sees when the panel opens.
+    out['originPile'] = page.evaluate("""() => Array.from(
+        document.querySelectorAll('#dial text'))
+        .filter(t => t.getAttribute('display') !== 'none'
+                     && t.textContent.trim() !== '')
+        .filter(t => { const b = t.getBBox(); return b.x < 40 && b.y < 40; })
+        .map(t => t.textContent)""")
+    out['hits4'] = page.evaluate(OVERLAPS)
+    out['frameEnd'] = page.evaluate(frame)
+
+    # LEG 5 -- the faces settle.  Until now the stub has held them
+    # loading, so everything above was measured in whatever the browser
+    # fell back to; a real webfont arriving is exactly that, and the
+    # boxes have to be taken again when it does.
+    page.evaluate(WATCH)
+    page.evaluate('() => window.__settleFonts()')
+    try:
+        page.wait_for_function('() => window.__mx.calls > 0', timeout=8000)
+    except Exception:
+        pass
+    out['watch5'] = page.evaluate('() => window.__mx')
+    out['hits5'] = page.evaluate(OVERLAPS)
+
+    # LEG 6 -- a resize that changes the TYPE but not the FRAME.  The
+    # page's clock is PAUSED for this whole test, so no redraw can run:
+    # the only thing that can re-place these labels is the resize
+    # handler itself, which is exactly what is under test.  Through
+    # 9.6.1's first cut that handler returned without re-placing, and
+    # the names stayed where the old type had put them.
+    page.evaluate("""() => {
+      const s = document.createElement('style');
+      s.textContent = '@media (max-width: 1350px){' +
+        '#dial[data-frame="wide"] .bodylab,' +
+        '#dial[data-frame="narrow"] .bodylab{font-size:24px}}';
+      document.head.appendChild(s);
+    }""")
+    out['px6before'] = page.evaluate(SIZE, '.bodylab')
+    out['frame6before'] = page.evaluate(frame)
+    page.evaluate(WATCH)
+    page.set_viewport_size({"width": 1300, "height": 900})
+    try:
+        page.wait_for_function('() => window.__mx.calls > 0', timeout=8000)
+    except Exception:
+        pass
+    out['watch6'] = page.evaluate('() => window.__mx')
+    out['px6after'] = page.evaluate(SIZE, '.bodylab')
+    out['frame6after'] = page.evaluate(frame)
+    out['hits6'] = page.evaluate(OVERLAPS)
+
+    # THE COST, timed from here rather than from performance.now(): the
+    # page's clock is paused, so its own stopwatch does not advance.
+    t0 = time.perf_counter()
+    page.evaluate('() => { for (let i = 0; i < 20; i++) { renderGeo(); } }')
+    out['msPerRender'] = (time.perf_counter() - t0) * 1000.0 / 20.0
+    print(json.dumps(out))
+    browser.close()
+'''
+
 # Runner-side helpers for waiting on the page's own fetches rather than on
 # a clock.  Paste into a runner's source and call
 # page.add_init_script(XHR_DONE) before the page loads: every XHR the page
@@ -9000,19 +9183,19 @@ class TestPanels:
         assert nojs['fit'] is None, nojs
         assert nojs['wide'] is True and nojs['narrow'] is False, nojs
 
-    def test_the_label_box_tracks_the_size_css_resolved_in_a_real_browser(
+    def test_a_label_box_is_measured_not_calculated_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
-        """The room the dial reserves for a name follows the size the
-        STYLESHEET resolved, never the size this frame expects.
+        """The room the dial reserves for a name is the browser's own
+        measurement of the glyphs it drew, not a calculation from the
+        character count.
 
-        These panels drop into somebody else's page, and that page sets
-        .bodylab to whatever suits it.  A box sized for the frame's own
-        type is then wrong in both directions: too wide, and names are
-        dropped that had somewhere to go -- measured on a consuming skin
-        at 12px against a frame expecting 16, the reservation was a
-        third too wide -- and too narrow, and the names that survive are
-        drawn over each other, which is the fault the placement pass
-        exists to remove.
+        Through 9.6 the box was a character count x a glyph ratio x a
+        type size.  A count cannot tell a narrow letter from a wide one,
+        which every proportional face distinguishes, so the estimate was
+        never right -- only generously wrong, and the generosity was
+        paid for in dropped names.  The two labels here carry the SAME
+        number of characters and very different widths; a measured box
+        tells them apart and a calculated one cannot.
         Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -9029,8 +9212,6 @@ class TestPanels:
         (tmp_path / 'index.html').write_text(
             '<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
             '<link rel="stylesheet" href="celestial.css">'
-            '<style>#dial[data-frame="wide"] .bodylab,'
-            '#dial[data-frame="narrow"] .bodylab{font-size:12px}</style>'
             '<script src="celestial.js"></script></head><body>%s'
             '<section><h2>g</h2>%s</section></body></html>'
             % (page.config_script(alm), page.geocentric_html(alm)), encoding='utf-8')
@@ -9053,22 +9234,38 @@ class TestPanels:
             '    b = p.chromium.launch()\n'
             '    pg = b.new_page(viewport={"width": 1400, "height": 900})\n'
             '    pg.goto("http://127.0.0.1:%d/index.html")\n'
-            '    pg.wait_for_function("() => typeof labelBox === \'function\'")\n'
+            '    pg.wait_for_function("() => typeof labelMetrics === \'function\'")\n'
             '    print(json.dumps(pg.evaluate("""() => {\n'
-            '      const at = px => {\n'
-            '        const b = labelBox("Mercury", 500, 500, "middle", px);\n'
-            '        return Math.round((b.r - b.l) * 100) / 100;\n'
+            '      const mk = (text, px) => {\n'
+            '        const el = document.createElementNS(\n'
+            '            "http://www.w3.org/2000/svg", "text");\n'
+            '        el.setAttribute("class", "bodylab");\n'
+            '        el.setAttribute("x", 500);\n'
+            '        el.setAttribute("y", 500);\n'
+            '        el.setAttribute("style", "font-size:" + px + "px");\n'
+            '        el.textContent = text;\n'
+            '        document.getElementById("dial").appendChild(el);\n'
+            '        return el;\n'
             '      };\n'
-            '      // A label the page really drew, at the size the sheet\n'
-            '      // above set rather than the frame\'s own 12/16.\n'
-            '      const el = document.createElementNS(\n'
-            '          "http://www.w3.org/2000/svg", "text");\n'
-            '      el.setAttribute("class", "bodylab");\n'
-            '      document.getElementById("dial").appendChild(el);\n'
-            '      return {w12: at(12), w16: at(16), w24: at(24),\n'
-            '              resolved: labelPx(el),\n'
-            '              computed: parseFloat(getComputedStyle(el).fontSize),\n'
-            '              frameSays: (typeof dialNow === "object") ? dialNow.labPx : null};\n'
+            '      const r2 = v => Math.round(v * 100) / 100;\n'
+            '      const look = (el, text) => {\n'
+            '        const m = labelMetrics(el, text);\n'
+            '        const box = labelBox(500, 500, "middle", m);\n'
+            '        return {w: r2(m.w), bb: r2(el.getBBox().width),\n'
+            '                boxw: r2(box.r - box.l),\n'
+            '                est: r2(estimateMetrics(el, text).w)};\n'
+            '      };\n'
+            '      // Seven characters each, and nothing alike in width.\n'
+            '      const thin = mk("IIIIIII", 12), fat = mk("WWWWWWW", 12);\n'
+            '      const big = mk("IIIIIII", 24);\n'
+            '      // An element with no rendered box at all: the estimate\n'
+            '      // is what answers, and it must not answer zero.\n'
+            '      const gone = mk("Mercury", 12);\n'
+            '      gone.setAttribute("display", "none");\n'
+            '      return {thin: look(thin, "IIIIIII"), fat: look(fat, "WWWWWWW"),\n'
+            '              big: look(big, "IIIIIII"),\n'
+            '              gone: r2(labelMetrics(gone, "Mercury").w),\n'
+            '              pad: (typeof LABEL_PAD === "number") ? LABEL_PAD : null};\n'
             '    }""")))\n'
             '    b.close()\n' % httpd.server_address[1])
         try:
@@ -9078,18 +9275,208 @@ class TestPanels:
             httpd.shutdown()
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
-        # The reservation scales with the size it is given.  The padding
-        # is a constant, so the TEXT part is what grows: seven
-        # characters, each a fixed fraction of the type size.
-        assert out['w16'] - out['w12'] == pytest.approx(7 * 4 * 0.6375, abs=0.05), out
-        assert out['w24'] - out['w16'] == pytest.approx(7 * 8 * 0.6375, abs=0.05), out
-        # And the size it asks for is the one CSS RESOLVED for that
-        # element, whatever rule won -- not the frame's own figure.  (On
-        # this page the dial is never built, having no feed, so it wears
-        # no data-frame and the bare .bodylab rule governs: 11px, which
-        # is neither frame's number and is exactly the point.)
-        assert out['resolved'] == out['computed'], out
-        assert out['resolved'] != out['frameSays'], out
+        # THE POINT.  Same character count, same type size: the estimate
+        # cannot tell these apart and returns one number for both, where
+        # the measurement returns the two widths actually drawn.
+        assert out['thin']['est'] == out['fat']['est'], out
+        assert out['fat']['w'] > out['thin']['w'] * 1.5, out
+        # And what is reserved IS what was measured, plus the pad on each
+        # side -- no ratio, no character count, nothing remembered.
+        for leg in ('thin', 'fat', 'big'):
+            assert out[leg]['w'] == out[leg]['bb'], (leg, out[leg])
+            assert out[leg]['boxw'] == pytest.approx(
+                out[leg]['bb'] + 2 * out['pad'], abs=0.02), (leg, out[leg])
+        # Doubling the type doubles the glyphs, which the measurement
+        # follows without being told the size at all.
+        assert out['big']['w'] == pytest.approx(out['thin']['w'] * 2, rel=0.02), out
+        # THE DEGRADED PATH still answers, and never with a zero box: a
+        # zero clears every neighbor, which would place the name it
+        # belongs to straight on top of another one.
+        assert out['gone'] > 0, out
+
+    def test_label_boxes_follow_a_size_the_stylesheet_changes_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """A label's size can change with no change of FRAME, and the
+        boxes have to follow it.
+
+        Through 9.6 the size was read once and remembered on the
+        element, and the only thing that ever cleared it was a frame
+        flip.  So a skin that gave its labels a second size inside one
+        frame -- a media query of its own, a container growing, a root
+        font that scales -- went on booking every box at the first size
+        and wrote names over each other.  That is not a property of
+        resizing: it is a property of remembering, which is why nothing
+        is remembered now.
+
+        Four legs, each of which was a real defect and none of which the
+        others cover: a body label growing; a CARDINAL growing, whose box
+        used to be computed once at build time and kept for the life of
+        the drawing; a label the previous pass DROPPED, which is
+        display:none and cannot be measured unless it is shown first;
+        and the whole drawing unrendered, where nothing on it can be
+        measured at all.  The last two do not corrupt the layout -- the
+        estimate answers for anything unmeasurable, so no zero ever
+        reaches the placer -- they quietly place names on a guess, which
+        is what this release stopped doing.  That is why those two legs
+        count what the pass MEASURES rather than looking for a
+        collision: on any one sky there may not be one.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+
+        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+                  'saturn', 'uranus', 'neptune', 'proxima_centauri']
+        packets = []
+        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
+            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=report_formatter())
+            r = {'current.dateTime.raw': ts,
+                 'almanac.moon.phase': alm.moon.phase,
+                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
+                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
+            for b in bodies:
+                obj = getattr(alm, b)
+                r['almanac.%s.az' % b] = obj.az
+                r['almanac.%s.alt' % b] = obj.alt
+                r['almanac.%s.earth_distance' % b] = obj.earth_distance
+            packets.append(loop_file(r).encode())
+
+        (tmp_path / 'index.html').write_text(
+            TestSampleSkinRenders.render(wxskyfield_sat_almanac,
+                                         sky_page=make_sky_page()))
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
+
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'import time\n'
+            'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS
+            + ('T0 = %r\n' % float(TIME_TS))
+            + RUNNER_BODY.replace('PORT', str(port)))
+        try:
+            proc = subprocess.run([pwenv, str(runner)],
+                                  capture_output=True, text=True, timeout=180)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == [], out['errors']
+        # The dial really drew, in one frame, and nothing here ever
+        # changes that frame -- every leg below is a size change INSIDE
+        # one frame, which is the case the old cache could not see.
+        assert out['frame0'] == out['frameEnd'], out
+        assert out['labels0'] >= 8, out
+        # LEG 0, the baseline: the placement pass leaves no two names
+        # written over each other.  Measured from the browser's own
+        # boxes, so this is what a reader would see, not what the code
+        # believes.
+        assert out['hits0'] == [], out['hits0']
+        # LEG 1: a body label grows, with no frame change.  The old
+        # cache kept the first size and booked every box ~40% too
+        # narrow, which is how names came to be written over each other.
+        assert out['bodyPx1'] > out['bodyPx0'], out
+        assert out['hits1'] == [], out['hits1']
+        # LEG 2: a CARDINAL grows.  Its box was computed once inside
+        # buildDial and kept for the life of the drawing, so no amount of
+        # clearing a per-element size cache would have refreshed it --
+        # and a body name would be placed straight over the N.
+        assert out['cardPx2'] > out['cardPx0'], out
+        assert out['hits2'] == [], out['hits2']
+        # LEG 3: a ring number the previous pass dropped is display:none,
+        # and an element with no rendered box cannot be measured -- it
+        # falls back to the estimate, which is the thing this release
+        # stopped trusting.  Every label the pass measures must therefore
+        # be showing when it is measured.
+        assert out['watch3']['calls'] > 0, out['watch3']
+        assert out['watch3']['hidden'] == 0, out['watch3']
+        assert out['hits3'] == [], out['hits3']
+        # LEG 4: the drawing is BUILT while nothing on it can be
+        # measured.  The pass must RUN -- on the estimate, which is what
+        # 9.6 computed for every drawing -- because a name it skips is a
+        # name with no x and no y, and that is a name at the drawing's
+        # origin.  An early version of this release skipped it, and ten
+        # of the eleven names piled into the top-left corner the moment
+        # the panel was opened, until the next redraw a second later.
+        assert out['originPile'] == [], out['originPile']
+        assert out['watch4']['calls'] > 0, out['watch4']
+        assert out['hits4'] == [], out['hits4']
+        # LEG 5: a webfont arriving after first paint.  Every box above
+        # was measured in a fallback face, which is a different width, so
+        # the names were placed on the wrong boxes.  Measuring every
+        # redraw heals that by itself one redraw later -- a second of
+        # names possibly written over each other -- and waiting on the
+        # document's own font-loading promise removes even that second.
+        # The bundled skin cannot see this: its labels are Charter,
+        # Georgia, serif.  A skin that loads a face can, and it has no
+        # way to ask for the re-measure itself.
+        assert out['watch5']['calls'] > 0, out['watch5']
+        assert out['hits5'] == [], out['hits5']
+        # LEG 6: a resize that changes what the stylesheet resolves for
+        # a label WITHOUT changing the frame -- a consuming skin's own
+        # media or container query.  The frame watcher used to return
+        # without re-placing, so every box stayed measured for type no
+        # longer on the screen until the next redraw about a second
+        # later.
+        #
+        # WHAT IS ASSERTED IS THAT THE PASS RUNS, not that this sky
+        # collides, and the difference matters.  Whether any given sky
+        # shows names over each other inside that window depends on
+        # where the sky has put things -- measured on a consuming skin,
+        # 8 skies in 20 -- so on this one sky an overlap assertion
+        # would pass whether the handler re-places or not, which is
+        # exactly the trap legs 3 and 4 fell into.  The overlap check
+        # below is kept as a free guard, not as the proof.
+        assert out['frame6before'] == out['frame6after'], out   # same frame
+        assert out['px6after'] > out['px6before'], out          # new type
+        assert out['hits6'] == [], out['hits6']
+        assert out['watch6']['calls'] > 0, out['watch6']
+        # THE COST, which is the whole of what the estimate was avoiding:
+        # one layout per redraw rather than one per label.  Measured at
+        # 4.2-4.6 ms on a Raspberry Pi -- the same either way, the
+        # estimate having read a computed style per label anyway.
+        #
+        # The ceiling is deliberately far above that and is a SMOKE
+        # ALARM, not a benchmark: this is wall clock on a Pi running
+        # three test workers and other browsers, so a tight bound would
+        # fail on a busy afternoon rather than on a regression.  What it
+        # still catches is the shape that matters -- a read interleaved
+        # with a write per label, which is an order of magnitude, not a
+        # few milliseconds.
+        assert out['msPerRender'] < 60.0, out['msPerRender']
 
     def test_a_lone_drawing_is_emitted_bare(self, wxskyfield_sat_almanac):
         """A frame that does not draw leaves the other one BARE -- no
