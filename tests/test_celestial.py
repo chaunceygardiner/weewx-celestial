@@ -8765,6 +8765,110 @@ class TestPanels:
                      'REPORT_NAME': REPORT_NAME, 'CelestialFragments': sets}
         return celestial_page.CelestialPage(skin_dict, sky_page, interval_s)
 
+    CAPTIONED = (('geocentric_html', 'geocentric_caption', 'cel-dialcaption'),
+                 ('dome_html', 'dome_caption', 'cel-dialcaption'),
+                 ('pass_html', 'pass_caption', 'cel-passcaption'))
+
+    def test_caption_false_leaves_out_the_caption_and_nothing_else(self, wxskyfield_sat_almanac):
+        """A consuming page that places the explanation itself asks for a
+        panel with caption=False and the text through the panel's caption
+        method: the default still embeds the caption, caption=False
+        removes that one paragraph and changes nothing else, and the
+        caption method returns exactly what the default embeds --
+        translated through [Texts], so one translation serves both."""
+        alm = wxskyfield_sat_almanac
+        texts = {'Hover or tap any mark for its coordinates.': 'Tippen.',
+                 "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.": 'Der ganze Himmel.'}
+        page = celestial_page.CelestialPage(
+            {'Extras': {'loop_data_file': 'loop.txt'}, 'lang': 'en',
+             'REPORT_NAME': REPORT_NAME, 'Texts': texts}, make_sky_page(), 300)
+        for panel, caption, cls in self.CAPTIONED:
+            text = getattr(page, caption)(alm)
+            with_caption = getattr(page, panel)(alm)
+            without = getattr(page, panel)(alm, caption=False)
+            assert text and '<' not in text, (caption, text)
+            lines = [l for l in with_caption.split('\n') if 'cel-caption' in l]
+            assert len(lines) == 1, (panel, lines)
+            assert lines[0].strip() == '<p class="cel-caption %s">%s</p>' % (cls, text), panel
+            assert 'cel-caption' not in without, panel
+            assert without == '\n'.join(l for l in with_caption.split('\n')
+                                         if 'cel-caption' not in l), panel
+        assert page.geocentric_caption(alm).endswith(' · Tippen.')
+        assert page.dome_caption(alm).endswith(' Tippen.')
+        assert page.pass_caption(alm) == 'Der ganze Himmel.'
+
+    def test_a_caption_call_agrees_with_its_panel_in_every_state(self, wxskyfield_sat_almanac):
+        """dome_caption and pass_caption answer '' exactly where their
+        panel carries no caption, so a page placing the explanation
+        itself never explains a chart that is not there: in every state
+        the panel can be in, the default panel embeds the caption iff the
+        caption call returns text, and embeds that text.  The states: a
+        drawable sky; a refused set; no SkyPage; a SkyPage that says it
+        cannot draw; one that says it can and draws nothing (the dome
+        then shows its could-not-be-drawn line, while the pass panel
+        still carries its caption inside the hidden wrapper the script
+        unhides)."""
+        alm = wxskyfield_sat_almanac
+
+        class SaysNo:
+            def can_draw(self):
+                return False
+
+        class SaysYesDrawsNothing:
+            def can_draw(self):
+                return True
+
+            def dome_svg(self, alm, **kw):
+                return ''
+
+            def pass_chart_html(self, alm, **kw):
+                return ''
+
+            def satellite_names(self):
+                return []
+
+        expected = {                 # state: (dome carries it, pass carries it)
+            'drawable': (True, True),
+            'refused': (False, False),
+            'no sky page': (False, False),
+            'cannot draw': (False, False),
+            'draws nothing': (False, True),
+        }
+        for state, (sky, set_name) in {
+                'drawable': (make_sky_page(), ''),
+                'refused': (make_sky_page(), 'nope'),
+                'no sky page': (None, ''),
+                'cannot draw': (SaysNo(), ''),
+                'draws nothing': (SaysYesDrawsNothing(), '')}.items():
+            page = self.sets_page(sky, {}, interval_s=300)
+            for (panel, caption), carries in zip((('dome_html', 'dome_caption'),
+                                                  ('pass_html', 'pass_caption')),
+                                                 expected[state]):
+                html = getattr(page, panel)(alm, set=set_name)
+                text = getattr(page, caption)(alm, set=set_name)
+                assert ('cel-caption' in html) is carries, (state, panel)
+                assert bool(text) is carries, (state, caption)
+                if carries:
+                    assert '">%s</p>' % text in html, (state, panel)
+
+    def test_caption_false_reaches_the_panels_from_a_template(self, wxskyfield_sat_almanac):
+        """The keyword arrives through Cheetah under #errorCatcher Echo,
+        the way a consumer's template writes it -- beside set=, and the
+        caption methods placed on their own."""
+        from Cheetah.Template import Template
+        page = self.sets_page(make_sky_page(), {}, interval_s=300)
+        src = ('#errorCatcher Echo\n'
+               '$celestial.geocentric_html($almanac, caption=False)\n'
+               '$celestial.dome_html($almanac, set=\'\', caption=False)\n'
+               '$celestial.pass_html($almanac, caption=False)\n'
+               '#set $why = $celestial.dome_caption($almanac, set=\'\')\n'
+               '#if $why\n<div id="pop">$why</div>\n#end if\n')
+        out = str(Template(src, searchList=[{'celestial': page,
+                                             'almanac': wxskyfield_sat_almanac}]))
+        assert 'cel-caption' not in out
+        assert 'id="dial"' in out and 'id="dome-wrap"' in out and 'id="pass-wrap"' in out
+        assert '<div id="pop">%s</div>' % page.dome_caption(wxskyfield_sat_almanac) in out
+
     def test_the_script_moves_every_layer_of_a_label(self):
         """weewx-skyfield 2.5 draws a label once per label layer, so a
         mark's label is one <text data-body> per layer and every copy

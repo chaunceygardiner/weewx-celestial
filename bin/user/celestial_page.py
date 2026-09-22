@@ -1373,7 +1373,16 @@ class CelestialPage:
             return _esc(body_name(texts, comet))
 
     @_panel_guard()
-    def geocentric_html(self, alm: Any) -> str:
+    def geocentric_caption(self, alm: Any) -> str:
+        """The Geocentric's caption text, translated -- what
+        geocentric_html embeds under the dial, for a page that places the
+        explanation itself (geocentric_html(alm, caption=False))."""
+        return '%s · %s' % (
+            self._t("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion"),
+            self._t("Hover or tap any mark for its coordinates."))
+
+    @_panel_guard()
+    def geocentric_html(self, alm: Any, caption: bool = True) -> str:
         """The Geocentric: the dial and the roster.  The dial is an empty
         SVG the javascript builds on the first loop packet (positions,
         trails and rates are javascript-only -- the rates and trails need
@@ -1404,7 +1413,10 @@ class CelestialPage:
         row honestly empty (MPC drops faded comets; absence, never the
         string "None").  Distance-cell ids are the loop keys verbatim
         (almanac.<body>.earth_distance); the derived cells use
-        geo-rate/-au/-alt/-row-<body>."""
+        geo-rate/-au/-alt/-row-<body>.
+
+        caption=False leaves out the caption under the dial and nothing
+        else; geocentric_caption is its text."""
         extras = bool(alm.hasExtras)
         per_au, distance_label = distance_unit(alm)
         texts = almanac_texts(alm)
@@ -1419,9 +1431,9 @@ class CelestialPage:
         out.append('    <svg id="dial" viewBox="0 0 660 660" role="img"')
         out.append('         aria-label="%s"></svg>' % self._t(
             'Geocentric chart: bodies placed by compass azimuth and log distance from Earth'))
-        out.append('    <p class="cel-caption cel-dialcaption">%s · %s</p>' % (
-            self._t("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion"),
-            self._t("Hover or tap any mark for its coordinates.")))
+        if caption:
+            out.append('    <p class="cel-caption cel-dialcaption">%s</p>'
+                       % self.geocentric_caption(alm))
         out.append('  </div>')
         out.append('  <div class="cel-roster cel-mono">')
         for body in GEO_BODIES[:-1] + tuple(comets) + GEO_BODIES[-1:]:
@@ -2026,14 +2038,35 @@ class CelestialPage:
         return '\n'.join(out)
 
     @_panel_guard()
-    def dome_html(self, alm: Any, set: str = '') -> str:
+    def dome_caption(self, alm: Any, set: str = '') -> str:
+        """The sky dome's caption text, translated -- what dome_html(alm,
+        set) embeds under the dome, for a page that places the
+        explanation itself (dome_html(alm, set, caption=False)).  '' in
+        exactly the states where that panel carries no caption: a refused
+        set, a sky that cannot be drawn, a drawing that came back empty
+        -- the same _resolve and the same memoized dome the panel stands
+        on, so the two cannot disagree."""
+        r = self._resolve(alm, set, 'dome_caption', 'dome')
+        if r.fs is None or not self._dome_svg(alm, r.fs):
+            return ''
+        return self._dome_caption_text()
+
+    def _dome_caption_text(self) -> str:
+        return '%s %s' % (
+            self._t("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon."),
+            self._t("Hover or tap any mark for its coordinates."))
+
+    @_panel_guard()
+    def dome_html(self, alm: Any, set: str = '', caption: bool = True) -> str:
         """The sky dome (see _dome_html), behind its declaration line --
         the dome carries the panel's line; its roster, a part of the
-        same panel, never does, so a grid holding both shows it once."""
+        same panel, never does, so a grid holding both shows it once.
+        caption=False leaves out the caption and nothing else;
+        dome_caption is its text."""
         r = self._resolve(alm, set, 'dome_html', 'dome')
-        return self._behind_line(r.line, self._dome_html(alm, r))
+        return self._behind_line(r.line, self._dome_html(alm, r, caption))
 
-    def _dome_html(self, alm: Any, r: 'Resolved') -> str:
+    def _dome_html(self, alm: Any, r: 'Resolved', caption: bool = True) -> str:
         """The sky dome: weewx-skyfield's dome_svg for the named set (its
         plate and label scale) inside the wrapper the javascript swaps
         and reads, the caption, and the backdrop's health line.  The
@@ -2097,9 +2130,8 @@ class CelestialPage:
                    % (fs.prefix, fs.directory,
                       self._dome_wrapper(alm, int(alm.time_ts), None, step, count,
                                          interval, palette, svg, fs)))
-        out.append('  <p class="cel-caption cel-dialcaption">%s %s</p>' % (
-            self._t("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon."),
-            self._t("Hover or tap any mark for its coordinates.")))
+        if caption:
+            out.append('  <p class="cel-caption cel-dialcaption">%s</p>' % self._dome_caption_text())
         out.append('  <p class="cel-stalehint" id="dome-stale" hidden><span id="dome-stale-msg"></span>'
                    ' · <a href="%s">%s</a></p>' % (FROZEN_LINK, self._t("what to check")))
         out.append('</div>')
@@ -2121,14 +2153,38 @@ class CelestialPage:
                             self._t("Satellites · the next pass overhead"), 'any-', 4)
 
     @_panel_guard()
-    def pass_html(self, alm: Any, set: str = '') -> str:
+    def pass_caption(self, alm: Any, set: str = '') -> str:
+        """The Next Visible Pass chart's caption text, translated -- what
+        pass_html(alm, set) embeds under the chart, for a page that
+        places the explanation itself (pass_html(alm, set,
+        caption=False)).  '' in exactly the states where that panel
+        carries no caption: a refused set or a sky that cannot be drawn,
+        through the panel's own _resolve.  With no visible pass in the
+        window the panel still carries its caption, inside the hidden
+        #pass-wrap the script unhides when a pass arrives -- a state that
+        changes in the browser, which generation cannot track, so a page
+        placing the caption itself follows #pass-wrap's hidden attribute,
+        which the script keeps, or lets it stand while only the roster
+        shows."""
+        r = self._resolve(alm, set, 'pass_caption', 'pass')
+        if r.fs is None:
+            return ''
+        return self._pass_caption_text()
+
+    def _pass_caption_text(self) -> str:
+        return self._t(
+            "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.")
+
+    @_panel_guard()
+    def pass_html(self, alm: Any, set: str = '', caption: bool = True) -> str:
         """The Next Visible Pass chart (see _pass_html), behind its
         declaration line -- the chart carries the panel's line; its
-        roster never does."""
+        roster never does.  caption=False leaves out the caption and
+        nothing else; pass_caption is its text."""
         r = self._resolve(alm, set, 'pass_html', 'pass')
-        return self._behind_line(r.line, self._pass_html(alm, r))
+        return self._behind_line(r.line, self._pass_html(alm, r, caption))
 
-    def _pass_html(self, alm: Any, r: 'Resolved') -> str:
+    def _pass_html(self, alm: Any, r: 'Resolved', caption: bool = True) -> str:
         """The Next Visible Pass chart: skyfield 2.0's pass_chart_html --
         the whole sky as it will stand at the culmination of the soonest
         upcoming visible pass among the configured satellites, the
@@ -2159,8 +2215,8 @@ class CelestialPage:
         out = ['<div id="pass-wrap" %s%s>' % (PANEL_MARK, '' if '<svg' in chart else ' hidden')]
         out.append('  <div id="pass-chart" data-pass-fragment="%s" data-pass-dir="%s">%s</div>'
                    % (pass_name, fs.directory, chart))
-        out.append('  <p class="cel-caption cel-passcaption">%s</p>' % self._t(
-            "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark."))
+        if caption:
+            out.append('  <p class="cel-caption cel-passcaption">%s</p>' % self._pass_caption_text())
         out.append('</div>')
         return '\n'.join(out)
 

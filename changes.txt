@@ -1,6 +1,24 @@
 weewx-celestial change history
 ------------------------------
 
+9.7 2026/09/21
+--------------
+- New, for a skin of your own that embeds these panels:
+  geocentric_html, dome_html and pass_html take caption=False, which
+  leaves out the explanatory caption under the chart and nothing else,
+  and geocentric_caption($almanac), dome_caption($almanac, set='') and
+  pass_caption($almanac, set='') return that caption's text on its own,
+  translated exactly as the panel would show it -- and empty exactly
+  where the panel would carry no caption, so an explanation never stands
+  beside a chart that is not there.  A page that puts its
+  explanations somewhere of its own choosing -- beside the heading, in a
+  popover -- can now move them without parsing the panel's markup.  The
+  default is unchanged, so the bundled Celestial page and every existing
+  skin render exactly as before.
+- celestial.js changes only its version string.  A skin holding its own
+  copy of 9.6.1's script works unchanged; the browser console notes the
+  version difference, and re-copying the file silences it.
+
 9.6.1 2026/09/20
 ----------------
 - ACTION REQUIRED, for a skin of your own that embeds these panels: after

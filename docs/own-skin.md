@@ -482,10 +482,10 @@ and the rest of the page and the rest of the live layer carry on.
 | Call | What it renders |
 |---|---|
 | `$celestial.countdown_html($almanac)` | The countdown row — the chips, first-painted and then counting on every loop packet |
-| `$celestial.geocentric_html($almanac)` | The Geocentric: the dial (the javascript builds it on the first packet) and the roster beside it |
-| `$celestial.dome_html($almanac, set='')` | The sky dome: the fragment set's current backdrop in its self-describing wrapper, its caption and its frozen-sky line |
+| `$celestial.geocentric_html($almanac, caption=True)` | The Geocentric: the dial (the javascript builds it on the first packet), its caption and the roster beside it |
+| `$celestial.dome_html($almanac, set='', caption=True)` | The sky dome: the fragment set's current backdrop in its self-describing wrapper, its caption and its frozen-sky line |
 | `$celestial.dome_roster_html($almanac, set='')` | The "next pass overhead" roster — every configured satellite's next pass of any kind |
-| `$celestial.pass_html($almanac, set='')` | The Next Visible Pass chart, hidden when no pass is in the window |
+| `$celestial.pass_html($almanac, set='', caption=True)` | The Next Visible Pass chart and its caption, hidden when no pass is in the window |
 | `$celestial.pass_roster_html($almanac, set='')` | The visible-pass roster beside it |
 | `$celestial.pass_panel_hidden($almanac, set='')` | True when the pass panel has nothing at all to show, so your own section chrome can hide with it; the javascript unhides `#pass-sec` by that id when a pass enters the window |
 | `$celestial.footer_html($almanac)` | The credit line, true for whichever almanac actually served the page |
@@ -495,6 +495,39 @@ and the rest of the page and the rest of the live layer carry on.
 The rosters are separate calls so you can place them where you like; the
 bundled page puts each beside its chart in a two-column grid, which is
 its own chrome, not the panel's.
+
+The captions can move too.  `caption=False` on the Geocentric, the dome
+or the pass chart leaves out the paragraph explaining how to read that
+chart, and nothing else.  `$celestial.geocentric_caption($almanac)`,
+`$celestial.dome_caption($almanac, set='')` and
+`$celestial.pass_caption($almanac, set='')` return that paragraph's text
+on its own, translated exactly as the panel would show it, for you to
+place wherever your page keeps its explanations.  Give a caption the
+same `set` as its panel:
+
+```
+$celestial.dome_html($almanac, set='astro', caption=False)
+#set $why = $celestial.dome_caption($almanac, set='astro')
+#if $why
+<div class="my-popover">$why</div>
+#end if
+```
+
+A caption call returns an empty string exactly where its panel would
+carry no caption: when the almanac cannot draw the sky and the panel
+shows its install line instead, when the dome's drawing failed and the
+panel says so, or when the set is refused.  So an
+explanation never stands beside a chart that is not there.  The one
+state it cannot follow is the pass chart waiting for a pass: with no
+visible pass in the window the chart first-paints hidden, and the
+javascript unhides it when one arrives, long after the page was
+generated.  If your page shows the pass roster while the chart is
+hidden and your caption should hide with the chart, follow the `hidden`
+attribute of `#pass-wrap`, which the javascript keeps current.
+
+The text is ready to write into your markup as it stands: a translation
+may carry entities such as `&nbsp;` or markup of its own, so never escape
+it again.
 
 {: .note }
 One dome and one pass chart per page.  Both are addressed by id
