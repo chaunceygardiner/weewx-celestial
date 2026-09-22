@@ -765,7 +765,7 @@ surface is **additive only**: the DOM ids, the config keys, the fragment
 wrapper's data-attributes, the field group names, the
 `[CelestialFragments]` keys, the `celestial.css` token names and the
 public call signatures above never change meaning or disappear.  A panel
-may gain marks, keys and classes; `changes.txt` names each one.  9.3
+may gain marks, keys and classes; `changes.md` names each one.  9.3
 added two optional set keys, `narrow_label_scale` and `narrow_media`,
 and nothing on the page's own markup; the label layers inside a chart
 (`g.dome-labels`, `data-label-scale`, and `data-label-layers` and

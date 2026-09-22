@@ -45,7 +45,7 @@ with its time takes a comma ("Sep 15, 3:53 PM"), and a countdown shows
 one symbol per unit ("9 h 35 m", "in 5 m") instead of `hh:mm:ss`.
 Other languages keep their own words and their 24-hour clocks.  Nothing
 to do, unless you keep a lang file of your own for the Celestial skin:
-its renamed and new `[Texts]` keys are listed in `changes.txt`, and an
+its renamed and new `[Texts]` keys are listed in `changes.md`, and an
 entry under an old key simply stops being read.  A skin of your own that
 copies `celestial.js` should copy the new one; its config gains the key
 `clock`, which `config_script` writes.
@@ -123,7 +123,7 @@ while the old files sit there; the reason to delete them is that a later
 celestial` removes only the files it installed and leaves a directory it
 did not empty in place, so `skins/Celestial` would outlive the uninstall
 holding nothing but them.  If you had edited one of those files, the
-edit no longer applies — see the 9.0 entry in `changes.txt`.
+edit no longer applies — see the 9.0 entry in `changes.md`.
 
 Two more things to check, only if you ever pinned them.  A
 `search_list_extensions` line under `[[CelestialReport]]

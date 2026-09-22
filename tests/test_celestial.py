@@ -8949,7 +8949,7 @@ class TestPanels:
         The refusal is correct -- weewx-skyfield names layers by %g, so
         two at 1.2 collide -- but a section refused writes NO fragments,
         so the message has to say where a base the set never declared
-        came from.  changes.txt carries it as ACTION REQUIRED."""
+        came from.  changes.md carries it as ACTION REQUIRED."""
         def refusal(keys):
             with pytest.raises(ValueError) as e:
                 celestial_page.fragment_sets({'CelestialFragments': {'s': dict(keys)}})
@@ -11597,7 +11597,7 @@ class TestAmericanEnglish(unittest.TestCase):
     # invisible in review, because every one of these spellings is
     # correct somewhere -- just not here.  This is a sweep of every
     # tracked text file, so it covers comments, docstrings, templates,
-    # changes.txt, the manual and the shipped skin, which is where all
+    # changes.md, the manual and the shipped skin, which is where all
     # twenty-two of the words fixed on 2026-09-08 were living.
     #
     # THIS BLOCK IS SHARED VERBATIM with weewx-loopdata, weewx-celestial,
@@ -15888,7 +15888,7 @@ class TestManualInStepWithCode:
         the installer's number won.  Preserving that behavior usually
         means moving SKIN.CONF to match the assignment.  Moving the
         assignment instead is a deliberate change of the default and
-        belongs in changes.txt.  (Existing stations are unaffected
+        belongs in changes.md.  (Existing stations are unaffected
         either way: their weewx.conf already carries the live value.)
         weewx-purple hit exactly this on 2026-08-28 -- a shipped
         `timeout = 15` against a code fallback of 10 -- and the code
@@ -16100,7 +16100,7 @@ class TestManualInStepWithCode:
         """Every absolute link to one of these three published manuals,
         with the file it names."""
         sources = {'README.md': os.path.join(REPO_ROOT, 'README.md'),
-                   'changes.txt': os.path.join(REPO_ROOT, 'changes.txt'),
+                   'changes.md': os.path.join(REPO_ROOT, 'changes.md'),
                    'install.py': os.path.join(REPO_ROOT, 'install.py')}
         for name in sorted(os.listdir(DOCS_DIR)):
             if name.endswith('.md'):

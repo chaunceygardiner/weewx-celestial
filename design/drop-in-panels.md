@@ -503,7 +503,7 @@ are the set's `theme`, above.
   fragment wrapper's data-attributes, the field group names, the
   `[CelestialFragments]` set keys, the `celestial.css` token names and
   the public method signatures never change meaning or disappear.  A panel
-  may gain marks, keys and classes; `changes.txt` names each, as
+  may gain marks, keys and classes; `changes.md` names each, as
   skyfield's does.
 - What is NOT contract: the internals of `celestial.js`, the shape of
   the SVG the dial builds, the roster's inner spans.  A consumer that
@@ -778,7 +778,7 @@ Six steps, roughly, each leaving the tests green:
    twin-Celestial-report paragraph says); deleting the key likewise
    leaves the groups (absent means "not ours"); and two reports writing
    fragment sets into one `HTML_ROOT` must give them distinct prefixes;
-   `changes.txt`; release notes; the README screenshot only if the look
+   `changes.md`; release notes; the README screenshot only if the look
    changed, which it must not have.
 
 Then the liveseasons conversion from the manual (the acceptance test
