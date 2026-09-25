@@ -2448,6 +2448,11 @@ class TestSampleSkinRenders:
             "            \"         b.style.color = 'var(--brass)'; document.body.appendChild(b);\"\n"
             "            \"         return [a ? getComputedStyle(a).color : null,\"\n"
             "            \"                 getComputedStyle(b).color]; }\"),\n"
+            "        'dividers': page.evaluate(\n"
+            "            \"() => [['.cel-roster', 'borderTopColor'], ['.cel-row', 'borderBottomColor'],\"\n"
+            "            \"        ['header', 'borderBottomColor'], ['footer', 'borderTopColor'],\"\n"
+            "            \"        ['.cel-count', 'borderTopColor']].map(\"\n"
+            "            \"  ([s, p]) => getComputedStyle(document.querySelector(s))[p])\"),\n"
             '    }\n'
             '    browser.close()\n'
             'print(json.dumps(out))\n' % port)
@@ -2507,6 +2512,11 @@ class TestSampleSkinRenders:
         # and nothing said so.
         assert out['flash'] == 'chgflash', out['flash']
         assert out['arrow'][0] is not None and out['arrow'][0] == out['arrow'][1], out['arrow']
+        # The night plate's dividers as the cascade resolves them: the
+        # roster's lines on --divider, the header's and the footer's on
+        # --page-divider, and a chip -- a box -- still on --line.
+        assert out['dividers'] == ['rgb(103, 111, 144)'] * 2 + ['rgb(72, 81, 116)'] * 2 + [
+            'rgb(42, 51, 88)'], out['dividers']
 
     def test_pass_countdown_day_count_in_a_real_browser(self, wxskyfield_almanac,
                                                         tmp_path):
@@ -11582,6 +11592,44 @@ class TestContrast:
         assert not misses, '\n'.join(misses)
         assert not passing_exceptions, (
             'these exceptions pass now; remove them: %s' % sorted(passing_exceptions))
+
+    def test_a_night_divider_scores_what_its_paper_twin_scores(self):
+        """A line between rows or sections is not held to a bar: it is held
+        to its twin.  On the night plate each one scores (APCA) what the
+        same line scores on paper, each on its own ground -- the card for
+        the roster's lines, the page for the header's and the footer's.
+        Through 9.7 all four were --line, Lc 0 on night against 26 and 15
+        on paper."""
+        c = load_contrast()
+        css, blocks = self._sheet()
+        with open(os.path.join(SKIN_DIR, 'celestial-page.css'), encoding='utf-8') as f:
+            page = re.sub(r'/\*.*?\*/', '', f.read(), flags=re.S)
+        page_tokens = {
+            plate: dict(re.findall(r'--([\w-]+):\s*([^;}]+)',
+                                   ' '.join(re.findall(rule, page, re.M))))
+            for plate, rule in (('night', r'^:root\{([^}]*)\}'),
+                                ('light', r'^:root\.theme-light\{([^}]*)\}'))}
+
+        def color(sheet, selector, prop, plate):
+            token = re.search(r'var\(--([\w-]+)\)', self._prop(sheet, selector, prop)).group(1)
+            if token in page_tokens[plate]:
+                return page_tokens[plate][token].strip()
+            return self._value('var(--%s)' % token, plate, blocks)
+
+        lines = (('roster top', css, '.cel-roster', 'border-top', '--vault'),
+                 ('row', css, '.cel-row', 'border-bottom', '--vault'),
+                 ('header', page, 'header', 'border-bottom', '--night'),
+                 ('footer', page, 'footer', 'border-top', '--night'))
+        misses = []
+        for name, sheet, selector, prop, ground in lines:
+            lc = {}
+            for plate in ('night', 'light'):
+                under = c.flatten(self._value('var(%s)' % ground, plate, blocks))
+                over = c.flatten(color(sheet, selector, prop, plate), under + (1.0,))
+                lc[plate] = abs(c.apca(over, under))
+            if abs(lc['night'] - lc['light']) > .5:
+                misses.append('%s: night Lc %.1f, paper Lc %.1f' % (name, lc['night'], lc['light']))
+        assert not misses, '\n'.join(misses)
 
 
 class TestAmericanEnglish(unittest.TestCase):

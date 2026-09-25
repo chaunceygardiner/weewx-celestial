@@ -10,7 +10,8 @@
  * bare elements, so loading them in a host page repaints the whole
  * site.
  * The tokens these rules read are declared in celestial.css, which
- * every page loading this one also loads. */
+ * every page loading this one also loads -- all but --page-divider,
+ * which only this page draws and which is declared at the end. */
 
 *{box-sizing:border-box}
 
@@ -39,7 +40,7 @@ body{background:var(--night); color:var(--ink);
 
 /* Header */
 header{display:flex; justify-content:space-between; align-items:flex-start; gap:24px;
-       flex-wrap:wrap; border-bottom:1px solid var(--line); padding-bottom:22px}
+       flex-wrap:wrap; border-bottom:1px solid var(--page-divider); padding-bottom:22px}
 
 h1{font-family:Georgia,'Times New Roman',serif; font-variant-caps:small-caps;
    letter-spacing:.16em; font-weight:400; font-size:clamp(1.6rem,4vw,2.4rem);
@@ -52,7 +53,7 @@ h1 .over{color:var(--brass)}
 section{background:var(--vault); border:1px solid var(--line); padding:20px 22px 16px}
 
 
-footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--line);
+footer{color:var(--muted); font-size:.82rem; border-top:1px solid var(--page-divider);
        padding-top:16px; text-align:center; font-style:italic}
 
 footer a{color:inherit; text-underline-offset:3px; text-decoration-color:var(--brass)}
@@ -68,3 +69,12 @@ footer a:hover{color:var(--brass)}
  * the host-chrome test the moment it was made sensitive to leakage. */
 :root{color-scheme:dark}
 :root.theme-light{color-scheme:light}
+
+/* The rules under the header and over the footer divide the page, not a
+ * card, so they are measured on the page ground: a night line scores
+ * what its paper twin scores there, and the paper value on --night is
+ * APCA Lc 14.6, fainter than the same value on a white card.  #485174
+ * is Lc 14.7 on the night --night.  Declared here, not in
+ * celestial.css, because only this page draws them. */
+:root{--page-divider:#485174}
+:root.theme-light{--page-divider:#C9CFD8}

@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.7';
+  var CELESTIAL_JS_VERSION = '9.7.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their

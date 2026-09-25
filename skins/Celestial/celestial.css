@@ -33,14 +33,20 @@
   --ink:#E9E4D4;     /* primary text */
   --muted:#C0C5D9;   /* secondary text */
   --brass:#E0C27F;   /* accent */
-  --line:#2A3358;    /* borders, hairlines */
+  --line:#2A3358;    /* the outlines of boxes: cards, chips, the install hint */
+  /* The lines BETWEEN rows.  Not --line: a box's outline is its own
+   * edge, but a divider is the only thing separating two rows, and
+   * --line scores APCA Lc 0 on the card.  A night line scores what its
+   * paper twin scores on its own ground: #676F90 is Lc 26.1 on --vault,
+   * as the paper value is Lc 25.9 on white. */
+  --divider:#676F90;
   /* Chart furniture -- the dial's rings, ticks and rim.  NOT --line: that
    * is the color of a section border, and the dial is drawn ON the surface
    * that border surrounds, where it measures 1.20-1.42:1.  This is
    * weewx-skyfield 2.2's night `grid` token (same value, same reason: it
    * fixed the identical inheritance on the dome's altitude rings and
    * meridian cross), so the two pages still read as one family.  --line
-   * stays exactly as it is for the borders and hairlines it is for. */
+   * stays exactly as it is for the outlines it is for. */
   --grid:#6E7DBA;
   /* The sky charts' small labels (skyfield's sky.css values, kept in
    * step by test).  The star and ring labels are --muted on both plates;
@@ -109,7 +115,7 @@
  * value is skyfield's, and a test keeps it that way. */
 .theme-light, .theme-dark .domefrag[data-dome-palette="light"] svg, .theme-dark .passfrag[data-pass-palette="light"] svg, :root:not(.theme-light) .domefrag[data-dome-palette="light"] svg, :root:not(.theme-light) .passfrag[data-pass-palette="light"] svg{
   --night:#EFECE2; --vault:#FFFFFF; --ink:#1D2C4E; --muted:#5C6672;
-  --brass:#A44A08; --line:#C9CFD8; --grid:#7A899F;
+  --brass:#A44A08; --line:#C9CFD8; --divider:#C9CFD8; --grid:#7A899F;
   /* The paper plate hands the ring and star labels straight back to
    * --muted (sky.css's light rule), and the constellation names their
    * own value. */
@@ -220,9 +226,9 @@
 
 /* The roster: one row per body -- name chip, the distance odometer, then
  * rate / raw AU / altitude on the sub-line. */
-.cel-roster{border-top:1px solid var(--line)}
+.cel-roster{border-top:1px solid var(--divider)}
 .cel-row{display:grid; grid-template-columns:7.2em 1fr; gap:.1em .6em;
-     padding:.42em 0 .38em; border-bottom:1px solid var(--line);
+     padding:.42em 0 .38em; border-bottom:1px solid var(--divider);
      align-items:baseline}
 .cel-bname{font-variant-caps:small-caps; letter-spacing:.1em; white-space:nowrap}
 .cel-bname .cel-chip{display:inline-block; width:.62em; height:.62em; border-radius:50%;

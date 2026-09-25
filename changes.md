@@ -1,5 +1,28 @@
 # weewx-celestial change history
 
+## 9.7.1 2026/09/25
+- ACTION REQUIRED, for a skin of your own that embeds these panels: after
+  upgrading, RE-COPY celestial.css from skins/Celestial/ into your skin
+  and restart WeeWX.  Your skin keeps its own copy of that file, and
+  upgrading this extension does not replace it, so the roster fix below
+  does not reach your pages until you do.  Re-copy celestial.js at the
+  same time: it changes only its version string, and a 9.7 copy works
+  unchanged, but the browser console notes the difference until you do.
+  The bundled Celestial report needs no such step.
+- Fixed: on the night plate the lines between the roster's rows, and the
+  rules under the page header and over the footer, were all but
+  invisible.  They were drawn in the color of a box's outline, which
+  measures APCA Lc 0 against the ground they sit on.  Each now scores on
+  the night plate what the same line scores on paper, on its own ground:
+  Lc 26 on the card for the roster's lines, Lc 15 on the page for the
+  header's and the footer's.  The light plate is unchanged, and so are
+  the outlines of the cards, the countdown chips and the install hint.
+- For a skin of your own that embeds these panels: the roster's lines
+  now read a token of their own, `--divider`, and `--line` is left for
+  the outlines of boxes.  A skin that recolored the roster's lines by
+  overriding `--line` now overrides `--divider` for them; one that never
+  touched `--line` needs nothing.
+
 ## 9.7 2026/09/21
 - New, for a skin of your own that embeds these panels:
   geocentric_html, dome_html and pass_html take caption=False, which

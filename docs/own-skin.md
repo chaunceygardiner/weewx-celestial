@@ -685,8 +685,9 @@ of your own, loaded after `celestial.css`, restyles the lot:
 
 The token names are part of the contract, so overrides survive an
 upgrade.  They come in four families: the page surfaces (`--night`,
-`--vault`, `--ink`, `--muted`, `--brass`, `--line`, `--halo`), the chart
-furniture (`--grid`, and `--skylab`/`--conlab` for the sky charts'
+`--vault`, `--ink`, `--muted`, `--brass`, `--line` for the outlines of
+boxes, `--divider` for the lines between the roster's rows, `--halo`),
+the chart furniture (`--grid`, and `--skylab`/`--conlab` for the sky charts'
 labels), the per-body identity colors (`--c-sun`, `--c-moon`, `--c-mars`,
 … `--c-proxima`), and the darker edges the three pale bodies take on
 paper (`--e-sun`, `--e-moon`, `--e-venus`, `--e-earth`).  Read the top of
