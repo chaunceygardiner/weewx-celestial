@@ -35,7 +35,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '9.7.1'
+CELESTIAL_VERSION = '9.7.2'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -1305,10 +1305,11 @@ def remove_satellite(config: Any, tag: str) -> Dict[str, Any]:
         del almanac_names[tag]
         name_entry = 'removed'
     if norad is not None:
-        hints.append('The cached element file wxskyfield_sat_%s.tle (in the '
-                     'wxskyfield directory beside the station database) is '
-                     'not removed; delete it yourself if you want it gone.'
-                     % norad)
+        hints.append('The cached element files wxskyfield_sat_%s.csv and '
+                     'wxskyfield_sat_%s.tle, whichever are there (in the '
+                     'wxskyfield directory beside the station database), are '
+                     'not removed; delete them yourself if you want them gone.'
+                     % (norad, norad))
     if tag in _INSTALLER_DEFAULT_SATELLITES:
         hints.append('%s is a weewx-skyfield installer default: the next '
                      'weectl extension install of weewx-skyfield re-adds it '

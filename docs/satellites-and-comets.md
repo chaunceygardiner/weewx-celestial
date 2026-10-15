@@ -87,7 +87,8 @@ never crosses will honestly report no passes for ever
 rebuilt for the satellites that remain), and the display name — each if
 present, so removing an absent satellite is a no-op.  Three things it
 deliberately leaves: the cached element file
-(`wxskyfield_sat_<norad>.tle`, beside the station database); any
+(`wxskyfield_sat_<norad>.csv`, or `.tle` from a weewx-skyfield before 2.10, beside the
+station database); any
 `almanac.zenit23088.*` entries on the legacy `[LoopData] [[Include]]
 fields` line, which the utility never edits and which weewx-loopdata
 will warn about at startup until the line is trimmed or retired; and —

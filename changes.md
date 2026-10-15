@@ -1,5 +1,11 @@
 # weewx-celestial change history
 
+## 9.7.2 2026/10/14
+- `--remove-satellite` names both element files it leaves behind:
+  weewx-skyfield 2.10 caches a satellite's elements as
+  `wxskyfield_sat_<norad>.csv`, where earlier releases cached
+  `wxskyfield_sat_<norad>.tle`.
+
 ## 9.7.1 2026/10/02
 - ACTION REQUIRED, for a skin of your own that embeds these panels: after
   upgrading, RE-COPY celestial.css from skins/Celestial/ into your skin

@@ -660,14 +660,14 @@ def wxskyfield_almanac(wxskyfield_sky):
 @pytest.fixture(scope='session')
 def wxskyfield_sat_sky():
     """A satellites-configured Sky: skyfield 2.0's archived solstice-era
-    fixture TLEs (deterministic pins: the ISS's Jun 22 03:11 PDT visible
+    fixture elements (deterministic pins: the ISS's Jun 22 03:11 PDT visible
     pass; Tiangong crosses all week but never visibly).  Skips when the
     sibling checkout's fixtures are not available."""
     mod, user_root = load_wxskyfield()
     sat_dir = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
                            'tests', 'data')
-    if not os.path.exists(os.path.join(sat_dir, 'wxskyfield_sat_25544.tle')):
-        pytest.skip('the weewx-skyfield fixture TLEs are not available')
+    if not os.path.exists(os.path.join(sat_dir, 'wxskyfield_sat_25544.csv')):
+        pytest.skip('the weewx-skyfield 2.10 fixture elements are not available')
     s = mod.Sky(user_root, load_stars=True,
                 satellites={'iss': 25544, 'tiangong': 48274}, sat_dir=sat_dir)
     assert s.is_valid()
@@ -686,7 +686,7 @@ def wxskyfield_sat_almanac(wxskyfield_sat_sky):
 
 @pytest.fixture(scope='session')
 def wxskyfield_comet_sky():
-    """A satellites-AND-comets-configured Sky: the satellite fixture TLEs
+    """A satellites-AND-comets-configured Sky: the satellite fixture elements
     plus skyfield 2.1's archived MPC rows (deterministic pins: Halley
     faint at 35.9 AU, Hale-Bopp below the horizon, C/9999 Z9 'bright' the
     fabricated always-naked-eye comet, 220P/McNaught with the 2026-06-14
@@ -698,8 +698,8 @@ def wxskyfield_comet_sky():
                             'tests', 'data')
     if not os.path.exists(os.path.join(data_dir, 'wxskyfield_comets.txt')):
         pytest.skip('the weewx-skyfield comet fixtures are not available')
-    if not os.path.exists(os.path.join(data_dir, 'wxskyfield_sat_25544.tle')):
-        pytest.skip('the weewx-skyfield fixture TLEs are not available')
+    if not os.path.exists(os.path.join(data_dir, 'wxskyfield_sat_25544.csv')):
+        pytest.skip('the weewx-skyfield 2.10 fixture elements are not available')
     try:
         s = mod.Sky(user_root, load_stars=True,
                     satellites={'iss': 25544, 'tiangong': 48274},
@@ -1059,7 +1059,7 @@ class TestSampleSkinRenders:
         assert 'Calculated with weewx-skyfield' not in html
 
     def test_renders_with_satellites(self, wxskyfield_sat_almanac):
-        """Satellites configured (the skyfield 2.0 fixture TLEs): the dome
+        """Satellites configured (the skyfield fixture elements): the dome
         panel's roster first-paints the deterministic fixture pass -- the
         ISS's Jun 22 03:11 PDT visible pass with its appears/peaks/
         disappears line, Tiangong's honest no-pass row -- and the Next
@@ -13860,7 +13860,8 @@ class TestSatelliteUtility:
         assert report['norad'] == '23088'
         assert len(report['fields_removed']) == 20
         assert report['name_entry'] == 'removed'
-        assert any('wxskyfield_sat_23088.tle' in h for h in report['hints'])
+        assert any('wxskyfield_sat_23088.csv and wxskyfield_sat_23088.tle' in h
+                   for h in report['hints'])
         new = configobj.ConfigObj(str(out))
         assert 'zenit23088' not in new['Skyfield']['Satellites']
         fields = self._group(out)
