@@ -12379,10 +12379,10 @@ class TestI18n:
         """The shared vocabulary is copied verbatim from weewx-skyfield's
         lang files (German and French native-speaker reviewed; Danish
         contributed by a native speaker; Dutch, Spanish, Italian,
-        Norwegian and Swedish Beta): body names, moon phases,
-        hemispheres, ordinates, all 88 constellation names, and every
-        [Texts] key both pages render -- the same cross-repo rule as
-        celestial.css staying in step with sky.css.
+        Norwegian and Swedish complete but unreviewed): body names,
+        moon phases, hemispheres, ordinates, all 88 constellation names,
+        and every [Texts] key both pages render -- the same cross-repo
+        rule as celestial.css staying in step with sky.css.
         Skips when no weewx-skyfield lang directory is available."""
         candidates = [
             os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
@@ -15534,8 +15534,10 @@ class TestManualInStepWithCode:
         # Each row LEADS with its review status, in one of three
         # vocabularies: 'Reviewed' (a native speaker read this skin's own
         # strings), 'Partly reviewed' (only the vocabulary shared with
-        # weewx-skyfield, reviewed over there) or 'Beta'.  An untouched
-        # Beta row for a language since signed off is the drift that
+        # weewx-skyfield, reviewed over there) or 'Complete' (every
+        # string translated and pinned, nobody has read it -- the same
+        # word weewx-skyfield's table uses).  A 'Complete' row left
+        # standing after a native speaker signs off is the drift that
         # matters most here, and prose in the status cell instead of one
         # of these words is how that starts.
         #
@@ -15547,9 +15549,9 @@ class TestManualInStepWithCode:
         for row in re.findall(r'^\|[^|]+\|\s*`lang/\w+\.conf`\s*\|([^|]*)\|',
                               page, flags=re.M):
             row = row.strip()
-            assert row.startswith(('Reviewed', 'Partly reviewed', 'Beta')), \
+            assert row.startswith(('Reviewed', 'Partly reviewed', 'Complete')), \
                 'a language row does not lead with its review status: %r' % row
-            if not row.startswith('Beta'):
+            if not row.startswith('Complete'):
                 assert re.match(r'(Partly r|R)eviewed as of \d+\.\d+(\.\d+)? ', row), \
                     'a review is claimed without the release it was made '\
                     'against: %r' % row
