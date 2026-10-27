@@ -139,13 +139,13 @@ Per configured satellite, with the satellite's tag in place of `iss`:
 
 ```
 almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label,
-almanac.iss.next_visible_pass.rise.unix_epoch.raw,
-almanac.iss.next_visible_pass.set.unix_epoch.raw,
-almanac.iss.next_visible_pass.max_altitude.degree_angle.raw,
-almanac.iss.next_visible_pass.duration.second.raw,
-almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass,
-almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass,
-almanac.iss.next_visible_pass.set_azimuth.ordinal_compass,
+almanac.iss.next_visible_pass.visible_start.unix_epoch.raw,
+almanac.iss.next_visible_pass.visible_end.unix_epoch.raw,
+almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw,
+almanac.iss.next_visible_pass.visible_duration.second.raw,
+almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass,
+almanac.iss.next_visible_pass.visible_peak_azimuth.ordinal_compass,
+almanac.iss.next_visible_pass.visible_end_azimuth.ordinal_compass,
 almanac.iss.next_pass.rise.unix_epoch.raw,
 almanac.iss.next_pass.set.unix_epoch.raw,
 almanac.iss.next_pass.max_altitude.degree_angle.raw,
@@ -157,9 +157,17 @@ almanac.iss.next_pass.visible
 ```
 
 `az`/`alt`/`sunlit` drive the live marker on the dome; the
-`next_visible_pass` seven feed the Next Visible Pass roster and the pass
-chip; the `next_pass` eight feed the "next pass overhead" roster,
-`visible` being what tags each row.  The skin discovers your satellite
+`next_visible_pass` seven are the pass's visible stretch (weewx-skyfield
+2.12) and feed the Next Visible Pass roster and the pass chip; the
+`next_pass` eight feed the "next pass overhead" roster, `visible` and the
+visible stretch above being what tags each row.  There is
+deliberately no `rise` or `set` in the `next_visible_pass` group:
+weewx-loopdata keeps a group until its latest time passes, and a `set`
+there would hold a finished visible stretch on the page until the
+satellite set.  The same holds for any group of yours on the same
+report — loopdata groups by the field's chain, not by who declared it.
+
+The skin discovers your satellite
 *set* automatically from `[Skyfield] [[Satellites]]` — only the
 declaration is per-satellite, which the installer and
 [`--add-satellite`](satellites-and-comets.md#adding-and-removing-satellites)
@@ -266,6 +274,6 @@ sits beside these two:
     [[CelestialReport]]
         [[[LoopData]]]
             [[[[fields]]]]
-                satellites = almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.rise.unix_epoch.raw, almanac.iss.next_visible_pass.set.unix_epoch.raw, almanac.iss.next_visible_pass.max_altitude.degree_angle.raw, almanac.iss.next_visible_pass.duration.second.raw, almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass, almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_visible_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.rise.unix_epoch.raw, almanac.tiangong.next_visible_pass.set.unix_epoch.raw, almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.duration.second.raw, almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible
+                satellites = almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.visible_start.unix_epoch.raw, almanac.iss.next_visible_pass.visible_end.unix_epoch.raw, almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw, almanac.iss.next_visible_pass.visible_duration.second.raw, almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass, almanac.iss.next_visible_pass.visible_peak_azimuth.ordinal_compass, almanac.iss.next_visible_pass.visible_end_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.visible_start.unix_epoch.raw, almanac.tiangong.next_visible_pass.visible_end.unix_epoch.raw, almanac.tiangong.next_visible_pass.visible_peak_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.visible_duration.second.raw, almanac.tiangong.next_visible_pass.visible_start_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.visible_peak_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.visible_end_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible
                 comets = almanac.halley.az, almanac.halley.alt, almanac.halley.earth_distance, almanac.halley.mag, almanac.halley.label, almanac.halley.perihelion.unix_epoch.raw, almanac.hale_bopp.az, almanac.hale_bopp.alt, almanac.hale_bopp.earth_distance, almanac.hale_bopp.mag, almanac.hale_bopp.label, almanac.hale_bopp.perihelion.unix_epoch.raw
 ```

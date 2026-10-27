@@ -1237,34 +1237,46 @@ class CelestialPage:
                 chips.append(self._chip(chip_id, k, '', '', hidden=True))
 
         def pass_chip() -> str:
-            # The soonest visible pass across the configured satellites
+            # The soonest visible WINDOW across the configured satellites
             # -- the same pick the live layer makes -- so all the row's
-            # chips stand from the first byte; its rise and set instants
+            # chips stand from the first byte: "appears in" until the
+            # window opens, "overhead now" while it is open (weewx-skyfield
+            # 2.12's meaning).  A window already closed is passed over, as
+            # the live layer does; the almanac rolls at the window's end,
+            # so here that is only belt and braces.  Its start and end
             # bake so a feed without the pass keys still has a target to
-            # count from and roll into "overhead now".  A satellite whose
-            # tags error is skipped, as in the rosters.
-            best_rise = best_set = None
+            # count from and roll into "overhead now": the start floored,
+            # as every data-ts, and the end rounded UP, because the live
+            # layer compares a whole-second packet stamp with the
+            # fractional end and a floored bake hid the chip up to a
+            # second early.  A satellite whose tags error is skipped, as
+            # in the rosters.
+            best_start = best_end = None
             best_label = ''
             for sn in self.satellite_names():
                 try:
                     so = getattr(alm, sn)
                     sp = so.next_visible_pass
-                    sr = sp.rise.raw
-                    if sr is not None and (best_rise is None or sr < best_rise):
-                        best_rise = sr
-                        best_set = sp.set.raw
+                    st, en = sp.visible_start.raw, sp.visible_end.raw
+                    if st is None or (en is not None and en <= now):
+                        continue
+                    if best_start is None or st < best_start:
+                        best_start, best_end = st, en
                         best_label = _esc(so.label)
                 except Exception:
                     pass
-            if best_rise is None:
+            if best_start is None:
                 return self._chip('chip-pass', '', '', '', hidden=True)
-            data = ' data-ts="%d"' % int(best_rise)
-            if best_set is not None:
-                data += ' data-set="%d"' % int(best_set)
-            if best_set is not None and best_rise <= now < best_set:
+            data = ' data-ts="%d"' % int(best_start)
+            if best_end is not None:
+                data += ' data-set="%d"' % math.ceil(best_end)
+            # Begun means open: a closed window was passed over above, and
+            # a window with no end to read counts as open, as the live
+            # layer reads it.
+            if best_start <= now:
                 v, d = '', self._t('overhead now')
             else:
-                v, d = self._dhms(max(0, int(best_rise - now))), self._t('appears in')
+                v, d = self._dhms(max(0, int(best_start - now))), self._t('appears in')
             return self._chip('chip-pass', best_label, v, d, data)
 
         def shower_chip() -> str:
@@ -1928,61 +1940,123 @@ class CelestialPage:
         (see _draw_dome)."""
         return self.pass_fragment(alm, fs, palette)
 
-    def _pass_lines(self, alm: Any, so: Any, p: Any, no_pass_key: str,
-                    tag_visibility: bool) -> Tuple[str, str]:
-        """One roster row's two lines from a pass chain (next_pass or
-        next_visible_pass): the dated head line and the appears/peaks/
-        disappears sub-line.  The head line is composed, never
-        str(p.rise): the bare ValueHelper renders ephem_day (time-of-day
-        only), and a next pass can be days out -- a dated line is the
-        truthful first paint.  Same date + HM + countdown idiom as
-        skyfield's satellite chips and this page's own live layer
-        (fmtDayHM + satWhen), so the live replacement changes dress, not
-        meaning.  Whole days is a CALENDAR-day difference, not elapsed
-        seconds divided down: the count stands on the same line as the
-        pass's own date, and a count reckoned any other way contradicts
-        the date beside it twice a day -- rounding up calls a pass later
-        this evening "in 1 day" (Jacques Terrettaz's report against
-        weewx-skyfield's chips, the 2026-08-12 partial solar eclipse,
-        issue #6), rounding down calls one just past midnight "today".
-        Differencing the two local dates is DST-correct for free; the
-        floor at 1 is the fall-back Sunday's belt and braces, where 24
-        elapsed hours can land back on today.  The live layer's satWhen
-        reckons identically.  Honest rows when there is no pass: the
-        no-pass text with usable elements (sunlit is known), the
-        weewxd-log row without -- read only then, as the template read
-        it.  The any-pass table tags each row visible/not visible from
-        the pass's own bool."""
+    def _sat_when(self, alm: Any, start: float, end: Optional[float]) -> str:
+        """The countdown on a roster's head line, skyfield's _sat_when to
+        the letter: "overhead now" from start to end, minutes under an
+        hour, hours under a day, then calendar days.  Whole days is a
+        CALENDAR-day difference, not elapsed seconds divided down: the
+        count stands on the same line as the pass's own date, and a count
+        reckoned any other way contradicts the date beside it twice a day
+        -- rounding up calls a pass later this evening "in 1 day" (Jacques
+        Terrettaz's report against weewx-skyfield's chips, the 2026-08-12
+        partial solar eclipse, issue #6), rounding down calls one just
+        past midnight "today".  Differencing the two local dates is
+        DST-correct for free; the floor at 1 is the fall-back Sunday's
+        belt and braces, where 24 elapsed hours can land back on today.
+        One branch skyfield never meets: a start already past outside an
+        open window (a pass under way whose set cannot be read, or one
+        over and not yet rolled) is "just set", as the live layer's
+        satWhen says, never a countdown clamped to "in 1 m"."""
         now = alm.time_ts
+        delta = start - now
+        if end is not None and start <= now < end:
+            return self._t('overhead now')
+        if delta < 0:
+            return self._t('just set')
+        if delta < 3600:
+            return _keep_units(self._t('in {m} m', m=max(1, int(delta // 60))))
+        if delta < 86400:
+            return _keep_units(self._t('in {h} h', h=int(delta // 3600)))
+        days = max(1, (datetime.date.fromtimestamp(start)
+                       - datetime.date.fromtimestamp(now)).days)
+        return self._t('in {n} day', n=1) if days == 1 else self._t('in {n} days', n=days)
+
+    def _no_pass(self, so: Any, no_pass_key: str) -> Tuple[str, str]:
+        """The honest row when there is no pass: the no-pass text with
+        usable elements (sunlit is known), the weewxd-log row without --
+        read only then, as the template read it."""
+        if so.sunlit is not None:
+            return self._t(no_pass_key), ''
+        return self._t('no usable orbital elements — see the weewxd log'), ''
+
+    def _window_lines(self, alm: Any, so: Any, p: Any) -> Tuple[str, str]:
+        """The Next Visible Pass roster's two lines: the pass's VISIBLE
+        WINDOW (weewx-skyfield 2.12), exactly as skyfield's satellites
+        panel prints it -- the window's start date and time and its
+        countdown, then appears/peaks/disappears at the window's start,
+        peak and end and the window's length.  The head line is composed,
+        never str(p.visible_start): the bare ValueHelper renders ephem_day
+        (time-of-day only), and a next pass can be days out.  The minutes
+        and the peak round half to even, Python's rule and skyfield's, and
+        the live layer's roundHalfEven matches it: the window's length is
+        quantized to 10/128 s, so an exact half minute happens.  The peak
+        and the length are read in degrees and seconds by name, as the
+        feed declares them: a report's own angle or time unit must not
+        change what the first paint says.  A window
+        already closed (only on a report whose declaration keeps the group
+        until set; the almanac itself rolls at its end), or begun with no
+        end to read, prints its date and time without a countdown, as the
+        live layer does."""
+        start = p.visible_start.raw
+        if start is None:
+            return self._no_pass(so, 'no visible pass in the coming week')
+        end = p.visible_end.raw
+        line = self._date_hm(start)
+        if alm.time_ts < (start if end is None else end):
+            line += ' · ' + self._sat_when(alm, start, end)
+        # A figure that cannot be read blanks the sub-line, never the
+        # dated line above it: the live layer's renderWindowRow does the
+        # same.
+        try:
+            sub = _keep_units(self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
+                                      rise=_esc(p.visible_start_azimuth.ordinal_compass()),
+                                      alt='%.0f' % p.visible_peak_altitude.degree_angle.raw,
+                                      culm=_esc(p.visible_peak_azimuth.ordinal_compass()),
+                                      set=_esc(p.visible_end_azimuth.ordinal_compass()),
+                                      m='%d' % round(p.visible_duration.second.raw / 60.0)))
+        except Exception:
+            sub = ''
+        return line, sub
+
+    def _pass_lines(self, alm: Any, so: Any, p: Any, w: Any) -> Tuple[str, str]:
+        """The dome roster's two lines: the next pass of ANY kind, horizon
+        to horizon -- rise date and time with its countdown, then appears/
+        peaks/disappears at rise, culmination and set and the pass's
+        length -- tagged visible/not visible.  The tag says "visible"
+        when the pass is visible and either has not risen yet (true of
+        the pass to come) or is inside its visible window, "not visible"
+        otherwise: from rise to the window's start the satellite is in
+        shadow, too low or in daylight, and from the window's end to set
+        it is again.  The window is next_visible_pass's (`w`, the one the
+        visible roster's row read): the same pass's until its window
+        closes, when that tag rolls on."""
         rise = p.rise.raw
         if rise is None:
-            if so.sunlit is not None:
-                return self._t(no_pass_key), ''
-            return self._t('no usable orbital elements — see the weewxd log'), ''
+            return self._no_pass(so, 'no pass in the coming week')
         sset = p.set.raw
-        delta = rise - now
-        if sset is not None and rise <= now < sset:
-            when = self._t('overhead now')
-        elif delta < 3600:
-            when = _keep_units(self._t('in {m} m', m=max(1, int(delta // 60))))
-        elif delta < 86400:
-            when = _keep_units(self._t('in {h} h', h=int(delta // 3600)))
-        else:
-            days = max(1, (datetime.date.fromtimestamp(rise)
-                           - datetime.date.fromtimestamp(now)).days)
-            when = self._t('in {n} day', n=1) if days == 1 else self._t('in {n} days', n=days)
-        line = self._date_hm(rise) + ' · ' + when
-        sub = _keep_units(self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
-                                  rise=_esc(p.rise_azimuth.ordinal_compass()),
-                                  alt='%.0f' % p.max_altitude.raw,
-                                  culm=_esc(p.culmination_azimuth.ordinal_compass()),
-                                  set=_esc(p.set_azimuth.ordinal_compass()),
-                                  m='%d' % round(p.duration.raw / 60)))
-        if tag_visibility:
-            if p.visible is True:
-                sub += ' · ' + self._t('visible')
-            elif p.visible is False:
-                sub += ' · ' + self._t('not visible')
+        line = self._date_hm(rise) + ' · ' + self._sat_when(alm, rise, sset)
+        try:
+            sub = _keep_units(self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
+                                      rise=_esc(p.rise_azimuth.ordinal_compass()),
+                                      alt='%.0f' % p.max_altitude.degree_angle.raw,
+                                      culm=_esc(p.culmination_azimuth.ordinal_compass()),
+                                      set=_esc(p.set_azimuth.ordinal_compass()),
+                                      m='%d' % round(p.duration.second.raw / 60)))
+        except Exception:
+            return line, ''        # as _window_lines: the dated line stands
+        visible = p.visible
+        if visible is True and alm.time_ts >= rise:
+            # The window is the next visible pass's (see passVisibleNow in
+            # celestial.js): this pass's while it is to come or open, a
+            # later pass's (or none) once it has closed.
+            start, end = w.visible_start.raw, w.visible_end.raw
+            now = alm.time_ts
+            visible = (start is not None and end is not None and sset is not None
+                       and rise <= start < sset and start <= now < end)
+        if visible is True:
+            sub += ' · ' + self._t('visible')
+        elif visible is False:
+            sub += ' · ' + self._t('not visible')
         return line, sub
 
     def _sat_rows(self, alm: Any) -> List[Tuple[str, str, str, str, str, str]]:
@@ -2005,11 +2079,25 @@ class CelestialPage:
                 try:
                     so = getattr(alm, name)
                     label = _esc(so.label)
-                    sat_line, sat_sub = self._pass_lines(
-                        alm, so, so.next_visible_pass, 'no visible pass in the coming week', False)
-                    any_line, any_sub = self._pass_lines(
-                        alm, so, so.next_pass, 'no pass in the coming week', True)
                 except Exception:
+                    continue
+                # Each table's row on its own guard: a window that cannot
+                # be read must not cost the dome's row, nor the reverse.
+                # A row that fails first-paints empty and goes live from
+                # the feed; a satellite whose rows BOTH fail is skipped,
+                # as before.
+                failed = 0
+                w = None
+                try:
+                    w = so.next_visible_pass       # read once, for both rows
+                    sat_line, sat_sub = self._window_lines(alm, so, w)
+                except Exception:
+                    sat_line, sat_sub, failed = '', '', failed + 1
+                try:
+                    any_line, any_sub = self._pass_lines(alm, so, so.next_pass, w)
+                except Exception:
+                    any_line, any_sub, failed = '', '', failed + 1
+                if failed == 2:
                     continue
                 rows.append((name, label, sat_line, sat_sub, any_line, any_sub))
             self._memo[key] = rows
@@ -2140,9 +2228,10 @@ class CelestialPage:
     @_panel_guard()
     def dome_roster_html(self, alm: Any, set: str = '') -> str:
         """The dome's satellite roster: the next pass of ANY kind per
-        configured satellite, each row tagged visible/not visible from
-        next_pass.visible -- the dome draws any overhead satellite, dimmed
-        when not visible, so this is its table.  '' without rows, and ''
+        configured satellite, horizon to horizon, each row tagged visible
+        or not visible from next_pass.visible and its window (see
+        _pass_lines) -- the dome draws any overhead satellite, dimmed when
+        not visible, so this is its table.  '' without rows, and ''
         when the almanac cannot draw the sky (_can_draw): rows under an
         install hint would be rows only skyfield could have filled -- and
         '' beside a refused set, the dome it belongs to being refused."""
@@ -2173,7 +2262,7 @@ class CelestialPage:
 
     def _pass_caption_text(self) -> str:
         return self._t(
-            "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.")
+            "The whole sky as it will stand at the satellite's highest visible point, on the date above — the dashed arc is the satellite's path and the solid stretch the part you can see, its times at its ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.")
 
     @_panel_guard()
     def pass_html(self, alm: Any, set: str = '', caption: bool = True) -> str:
@@ -2186,9 +2275,11 @@ class CelestialPage:
 
     def _pass_html(self, alm: Any, r: 'Resolved', caption: bool = True) -> str:
         """The Next Visible Pass chart: skyfield 2.0's pass_chart_html --
-        the whole sky as it will stand at the culmination of the soonest
-        upcoming visible pass among the configured satellites, the
-        pass's arc dashed across it under a dated head line (the dome
+        the whole sky as it will stand at the visible peak of the soonest
+        upcoming visible pass among the configured satellites (weewx-
+        skyfield 2.12: the highest point of its visible window, where
+        the featured dot is always sunlit), the pass's arc dashed across it
+        and its visible window drawn solid, under a dated head line (the dome
         stopped drawing the arc in 2.0: an undated future track on the
         now-sky crossed stars it will never cross) -- on the named set's
         plate and scale, with its caption.  The chart area is hidden
@@ -2199,7 +2290,7 @@ class CelestialPage:
         During an in-progress pass the chart's epoch is within minutes
         of now, so the javascript sweeps the featured satellite's
         data-body marker along the drawn arc; the chart's sun, moon,
-        planets and stars belong to the culmination instant and are
+        planets and stars belong to the visible peak's instant and are
         never nudged.  '' when the almanac cannot draw the sky
         (_can_draw, the template's own gate through 8.5): a page on a
         lesser tier would otherwise poll an empty fragment for ever for a
@@ -2223,7 +2314,8 @@ class CelestialPage:
     @_panel_guard()
     def pass_roster_html(self, alm: Any, set: str = '') -> str:
         """The Next Visible Pass panel's roster: the next VISIBLE pass per
-        configured satellite, the chart's own story.  '' without rows, or
+        configured satellite, as its visible window (_window_lines), the
+        chart's own story.  '' without rows, or
         when the almanac cannot draw the sky, or beside a refused set (as
         the dome's)."""
         r = self._resolve(alm, set, 'pass_roster_html', 'pass')

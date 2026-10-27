@@ -321,7 +321,20 @@ not broken — it is telling you the truth.
 
 Also worth knowing: most passes are *not* visible passes.  The "next pass
 overhead" roster counts every pass; the Next Visible Pass panel only
-counts the ones where the satellite is sunlit against a dark enough sky.
+counts the ones where the satellite is sunlit against a dark enough sky
+(the sun at least 6° down) while at least 10° up, for at least a minute.
+
+## A body on the dial has no name
+
+Not a fault.  The dial writes a name only where it reads as that body's:
+against its mark, or at the end of a short dotted line to it, and nearer
+its own mark than any other mark, motion trail or comet tail.  Where no
+such place exists the name is left off rather than written beside
+another body.  It happens most to Mercury, the Sun and Venus, which
+often sit inside one another's marks, and more on a phone, whose bigger
+type has less room.  The mark keeps its name for a tap or a hover, and
+the roster beside the dial lists every body.  Through 9.7.2 the dial
+named such bodies anyway, often beside the wrong mark.
 
 ## A comet's row and diamond are empty
 

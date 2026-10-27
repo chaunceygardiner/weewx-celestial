@@ -75,9 +75,10 @@ count on is the packet's own.
 Four chips are always on when their fields are available:
 
 - **The soonest visible satellite pass**, across every configured
-  satellite: `appears in 00:41:12`, then `overhead now` for the duration
-  of the pass, then `just set` in the moment before the feed rolls
-  forward to the next one.
+  satellite: `appears in 41 m`, then `overhead now` for as long as
+  the satellite can be seen.  When that stretch ends — the satellite
+  enters Earth's shadow, sinks too low or meets the dawn — the chip moves
+  on to the next visible pass.
 - **Sunset or sunrise**, whichever comes next.  The chip flips by itself
   at the event.
 - **The next meteor shower's peak**, under the shower's name, with the
@@ -138,7 +139,10 @@ the room: the dome carries stars to magnitude 4.0 instead of 5.0 and
 names only the brightest, a constellation is named only where its figure
 is wide enough to hold the name, and the Geocentric's distance rings are
 labeled every other decade.  Every body, satellite, comet and radiant is
-drawn and named on both.
+drawn on both.  On the Geocentric dial a crowded name may be left off
+on either, where it could not sit so that it reads as its own body's
+(see [The Geocentric](#the-geocentric)); the bigger type of the phone
+drawing leaves off more.
 
 Turning the phone switches between them immediately — both drawings are
 already on the page, so nothing is fetched and nothing is recomputed —
@@ -172,6 +176,21 @@ On the dial:
   after the page loads the marks stand still by design.
 - **Every mark answers a tap**: touch or hover it for its name, live
   altitude and live distance.
+
+**Names** sit right against their own mark, nearer it than any other
+mark, trail or comet tail.  When a name cannot touch its mark, it may
+hang a little way out on a short **dotted line**; a dotted line is
+always a name's, never a trail, which is solid and in its body's color.
+Where no such place exists the name is left off rather than written
+beside another body, so on a crowded dial some marks go unnamed: most
+often Mercury, the Sun and Venus when they crowd together, since a name
+for a mark touching another's would read as either.  The roster beside
+the dial still lists every body, and a tap on the mark names it.  Names
+keep their places as the sky turns, moving only when a neighbor
+crowds them out.
+The ring numbers ("0.01 au", "1 au", ...) sit on their own rings, at
+whichever of eight places around the ring is clear of names, marks and
+trails, so they are not always on the same spoke.
 
 Configured comets ride the same dial, drawn as **diamonds** between
 Neptune and Proxima in the roster order:
@@ -237,8 +256,11 @@ there that genuinely moves fast.  A satellite marker is:
 ![The sky dome as Tiangong enters Earth's shadow](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDome-Tiangong-shadow-entry.gif)
 
 Beside the dome, the **next pass overhead** roster gives every configured
-satellite a row counting down to its next pass of *any* kind, tagged
-`visible` or `not visible`, rolling to `overhead now` during the pass.
+satellite a row counting down to its next pass of *any* kind, horizon to
+horizon, rolling to `overhead now` during the pass.  Its tag says
+`visible` for a pass still to come that will be visible, and during the
+pass only while the satellite can actually be seen; before that stretch
+begins and after it ends the row reads `not visible`.
 Two honest rows replace a countdown when there is nothing to count:
 `no pass in the coming week`, and `no usable orbital elements — see the
 weewxd log` when the elements could not be fetched or have expired.
@@ -246,21 +268,32 @@ weewxd log` when the elements could not be fetched or have expired.
 ## The Next Visible Pass
 
 This panel is the visible-pass story, and it charts exactly one pass: the
-soonest upcoming *visible* one across all your satellites.  The whole sky
-is drawn as it will stand **at that pass's highest point**, on the date in
-the head line, with the pass's arc dashed across it and the rise and set
-times at the ends.  One chart, one instant — so the arc crosses the stars
+soonest upcoming *visible* one across all your satellites.  A pass is
+visible only while the satellite is in sunlight, your sun is at least 6°
+below the horizon and the satellite at least 10° up, and only if that
+lasts a minute or more.  The whole sky is drawn as it will stand **at
+the highest point of the part you can see**, on the date in the head
+line, with the pass's arc dashed across it and the visible stretch drawn
+solid, its times at its ends.  One chart, one instant — so the arc crosses the stars
 it will really cross.  Only stars bright enough for a twilight sky are
 drawn, because a visible pass happens while your sky is only half dark.
+
+The roster beside the chart gives each satellite's next visible pass as
+that visible stretch: when it begins and how long until then, then where
+the satellite appears, how high it peaks and where it disappears, and
+for how many minutes it can be seen.
 
 During the pass itself the chart's moment is minutes away, and the page
 sweeps the satellite's dot along the drawn arc in real time, flipping it
 between the solid sunlit dot and the hollow in-shadow ring in step with
-the dome's marker.
+the dome's marker.  Once the visible stretch ends, the station draws the
+next visible pass's chart at its next report cycle, and the page brings
+that chart in within five minutes more, often before the satellite has
+set.
 
-When the pass ends, the moving dot and its name label leave the chart —
-the satellite has set, exactly as its mark disappears from the sky dome
-at that instant.  The arc, the head line and the rest of the drawn sky
+If the satellite sets before the next chart arrives, the moving dot and
+its name label leave the chart at the set, exactly as its mark
+disappears from the sky dome at that instant.  The arc, the head line and the rest of the drawn sky
 stay until the next chart arrives a few minutes later, so in that gap the
 panel shows the record of the pass that has just finished, with no
 satellite on it.  A page opened in that gap comes up the same way once
@@ -289,7 +322,9 @@ computation the page did not get.
 ## A short glossary
 
 - **Visible pass** — a pass during which the satellite is sunlit while
-  your own sky is dark enough to see it.  Most passes are not visible.
+  your own sky is dark enough to see it (the sun at least 6° down) and
+  it is at least 10° up, for at least a minute.  Most passes are not
+  visible.
 - **Sunlit** — the satellite is in sunlight, above Earth's shadow.
 - **Culmination** — the highest point of a pass.
 - **Magnitude** — brightness, smaller is brighter; about 6.0 is the

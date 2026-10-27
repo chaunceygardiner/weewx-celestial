@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.7.2';
+  var CELESTIAL_JS_VERSION = '9.8';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -397,8 +397,9 @@ var celestial = (function () {
   //     falls out of putting 17 px cardinals outside it with the wide
   //     frame's proportional clearance and keeping them inside the box;
   //   - the radial geometry is otherwise the wide frame halved, EXCEPT
-  //     the inner ring (44, not 28): the Earth label below the center is
-  //     16 units of type now and the innermost ring has to clear it;
+  //     the inner ring (44, not 28): Earth's name, 16 units of type,
+  //     sits around the center (below it when there is room) and the
+  //     innermost ring has to leave it space;
   //   - the marks take weewx-skyfield's narrow ratio for a mark radius,
   //     0.9 of the wide value rather than the frame's 0.55, so a dot
   //     stays findable under a thumb (its jupiter is r=5.5 wide, r=5
@@ -419,7 +420,7 @@ var celestial = (function () {
     cardR: 310, cardDy: 4.5, earthR: 9, earthDy: 24,
     sunR: 8, glowR: 13, moonR: 8, dotR: 6.5, cometR: 5,
     tailGap: 6.0, rays: [[-0.18, 9.0], [0.0, 12.0], [0.18, 9.0]],
-    labOff: 17, labDy: 4, labIn: 250, ringDy: -3, ringEvery: 1,
+    ringDy: -3, ringEvery: 1,
     labPx: 12, ly: true
   };
   var DIAL_NARROW = {
@@ -427,7 +428,7 @@ var celestial = (function () {
     cardR: 165, cardDy: 5.5, earthR: 8, earthDy: 29,
     sunR: 7, glowR: 11.5, moonR: 7, dotR: 6, cometR: 4.5,
     tailGap: 5.5, rays: [[-0.18, 8.1], [0.0, 10.8], [0.18, 8.1]],
-    labOff: 21, labDy: 6, labIn: 125, ringDy: -4.5, ringEvery: 2,
+    ringDy: -4.5, ringEvery: 2,
     labPx: 16, ly: false
   };
   // The frame the dial is drawn in right now.  buildDial sets it; every
@@ -659,12 +660,14 @@ var celestial = (function () {
     parent.appendChild(e);
     return e;
   }
-  var dialFixedLabels = []; // the labels that never move (the cardinals,
-                          // the Earth name), the seed every placement
-                          // pass starts from.  Their BOXES are measured
-                          // afresh each pass rather than kept from build
-                          // time: a stylesheet can change their size
-                          // without this drawing ever being rebuilt.
+  var dialFixedLabels = []; // the labels that never move (the cardinals),
+                          // the seed every placement pass starts from.
+                          // Their BOXES are measured afresh each pass
+                          // rather than kept from build time: a
+                          // stylesheet can change their size without
+                          // this drawing ever being rebuilt.
+  var dialEarthLabel = null; // Earth's name: placed by the pass like any
+                          // other (9.8), around Earth, below first
   var dialRings = [];     // the ring numbers, placed last of all
   var pendingLabels = []; // this render's movable names, awaiting placement
   var dialMarks = null;   // per-body dial elements, built on first render
@@ -694,9 +697,12 @@ var celestial = (function () {
     dial.setAttribute('data-frame', dialNow === DIAL_NARROW ? 'narrow' : 'wide');
     dialFixedLabels = [];
     dialRings = [];
-    // Distance rings, one per decade, labeled down the SSE radial (the
-    // evening sky crowds the west and the label radial must not sit in
-    // it; nothing guarantees a clear lane, but SSE collides least).
+    placedSpot = {};      // a different drawing: no spot carries over
+    // Distance rings, one per decade.  Each ring's number is built on the
+    // SSE radial (the evening sky crowds the west, and SSE collides
+    // least) and the placement pass moves it, ring number last of all,
+    // to the first of eight places around its ring that is clear
+    // (RING_AZ, 9.8).
     var au = function(d) { return fmt('{dist} au', {dist: d}); };
     var ringLabels = [au('0.01'), '0.1', au('1'), '10', '100',
                       au('10\u00B3'), '10\u2074', '10\u2075'];
@@ -734,8 +740,7 @@ var celestial = (function () {
         // Placed LAST of everything, so a ring number yields to a body's
         // name rather than the other way about: the caption already says
         // the rings step by ten, where an unnamed dot says nothing.
-        dialRings.push({el: rlab, text: ringLabels[lg + 2], x: rp[0],
-                        y: rp[1] + dialNow.ringDy});
+        dialRings.push({el: rlab, text: ringLabels[lg + 2], r: rr});
       }
     }
     svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: dialNow.rim,
@@ -758,13 +763,17 @@ var celestial = (function () {
       dialFixedLabels.push({el: card, text: cardinals[c][1], x: pc[0],
                             y: pc[1] + dialNow.cardDy, anchor: 'middle'});
     }
-    svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: dialNow.earthR,
-                     'class': 'cel-fill-earth cel-geo-earth'}, dial);
     var elab = BODY_LABELS['earth'] || 'Earth';
+    var earthDisc = svgEl('circle', {cx: dialNow.cx, cy: dialNow.cy, r: dialNow.earthR,
+                                     'class': 'cel-fill-earth cel-geo-earth'}, dial);
+    // A <title> like every other mark's, so a name the pass drops still
+    // answers a tap (sky.js serves any mark that owns one).
+    svgEl('title', {}, earthDisc, elab);
+    // earthDy is only where the name is built: the placement pass puts
+    // it around Earth, below when there is room.
     var earthLab = svgEl('text', {x: dialNow.cx, y: dialNow.cy + dialNow.earthDy,
                                   'class': 'cel-earthlab'}, dial, elab);
-    dialFixedLabels.push({el: earthLab, text: elab, x: dialNow.cx,
-                          y: dialNow.cy + dialNow.earthDy, anchor: 'middle'});
+    dialEarthLabel = {el: earthLab, text: elab};
     var trailsG = svgEl('g', {}, dial);
     var marks = {};
     GEO_BODIES.forEach(function(key) {
@@ -795,6 +804,8 @@ var celestial = (function () {
         m.dot = svgEl('circle', {r: dialNow.dotR, 'class': 'cel-geodot cel-fill-' + key}, g);
       }
       m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
+      // The dotted line a crowded name hangs off, shown only with it.
+      m.lead = svgEl('line', {'class': 'cel-leader', display: 'none'}, dial);
       marks[key] = m;
     });
     // The comet marks: a diamond with an anti-sunward tail fan and the
@@ -823,6 +834,8 @@ var celestial = (function () {
       }
       m.dot = svgEl('path', {'class': 'cel-cometdot'}, g);
       m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
+      // The dotted line a crowded name hangs off, shown only with it.
+      m.lead = svgEl('line', {'class': 'cel-leader', display: 'none'}, dial);
       marks[key] = m;
     });
     return marks;
@@ -847,6 +860,9 @@ var celestial = (function () {
     // the angle is azimuth, so everything -- planets and comets alike --
     // sweeps at the sky's diurnal rate and earns the same wake.
     var haveRates = (azRate !== null && auRate !== null && altRate !== null);
+    // What was drawn, kept for the placement pass (names keep clear of
+    // another body's trail, and a name's own trail is its tail).
+    segs.coords = [];
     var step = TRAIL_SEC / TRAIL_N;
     for (var i = 0; i < TRAIL_N; i++) {
       var seg = segs[i];
@@ -867,6 +883,7 @@ var celestial = (function () {
       seg.setAttribute('y1', pA[1]);
       seg.setAttribute('x2', pB[0]);
       seg.setAttribute('y2', pB[1]);
+      segs.coords.push([pA[0], pA[1], pB[0], pB[1]]);
       // The wake fades from a visible FLOOR, not from nothing: ramping
       // straight off zero put the oldest segments at 1.02:1, an hour of
       // trail no eye can find.  The newest segment carries the motion and
@@ -959,9 +976,9 @@ var celestial = (function () {
     }
     return estimateMetrics(el, text);
   }
-  // A label already at its final position -- the cardinals, the Earth
-  // name -- is simply its own measured box, which also settles what its
-  // text-anchor resolved to without this code having to know.
+  // A label already at its final position -- the cardinals -- is simply
+  // its own measured box, which also settles what its text-anchor
+  // resolved to without this code having to know.
   function fixedBox(f) {
     if (f.el.getBBox) {
       try {
@@ -1002,59 +1019,678 @@ var celestial = (function () {
   function boxesHit(a, b) {
     return a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
   }
-  function newPlacer(taken) {
-    return {
-      boxes: taken.slice(),
-      // Try each candidate in turn; the first that clears everything
-      // already placed wins, and its box joins them.  None free means
-      // the label is dropped.
-      place: function(lab, cands, m) {
-        for (var i = 0; i < cands.length; i++) {
-          var c = cands[i];
-          var box = labelBox(c.x, c.y, c.anchor, m);
-          var free = true;
-          for (var j = 0; j < this.boxes.length; j++) {
-            if (boxesHit(box, this.boxes[j])) {
-              free = false;
-              break;
-            }
-          }
-          if (free) {
-            this.boxes.push(box);
-            lab.setAttribute('x', c.x);
-            lab.setAttribute('y', c.y);
-            lab.setAttribute('text-anchor', c.anchor);
-            lab.removeAttribute('display');
-            return true;
-          }
-        }
-        lab.setAttribute('display', 'none');
-        return false;
-      }
-    };
+  // ---- where each name goes (9.8) ----------------------------------------
+  // A NAME IS PLACED ONLY WHERE IT READS AS ITS OWN BODY'S.  Through 9.7.2
+  // each name took the first of four spots on the radial line through its
+  // mark, 17 to 40 units out, that missed every label already placed; a
+  // body at a similar bearing was then as near the name as its own, and
+  // on a phone seven in ten of the names drawn sat where another body was
+  // less than twice as far as their own ("Moon" written over Uranus's
+  // dot).  Now a name touches its mark, is held to an ownership test
+  // against every other mark, and is dropped where no spot passes: a
+  // missing name is honest, a wrong one is not, and the mark keeps its
+  // <title> for a tap.
+  //
+  // The rules, in the order the code applies them:
+  // - EIGHT SPOTS touching the mark (right, left, above, below, the
+  //   diagonals), the ink's near edge NAME_GAP from the disc, tried in
+  //   order of how nearly each points away from Earth;
+  // - OWNERSHIP: every other mark's disc at least NAME_TOUCH farther from
+  //   the name's ink than its own mark is, and NAME_MIN farther from the
+  //   name's near end -- TOUCH equal to GAP keeps every other mark twice
+  //   as far as the name's own;
+  // - LEADER LINES (LEAD_TIERS): a name refused at all eight tries six of
+  //   the directions farther out, joined to its mark by a dotted line,
+  //   held to the same ownership test from its real distance;
+  // - STROKES: another body's trail or comet tail keeps STROKE_CLEAR from
+  //   a name's ink, and every line keeps NAME_TOUCH from every stroke --
+  //   a stroke ending at a name reads as a line pointing at it;
+  // - a name's OWN tail and trail: spots they cross are tried last;
+  // - REMEMBERED SPOTS: each name's last spot is tried first in its tier,
+  //   so names do not hop between redraws;
+  // - the ORDER: the Moon, then Earth, then the most crowded first.
+  // Measured over 211 skies a year apart (design/dial-label-placement.md
+  // in the repository has the method and the figures).
+  var NAME_GAP = 3;        // the ink's near edge to its own mark's disc
+  var NAME_TOUCH = 3;      // every other mark at least this much farther from the ink
+  var NAME_MIN = 6;        // ... and this much farther from the name's near end
+  var LEAD_TIERS = [8, 16];          // a leadered spot's extra distance, in order
+  var LEAD_TRIM = 1.5;               // the line stops this short of the name
+  var LEAD_SPOTS = ['n', 's', 'ne', 'nw', 'se', 'sw'];  // never level: a level
+                                     // line into a name's first or last letter
+                                     // reads as a dash
+  var LINE_CLEAR = NAME_GAP + NAME_TOUCH;   // a line to every other disc
+  var STROKE_CLEAR = NAME_GAP + NAME_TOUCH; // a stroke to a name's ink: what
+                                     // another mark keeps from a name at GAP
+  var STROKE_RAD = 0.75;             // half a trail's stroke
+  var RING_AZ = [157.5, 202.5, 112.5, 247.5, 67.5, 292.5, 22.5, 337.5];
+  var RING_CLEAR = NAME_GAP + NAME_TOUCH;   // a ring number to discs and strokes
+  var RING_NAME = 12;      // ... and to every name: a ring number a word-space
+                           // from a name of the same muted color read as one
+                           // phrase ("0.01 au  Moon"), and 6 would be no rule,
+                           // two padded boxes already keeping 6 apart
+  var CROWD_R = 30;        // the neighborhood "most crowded first" counts in
+  var PLACE_FIRST = ['moon', 'earth'];
+  var placedSpot = {};     // body key (or 'ring <text>') -> its last spot;
+                           // buildDial empties it, a dropped name loses it
+
+  // Segment and box geometry: a box is {l, r, t, b}, a segment
+  // [x1, y1, x2, y2].
+  function segDist(px, py, s) {
+    var dx = s[2] - s[0], dy = s[3] - s[1], L = dx * dx + dy * dy;
+    var t = L ? Math.max(0, Math.min(1, ((px - s[0]) * dx + (py - s[1]) * dy) / L)) : 0;
+    return Math.sqrt(Math.pow(px - s[0] - t * dx, 2) + Math.pow(py - s[1] - t * dy, 2));
   }
-  // The positions a body's name will accept, best first: radially
-  // outward from its mark (inward near the rim, where outward would
-  // leave the drawing), then the opposite side, then the two flanks.
-  function labelCandidates(az, r) {
-    var a = az * Math.PI / 180;
-    var out = [];
-    // Outward first (inward near the rim, where outward would leave the
-    // drawing), then the other side, then both again further off: a
-    // crowded name gets a second ring to sit in before it is given up,
-    // which is the difference between a comet keeping its name on a
-    // desk and losing it.
-    var base = (r <= dialNow.labIn) ? [1, -1] : [-1, 1];
-    var tries = [base[0], base[1], base[0] * 1.9, base[1] * 1.9];
-    for (var i = 0; i < tries.length; i++) {
-      var rr = r + tries[i] * dialNow.labOff;
-      var sx = Math.sin(a) * tries[i];
-      var anchor = sx > 0.35 ? 'start' : (sx < -0.35 ? 'end' : 'middle');
-      out.push({x: dialNow.cx + rr * Math.sin(a),
-                y: dialNow.cy - rr * Math.cos(a) + dialNow.labDy,
-                anchor: anchor});
+  function segBox(s, b) {
+    // Liang-Barsky: does the segment enter the box?
+    var t0 = 0, t1 = 1, dx = s[2] - s[0], dy = s[3] - s[1];
+    var p = [-dx, dx, -dy, dy], q = [s[0] - b.l, b.r - s[0], s[1] - b.t, b.b - s[1]];
+    for (var i = 0; i < 4; i++) {
+      if (p[i] === 0) {
+        if (q[i] < 0) {
+          return false;
+        }
+      } else {
+        var t = q[i] / p[i];
+        if (p[i] < 0) {
+          if (t > t1) {
+            return false;
+          }
+          t0 = Math.max(t0, t);
+        } else {
+          if (t < t0) {
+            return false;
+          }
+          t1 = Math.min(t1, t);
+        }
+      }
+    }
+    return true;
+  }
+  function segsCross(a, b) {
+    var o = function(px, py, qx, qy, rx, ry) {
+      return (qx - px) * (ry - py) - (qy - py) * (rx - px);
+    };
+    var d1 = o(b[0], b[1], b[2], b[3], a[0], a[1]), d2 = o(b[0], b[1], b[2], b[3], a[2], a[3]);
+    var d3 = o(a[0], a[1], a[2], a[3], b[0], b[1]), d4 = o(a[0], a[1], a[2], a[3], b[2], b[3]);
+    return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+  }
+  function segSegDist(a, b) {
+    if (segsCross(a, b)) {
+      return 0;
+    }
+    return Math.min(segDist(a[0], a[1], b), segDist(a[2], a[3], b),
+                    segDist(b[0], b[1], a), segDist(b[2], b[3], a));
+  }
+  function pointBoxDist(x, y, b) {
+    var dx = Math.max(b.l - x, 0, x - b.r), dy = Math.max(b.t - y, 0, y - b.b);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function boxSegDist(b, s) {
+    if (segBox(s, b)) {
+      return 0;
+    }
+    return Math.min(pointBoxDist(s[0], s[1], b), pointBoxDist(s[2], s[3], b),
+                    segDist(b.l, b.t, s), segDist(b.r, b.t, s),
+                    segDist(b.l, b.b, s), segDist(b.r, b.b, s));
+  }
+  function boxBoxDist(a, b) {
+    var dx = Math.max(a.l - b.r, 0, b.l - a.r), dy = Math.max(a.t - b.b, 0, b.t - a.b);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function grow(b, d) {
+    return {l: b.l - d, r: b.r + d, t: b.t - d, b: b.b + d};
+  }
+  function segsBound(segs) {
+    var bb = null;
+    segs.forEach(function(s) {
+      var l = Math.min(s[0], s[2]), r = Math.max(s[0], s[2]);
+      var t = Math.min(s[1], s[3]), b = Math.max(s[1], s[3]);
+      bb = bb === null ? {l: l, r: r, t: t, b: b}
+                       : {l: Math.min(bb.l, l), r: Math.max(bb.r, r),
+                          t: Math.min(bb.t, t), b: Math.max(bb.b, b)};
+    });
+    return bb;
+  }
+
+  // THE INK.  getBBox answers a name's whole font cell, ascent to
+  // descent, so a name set above its mark measured about 3.5 units
+  // farther out than it looks.  Its height is taken instead from canvas
+  // measureText in the face the stylesheet resolves for it NOW, asked at
+  // INK_SCALE times the type size because the canvas answers whole
+  // pixels; its width stays getBBox's.  The canvas is believed only when
+  // it is demonstrably drawing the SVG's face, and everything else
+  // answers the cell, which contains the ink:
+  // - READ DIRECTLY, and any of them sends the name to the cell: the
+  //   properties that move or grow the drawn glyphs without moving the
+  //   canvas's font box (a baseline shift, a baseline other than the
+  //   alphabetic one, variation axes, feature settings, a vertical
+  //   writing mode -- a small baseline shift slipped under the comparison
+  //   below in Chromium by up to the whole gap), and the ones that paint
+  //   past the glyphs: a stroke, a text decoration, a shadow, a filter.
+  //   Those last pad the cell by what they reach (inkReach).
+  // - COMPARED: the canvas's advance must agree with getBBox's width to
+  //   1 unit plus ADV_TOL, and its font box must sit on getBBox's cell,
+  //   each edge to CELL_TOL em.  A case transform, a size adjustment or a
+  //   family the canvas did not take moves one or the other.  Both carry
+  //   a tolerance because getBBox lays text out at the device's rounded
+  //   type size: for a face the canvas does follow, the width wandered up
+  //   to 7.9% from the advance and the cell edges up to 0.11 em from the
+  //   font box.
+  // Where taken, the canvas understates the drawn ink by at most 0.52 on
+  // a phone and 1.76 on a pixel-ratio-1 desk (hinting), inside NAME_GAP.
+  var INK_SCALE = 10;
+  var ADV_TOL = 0.10;
+  var CELL_TOL = 0.15;
+  var INK_SENTINEL = '1px serif';
+  var inkCanvas = null;
+  function cssLengths(text) {
+    var out = [], re = /(-?[\d.]+)px/g, m;
+    while ((m = re.exec(text)) !== null) {
+      out.push(Math.abs(parseFloat(m[1])));
     }
     return out;
+  }
+  function shadowReach(list) {
+    // Each comma-separated shadow (commas inside a color's parentheses
+    // are not separators) reaches its larger offset plus its blur and
+    // spread.
+    var reach = 0;
+    list.split(/,(?![^(]*\))/).forEach(function(one) {
+      var n = cssLengths(one);
+      if (n.length >= 2) {
+        reach = Math.max(reach, Math.max(n[0], n[1]) + (n[2] || 0) + (n[3] || 0));
+      }
+    });
+    return reach;
+  }
+  function inkReach(cs, em) {
+    // How far past the glyphs a name's paint can reach, and whether the
+    // canvas must be refused for it: [reach, refuse].
+    var reach = 0, refuse = false;
+    var sw = parseFloat(cs.strokeWidth);
+    if (cs.stroke && cs.stroke !== 'none' && isFinite(sw) && sw > 0) {
+      // Half the width, times the miter limit at a miter join: the SVG
+      // bound on how far a stroke reaches.  A halo wants round joins.
+      var miter = cs.strokeLinejoin === 'miter' || cs.strokeLinejoin === 'miter-clip' ||
+                  cs.strokeLinejoin === 'arcs';
+      var ml = parseFloat(cs.strokeMiterlimit);
+      reach = Math.max(reach, sw / 2 * (miter ? (isFinite(ml) ? Math.max(1, ml) : 4) : 1));
+      refuse = true;
+    }
+    var deco = cs.textDecorationLine || cs.textDecoration || 'none';
+    if (deco.indexOf('none') !== 0) {
+      reach = Math.max(reach, 0.15 * em);   // an overline sat 0.08 em past the cell
+      refuse = true;
+    }
+    if (cs.textShadow && cs.textShadow !== 'none') {
+      reach = Math.max(reach, shadowReach(cs.textShadow));
+      refuse = true;
+    }
+    if (cs.filter && cs.filter !== 'none') {
+      var f = cs.filter, known = true, fr = 0;
+      f.replace(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/g, function(all, fn, arg) {
+        if (fn === 'drop-shadow') {
+          fr = Math.max(fr, shadowReach(arg));
+        } else if (fn === 'blur') {
+          fr = Math.max(fr, 3 * (cssLengths(arg)[0] || 0));
+        } else if (fn === 'url') {
+          known = false;
+        }
+        return all;
+      });
+      reach = Math.max(reach, known ? fr : 0.25 * em);
+      refuse = true;
+    }
+    return [reach, refuse];
+  }
+  function inkStyle(el) {
+    // What the computed style says before any measuring: the canvas font
+    // string, whether the cell must answer, and how far paint reaches.
+    var cs = window.getComputedStyle(el);
+    var em = parseFloat(cs.fontSize);
+    var rr = inkReach(cs, isFinite(em) ? em : dialNow.labPx);
+    var refuse = rr[1];
+    var bs = cs.baselineShift;
+    if ((bs && bs !== 'baseline' && bs !== '0px' && bs !== '0') ||
+        (cs.dominantBaseline && cs.dominantBaseline !== 'auto' &&
+         cs.dominantBaseline !== 'alphabetic') ||
+        (cs.alignmentBaseline && cs.alignmentBaseline !== 'auto' &&
+         cs.alignmentBaseline !== 'baseline') ||
+        (cs.fontVariationSettings && cs.fontVariationSettings !== 'normal') ||
+        (cs.fontFeatureSettings && cs.fontFeatureSettings !== 'normal') ||
+        (cs.writingMode && cs.writingMode !== 'horizontal-tb')) {
+      refuse = true;
+    }
+    var ls = cs.letterSpacing === 'normal' ? 0 : parseFloat(cs.letterSpacing);
+    var font = [cs.fontStyle, cs.fontVariantCaps === 'small-caps' ? 'small-caps' : 'normal',
+                cs.fontWeight, (em * INK_SCALE) + 'px', cs.fontFamily].join(' ');
+    return {refuse: refuse, pad: rr[0], font: font, ls: isFinite(ls) ? ls : 0, em: em,
+            key: font + '|' + ls};
+  }
+  function inkMeasureAll(names) {
+    // q.ink for every name, from q.el and q.m (its cell).  Grouped by
+    // face first, so the canvas's font is set once per face per pass
+    // whatever order the names come in, through the sentinel: a font
+    // string the canvas refuses leaves the sentinel behind, which is
+    // seen, never another face.  Nothing carries over between passes.
+    var groups = {}, faces = [];
+    names.forEach(function(q) {
+      var st;
+      try {
+        st = inkStyle(q.el);
+      } catch (e) {
+        st = {refuse: true, pad: 0};
+      }
+      if (st.refuse) {
+        q.ink = st.pad ? {w: q.m.w, above: q.m.above, below: q.m.below, pad: st.pad} : q.m;
+        return;
+      }
+      if (!groups[st.key]) {
+        groups[st.key] = [];
+        faces.push(st);
+      }
+      groups[st.key].push(q);
+    });
+    faces.forEach(function(st) {
+      var ok = false;
+      try {
+        if (inkCanvas === null) {
+          inkCanvas = document.createElement('canvas').getContext('2d');
+        }
+        inkCanvas.font = INK_SENTINEL;
+        var sentinel = inkCanvas.font;
+        inkCanvas.font = st.font;
+        ok = inkCanvas.font !== sentinel;
+        if ('letterSpacing' in inkCanvas) {
+          inkCanvas.letterSpacing = (st.ls * INK_SCALE) + 'px';
+        } else if (st.ls !== 0) {
+          ok = false;              // no spacing on this canvas: not the SVG's face
+        }
+      } catch (e) {
+        ok = false;
+      }
+      groups[st.key].forEach(function(q) {
+        q.ink = ok ? inkOne(q, st) : q.m;
+      });
+    });
+  }
+  function inkOne(q, st) {
+    try {
+      var t = inkCanvas.measureText(q.el.textContent);
+      var asc = t.actualBoundingBoxAscent / INK_SCALE;
+      var desc = t.actualBoundingBoxDescent / INK_SCALE;
+      var adv = t.width / INK_SCALE;
+      var fa = t.fontBoundingBoxAscent / INK_SCALE, fd = t.fontBoundingBoxDescent / INK_SCALE;
+      if (isFinite(asc) && asc > 0 && isFinite(desc) && isFinite(fa) && isFinite(fd) &&
+          Math.abs(adv - q.m.w) <= 1 + ADV_TOL * q.m.w &&
+          Math.abs(fa - q.m.above) <= CELL_TOL * st.em &&
+          Math.abs(fd - q.m.below) <= CELL_TOL * st.em) {
+        return {w: q.m.w, above: asc, below: Math.max(0, desc)};
+      }
+    } catch (e) {
+      // no canvas: the cell stands
+    }
+    return q.m;
+  }
+
+  // A name's ink box at a spot, grown by its paint's reach; and its
+  // padded box, the one labels collide on.
+  function glyphBox(x, y, anchor, m) {
+    var left = anchor === 'start' ? x : (anchor === 'end' ? x - m.w : x - m.w / 2);
+    var p = m.pad || 0;
+    return {l: left - p, r: left + m.w + p, t: y - m.above - p, b: y + m.below + p};
+  }
+  function paddedBox(x, y, anchor, q) {
+    var b = labelBox(x, y, anchor, q.m);
+    return q.ink.pad ? grow(b, q.ink.pad) : b;
+  }
+  function nearestOn(box, px, py) {
+    return [Math.max(box.l, Math.min(px, box.r)), Math.max(box.t, Math.min(py, box.b))];
+  }
+  function discGap(box, mk) {
+    var q = nearestOn(box, mk.x, mk.y);
+    return Math.max(0, Math.sqrt(Math.pow(q[0] - mk.x, 2) + Math.pow(q[1] - mk.y, 2)) - mk.rad);
+  }
+  function nameSpots(mk, m, lead) {
+    // The eight spots touching the mark (six on a leader tier), the
+    // ink's near edge NAME_GAP + lead from the disc, best first by how
+    // nearly each points away from Earth.  Right and left center the ink
+    // vertically on the mark.  A stroked or shadowed name's ink box
+    // includes its paint's reach (m.pad) on every side, and the gap is to
+    // that box: the pad moves a spot out by itself along each axis, so a
+    // diagonal spot's corner moves by it twice over.
+    var d = mk.rad + NAME_GAP + lead, k = Math.SQRT1_2, p = m.pad || 0;
+    var dk = d * k + p;
+    d += p;
+    var mid = (m.above - m.below) / 2;
+    var c = [
+      {id: 'e', dx: 1, dy: 0, x: mk.x + d, y: mk.y + mid, anchor: 'start'},
+      {id: 'w', dx: -1, dy: 0, x: mk.x - d, y: mk.y + mid, anchor: 'end'},
+      {id: 'n', dx: 0, dy: -1, x: mk.x, y: mk.y - d - m.below, anchor: 'middle'},
+      {id: 's', dx: 0, dy: 1, x: mk.x, y: mk.y + d + m.above, anchor: 'middle'},
+      {id: 'ne', dx: k, dy: -k, x: mk.x + dk, y: mk.y - dk - m.below, anchor: 'start'},
+      {id: 'nw', dx: -k, dy: -k, x: mk.x - dk, y: mk.y - dk - m.below, anchor: 'end'},
+      {id: 'se', dx: k, dy: k, x: mk.x + dk, y: mk.y + dk + m.above, anchor: 'start'},
+      {id: 'sw', dx: -k, dy: k, x: mk.x - dk, y: mk.y + dk + m.above, anchor: 'end'}
+    ];
+    if (lead) {
+      c = c.filter(function(e) { return LEAD_SPOTS.indexOf(e.id) >= 0; });
+    }
+    var ox = mk.x - dialNow.cx, oy = mk.y - dialNow.cy;
+    var on = Math.sqrt(ox * ox + oy * oy);
+    if (on < 1) {
+      ox = 0;
+      oy = 1;            // Earth: below first
+      on = 1;
+    }
+    ox /= on;
+    oy /= on;
+    c.sort(function(a, b) {
+      return (b.dx * ox + b.dy * oy) - (a.dx * ox + a.dy * oy);
+    });
+    c.forEach(function(e) {
+      e.lead = lead;
+      if (lead) {
+        e.id += '@' + lead;
+      }
+    });
+    return c;
+  }
+  function predictedTrail(mk) {
+    // The trail drawTrail WILL draw once two packets give rates: until
+    // then the names are placed against it, so they do not rearrange
+    // when it appears.  Never drawn.  The sky's rotation alone, the
+    // diurnal azimuth rate at the mark's azimuth A and altitude h,
+    // w (sin(lat) - cos(lat) cos(A) tan(h)), its distance held: a body's
+    // own motion does not show on this dial in an hour.  None near the
+    // zenith, where the rate has no bound.
+    var segs = [];
+    if (typeof mk.alt !== 'number' || Math.abs(mk.alt) > 89 ||
+        typeof STATION_LAT !== 'number') {
+      return segs;
+    }
+    var w = 360 / 86164.0905, lat = STATION_LAT * Math.PI / 180;
+    var A = mk.az * Math.PI / 180, h = mk.alt * Math.PI / 180;
+    var rate = w * (Math.sin(lat) - Math.cos(lat) * Math.cos(A) * Math.tan(h));
+    var step = TRAIL_SEC / TRAIL_N;
+    for (var i = 0; i < TRAIL_N; i++) {
+      var pA = dialXY((mk.az - rate * (TRAIL_SEC - i * step) + 720) % 360, mk.r);
+      var pB = dialXY((mk.az - rate * (TRAIL_SEC - (i + 1) * step) + 720) % 360, mk.r);
+      segs.push([pA[0], pA[1], pB[0], pB[1]]);
+    }
+    return segs;
+  }
+  function markStrokes(mk) {
+    // Everything drawn FROM a mark: its trail (as drawn, else as it will
+    // be) and a comet's tail rays.  Another mark's strokes are obstacles;
+    // a name's own are its tail.
+    var trail = mk.key === 'earth' ? []
+                : ((mk.trail && mk.trail.coords && mk.trail.coords.length)
+                   ? mk.trail.coords : predictedTrail(mk));
+    mk.strokes = trail.concat(mk.rays);
+    mk.strokeBox = segsBound(mk.strokes);
+  }
+
+  function placeAll(queue) {
+    // The placement itself.  Every read is done before this runs (the
+    // cells in placeLabels, the ink and the faces here before the first
+    // write), then names and ring numbers are written in one go.
+    var names = queue.filter(function(q) { return !q.ring; });
+    var rings = queue.filter(function(q) { return q.ring; });
+    var marks = names.map(function(q) { return q.mark; });
+    marks.forEach(markStrokes);
+    inkMeasureAll(names);
+    names.forEach(function(q) {
+      var n = 0;
+      marks.forEach(function(o) {
+        if (o !== q.mark && Math.sqrt(Math.pow(o.x - q.mark.x, 2) +
+                                      Math.pow(o.y - q.mark.y, 2)) < CROWD_R) {
+          n++;
+        }
+      });
+      q.crowd = n;
+    });
+    // The Moon, then Earth (Earth's name is what crowds the Moon out, 29
+    // units away on a phone), then bodies before comets, the most crowded
+    // first, ties nearest Earth first.
+    names.sort(function(a, b) {
+      var fa = PLACE_FIRST.indexOf(a.mark.key), fb = PLACE_FIRST.indexOf(b.mark.key);
+      if (fa !== fb) {
+        return (fa < 0 ? 99 : fa) - (fb < 0 ? 99 : fb);
+      }
+      if (a.mark.pri !== b.mark.pri) {
+        return a.mark.pri - b.mark.pri;
+      }
+      if (a.crowd !== b.crowd) {
+        return b.crowd - a.crowd;
+      }
+      return a.mark.r - b.mark.r;
+    });
+    var boxes = [], glyphs = [], lines = [];
+    dialFixedLabels.forEach(function(f) {
+      var fb = fixedBox(f);
+      boxes.push(fb);
+      glyphs.push(grow(fb, -LABEL_PAD));
+    });
+    var frameOk = function(box) {
+      return box.l >= 0 && box.t >= 0 && box.r <= dialNow.w && box.b <= dialNow.w;
+    };
+    var clear = function(box, line) {
+      // The padded box misses every label and line placed and stays in
+      // the frame; the line, if any, misses every label and keeps
+      // NAME_TOUCH from every other line.
+      if (!frameOk(box)) {
+        return false;
+      }
+      for (var b = 0; b < boxes.length; b++) {
+        if (boxesHit(box, boxes[b]) || (line && segBox(line, boxes[b]))) {
+          return false;
+        }
+      }
+      for (b = 0; b < lines.length; b++) {
+        if (segBox(lines[b], box) || (line && segSegDist(line, lines[b]) < NAME_TOUCH)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    var leaderFor = function(q, c) {
+      // From 1 unit outside the disc to LEAD_TRIM short of the name's
+      // near end; null for a touching spot.
+      if (!c.lead) {
+        return null;
+      }
+      var a = nearestOn(glyphBox(c.x, c.y, c.anchor, q.ink), q.mark.x, q.mark.y);
+      var dx = a[0] - q.mark.x, dy = a[1] - q.mark.y, n = Math.sqrt(dx * dx + dy * dy);
+      dx /= n;
+      dy /= n;
+      return [q.mark.x + dx * (q.mark.rad + 1), q.mark.y + dy * (q.mark.rad + 1),
+              a[0] - dx * LEAD_TRIM, a[1] - dy * LEAD_TRIM];
+    };
+    var owns = function(q, c, line) {
+      // Point 4 of the design, from the name's REAL distance: a leadered
+      // name is no more its body's than its distances say -- a line does
+      // not make it so if another mark is nearer.
+      var gb = glyphBox(c.x, c.y, c.anchor, q.ink);
+      var own = discGap(gb, q.mark);
+      var a = nearestOn(gb, q.mark.x, q.mark.y);     // the near end
+      var near = grow(gb, STROKE_CLEAR + 1);
+      var lineBox = line ? grow(segsBound([line]), NAME_TOUCH + 1) : null;
+      for (var k = 0; k < marks.length; k++) {
+        var o = marks[k];
+        if (o === q.mark) {
+          continue;
+        }
+        if (discGap(gb, o) < own + NAME_TOUCH) {
+          return false;                        // as near the name as its own
+        }
+        if (Math.sqrt(Math.pow(a[0] - o.x, 2) + Math.pow(a[1] - o.y, 2)) - o.rad
+            < own + NAME_MIN) {
+          return false;                        // crowds the near end
+        }
+        if (line && segDist(o.x, o.y, line) - o.rad < LINE_CLEAR) {
+          return false;                        // the line runs by another disc
+        }
+        if (o.strokeBox === null ||
+            !(boxesHit(near, o.strokeBox) || (lineBox && boxesHit(lineBox, o.strokeBox)))) {
+          continue;
+        }
+        for (var si = 0; si < o.strokes.length; si++) {
+          var s = o.strokes[si];
+          if (boxSegDist(gb, s) - STROKE_RAD < STROKE_CLEAR) {
+            return false;                      // another body's trail or tail at the name
+          }
+          if (line && segSegDist(line, s) - STROKE_RAD < NAME_TOUCH) {
+            return false;                      // the line meets another stroke
+          }
+        }
+      }
+      if (line) {
+        // ... and its OWN strokes, past its first few units (it leaves
+        // the disc where the trail and tail do): a line along its own
+        // trail or down its own tail reads as neither.
+        var len = Math.sqrt(Math.pow(line[2] - line[0], 2) + Math.pow(line[3] - line[1], 2));
+        var f = Math.min(1, LINE_CLEAR / len);
+        var far = [line[0] + (line[2] - line[0]) * f, line[1] + (line[3] - line[1]) * f,
+                   line[2], line[3]];
+        for (var oi = 0; oi < q.mark.strokes.length; oi++) {
+          if (segSegDist(far, q.mark.strokes[oi]) - STROKE_RAD < NAME_TOUCH) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    names.forEach(function(q) {
+      var pid = q.mark.key !== 'earth' ? placedSpot[q.mark.key] : undefined;
+      // Tier by tier, each with the remembered spot first; then a stable
+      // sort puts every spot the name's own tail or trail crosses last,
+      // across the tiers: a leadered spot clear of it beats a touching
+      // one through it.
+      var tiers = [0].concat(q.mark.lead ? LEAD_TIERS : []);
+      var cands = [];
+      tiers.forEach(function(L) {
+        var tc = nameSpots(q.mark, q.ink, L);
+        if (pid !== undefined) {
+          tc.sort(function(a, b) { return (b.id === pid) - (a.id === pid); });
+        }
+        cands = cands.concat(tc);
+      });
+      if (q.mark.strokes.length) {
+        var crossed = function(c) {
+          var box = paddedBox(c.x, c.y, c.anchor, q);
+          for (var si = 0; si < q.mark.strokes.length; si++) {
+            if (segBox(q.mark.strokes[si], box)) {
+              return 1;
+            }
+          }
+          return 0;
+        };
+        cands = cands.map(function(c, ix) { return {c: c, ix: ix, h: crossed(c)}; })
+                     .sort(function(a, b) { return (a.h - b.h) || (a.ix - b.ix); })
+                     .map(function(e) { return e.c; });
+      }
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        var box = paddedBox(c.x, c.y, c.anchor, q);
+        var line = leaderFor(q, c);
+        if (!clear(box, line) || !owns(q, c, line)) {
+          continue;
+        }
+        boxes.push(box);
+        glyphs.push(glyphBox(c.x, c.y, c.anchor, q.ink));
+        if (line) {
+          lines.push(line);
+        }
+        q.place = {c: c, line: line};
+        if (q.mark.key !== 'earth') {
+          placedSpot[q.mark.key] = c.id;   // Earth's mark never moves: always
+        }                                  // its first free spot
+        return;
+      }
+      q.place = null;
+      delete placedSpot[q.mark.key];
+    });
+    rings.forEach(function(q) {
+      // Each on its own ring, at the first azimuth that passes, the
+      // remembered one first.
+      var key = 'ring ' + q.text;
+      var azs = RING_AZ.slice();
+      if (placedSpot[key] !== undefined) {
+        azs.sort(function(a, b) { return (b === placedSpot[key]) - (a === placedSpot[key]); });
+      }
+      q.place = null;
+      for (var ai = 0; ai < azs.length && q.place === null; ai++) {
+        var rp = dialXY(azs[ai], q.r);
+        var y = rp[1] + dialNow.ringDy;
+        var box = labelBox(rp[0], y, 'middle', q.m);
+        var cell = glyphBox(rp[0], y, 'middle', q.m);
+        var ok = clear(box, null);
+        for (var j = 0; j < marks.length && ok; j++) {
+          var o = marks[j];
+          if (discGap(cell, o) < RING_CLEAR) {
+            ok = false;
+          }
+          if (ok && o.strokeBox !== null && boxesHit(grow(cell, RING_CLEAR + 1), o.strokeBox)) {
+            for (var si = 0; si < o.strokes.length && ok; si++) {
+              ok = boxSegDist(cell, o.strokes[si]) - STROKE_RAD >= RING_CLEAR;
+            }
+          }
+        }
+        for (j = 0; j < lines.length && ok; j++) {
+          ok = boxSegDist(cell, lines[j]) >= NAME_TOUCH;
+        }
+        for (j = 0; j < glyphs.length && ok; j++) {
+          ok = boxBoxDist(cell, glyphs[j]) >= RING_NAME;
+        }
+        if (ok) {
+          boxes.push(box);
+          q.place = {x: rp[0], y: y};
+          placedSpot[key] = azs[ai];
+        }
+      }
+      if (q.place === null) {
+        delete placedSpot[key];
+      }
+    });
+    // Every read is done: write.
+    names.forEach(function(q) {
+      var lead = q.mark.lead;
+      if (q.place === null) {
+        q.el.setAttribute('display', 'none');
+        if (lead) {
+          lead.setAttribute('display', 'none');
+        }
+        return;
+      }
+      var c = q.place.c;
+      q.el.setAttribute('x', c.x);
+      q.el.setAttribute('y', c.y);
+      q.el.setAttribute('text-anchor', c.anchor);
+      q.el.style.textAnchor = c.anchor;    // a stylesheet rule outranks the
+      q.el.removeAttribute('display');     // attribute: the placer owns it
+      if (lead) {
+        if (q.place.line) {
+          lead.setAttribute('x1', q.place.line[0]);
+          lead.setAttribute('y1', q.place.line[1]);
+          lead.setAttribute('x2', q.place.line[2]);
+          lead.setAttribute('y2', q.place.line[3]);
+          lead.removeAttribute('display');
+        } else {
+          lead.setAttribute('display', 'none');
+        }
+      }
+    });
+    rings.forEach(function(q) {
+      if (q.place === null) {
+        q.el.setAttribute('display', 'none');
+        return;
+      }
+      q.el.setAttribute('x', q.place.x);
+      q.el.setAttribute('y', q.place.y);
+      q.el.removeAttribute('display');
+    });
   }
   // ---- loop-data history and derived motion -------------------------------
   // Through 8.5 this script ran at window scope, where a `var history`
@@ -1214,6 +1850,7 @@ var celestial = (function () {
       if (azNow === null || altNow === null || auNow === null) {
         m.g.setAttribute('display', 'none');
         m.lab.setAttribute('display', 'none');
+        m.lead.setAttribute('display', 'none');   // its line goes with it
         return;
       }
       m.g.removeAttribute('display');
@@ -1260,7 +1897,10 @@ var celestial = (function () {
                   fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)});
       }
       setText(m.lab, labText);
-      pendingLabels.push({lab: m.lab, text: labText, az: azNow, r: r, pri: 0});
+      pendingLabels.push({lab: m.lab, text: labText, key: key, pri: 0, az: azNow, alt: altNow,
+                          r: r, x: p[0], y: p[1], lead: m.lead, trail: m.segs, rays: [],
+                          rad: key === 'sun' ? (below ? dialNow.sunR : dialNow.glowR)
+                               : (key === 'moon' ? dialNow.moonR : dialNow.dotR)});
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
     renderComets(dt);
@@ -1286,21 +1926,21 @@ var celestial = (function () {
     // name piled in the top-left corner the moment the panel opens --
     // measured, ten of them -- until the next redraw a second later.
     // Placing on an estimate is strictly better than not placing.
-    // Bodies before comets, and within each the ones nearest Earth
-    // first: a crowded rim is where names are lost, and the inner dial
-    // is where the eye starts.  The ring numbers come last of all.
-    pendingLabels.sort(function(a, b) {
-      return a.pri !== b.pri ? a.pri - b.pri : a.r - b.r;
-    });
+    // The names (Earth's among them), then the ring numbers; placeAll
+    // orders them.
     var queue = [], i;
     for (i = 0; i < pendingLabels.length; i++) {
-      var q = pendingLabels[i];
-      queue.push({el: q.lab, text: q.text, cands: labelCandidates(q.az, q.r)});
+      queue.push({el: pendingLabels[i].lab, text: pendingLabels[i].text,
+                  mark: pendingLabels[i]});
+    }
+    if (dialEarthLabel !== null) {
+      queue.push({el: dialEarthLabel.el, text: dialEarthLabel.text,
+                  mark: {key: 'earth', pri: 0, x: dialNow.cx, y: dialNow.cy, r: 0,
+                         rad: dialNow.earthR, lead: null, trail: null, rays: []}});
     }
     for (i = 0; i < dialRings.length; i++) {
-      var g = dialRings[i];
-      queue.push({el: g.el, text: g.text,
-                  cands: [{x: g.x, y: g.y, anchor: 'middle'}]});
+      queue.push({el: dialRings[i].el, text: dialRings[i].text, ring: true,
+                  r: dialRings[i].r});
     }
     // SHOWN BEFORE MEASURED.  A name the last pass dropped is still
     // display:none, and an element with no box cannot be measured: it
@@ -1321,14 +1961,7 @@ var celestial = (function () {
     for (i = 0; i < queue.length; i++) {
       queue[i].m = labelMetrics(queue[i].el, queue[i].text);
     }
-    var seed = [];
-    for (i = 0; i < dialFixedLabels.length; i++) {
-      seed.push(fixedBox(dialFixedLabels[i]));
-    }
-    var placer = newPlacer(seed);
-    for (i = 0; i < queue.length; i++) {
-      placer.place(queue[i].el, queue[i].cands, queue[i].m);
-    }
+    placeAll(queue);
   }
   function renderComets(dt) {
     // The comets, drawn AFTER the bodies so sunDialPt is this render's:
@@ -1380,6 +2013,7 @@ var celestial = (function () {
       if (azNow === null || altNow === null || auNow === null) {
         m.g.setAttribute('display', 'none');
         m.lab.setAttribute('display', 'none');
+        m.lead.setAttribute('display', 'none');   // its line goes with it
         return;
       }
       m.g.removeAttribute('display');
@@ -1413,6 +2047,7 @@ var celestial = (function () {
         }
       }
       var rayGeom = dialNow.rays;
+      var tail = [];          // the rays as drawn, for the placement pass
       for (var ri = 0; ri < 3; ri++) {
         var ray = m.rays[ri];
         if (ux === null) {
@@ -1428,6 +2063,9 @@ var celestial = (function () {
             (p[0] + (dialNow.tailGap + rayGeom[ri][1]) * rx).toFixed(1));
         ray.setAttribute('y2',
             (p[1] + (dialNow.tailGap + rayGeom[ri][1]) * ry).toFixed(1));
+        tail.push([p[0] + dialNow.tailGap * rx, p[1] + dialNow.tailGap * ry,
+                   p[0] + (dialNow.tailGap + rayGeom[ri][1]) * rx,
+                   p[1] + (dialNow.tailGap + rayGeom[ri][1]) * ry]);
       }
       m.lab.setAttribute('class', below ? 'bodylab cel-dim' : 'bodylab');
       var tip = m.label + ' \u00B7 ' +
@@ -1440,7 +2078,9 @@ var celestial = (function () {
         tip += ' \u00B7 ' + fmt('mag {mag}', {mag: mag.toFixed(1)});
       }
       setText(m.title, tip);
-      pendingLabels.push({lab: m.lab, text: m.label, az: azNow, r: r, pri: 1});
+      pendingLabels.push({lab: m.lab, text: m.label, key: key, pri: 1, az: azNow, alt: altNow,
+                          r: r, x: p[0], y: p[1], lead: m.lead, trail: m.segs, rays: tail,
+                          rad: dialNow.cometR});
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
   }
@@ -1762,7 +2402,11 @@ var celestial = (function () {
     var delta = riseTs - nowTs;
     if (delta < 0) {
       // The pass ended but the feed has not rolled the next_pass fields
-      // forward yet (a one-packet window): past tense, never a countdown.
+      // forward: past tense, never a countdown.  loopdata rolls the group
+      // in the packet that reaches its set, so only a declaration naming
+      // a later leaf of the chain can show this.  (The visible roster
+      // never asks: its caller prints a closed window without a
+      // countdown, since the satellite has not set.)
       return T['just set'];
     }
     if (delta < 3600) {
@@ -1789,31 +2433,104 @@ var celestial = (function () {
     var n = Math.max(1, localDayNum(riseTs) - localDayNum(nowTs));
     return n === 1 ? fmt('in {n} day', {n: 1}) : fmt('in {n} days', {n: n});
   }
-  function renderPassRow(base, lineId, passId, noPassMsg, sunlit, nowTs, tagVisibility) {
-    // One roster row from a pass chain (base runs through .next_pass or
-    // .next_visible_pass): the dated countdown line, then the
-    // appears/peaks/disappears sub-line -- tagged visible/not visible
-    // from the pass's own bool when the caller asks (the any-pass
-    // table).  Honest rows when there is no pass: noPassMsg with usable
-    // elements, the weewxd-log row without.  setHtml is a no-op when
-    // the report almanac never served the row.
-    if (!hasKey(base + '.rise.unix_epoch.raw') && !hasKey(base + '.rise.raw')) {
-      // Not declared at all: the report-time first paint
-      // stands.  A key PRESENT with a null value is different -- that
-      // is loopdata's honest "no pass", handled below.
+  function roundHalfEven(x) {
+    // Python's round(), which skyfield and this page's first paint use:
+    // a half goes to the even neighbor.  Math.round sends it up, and a
+    // visible window's length is quantized to 10/128 s, so a window of
+    // exactly 150 s happens -- "3 m" here beside "2 m" in skyfield's
+    // panel and in the first paint.
+    var f = Math.floor(x), d = x - f;
+    if (d > 0.5) {
+      return f + 1;
+    }
+    if (d < 0.5) {
+      return f;
+    }
+    return f % 2 === 0 ? f : f + 1;
+  }
+  function noPassRow(lineId, passId, noPassMsg, sunlit) {
+    // The honest row when there is no pass: noPassMsg with usable
+    // elements, the weewxd-log row without.
+    if (sunlit !== null && sunlit !== undefined) {
+      setHtml(lineId, noPassMsg);
+    } else {
+      setHtml(lineId, T['no usable orbital elements \u2014 see the weewxd log']);
+    }
+    setHtml(passId, '');
+  }
+  function passSub(rise, alt, culm, set, minutes) {
+    return keepUnits(fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} m',
+                         {rise: esc(rise), alt: roundHalfEven(alt).toString(), culm: esc(culm),
+                          set: esc(set), m: roundHalfEven(minutes).toString()}));
+  }
+  // DECLARED OR NO PASS.  A chain's times and figures arrive only while
+  // there is a pass: loopdata leaves a None out of the feed, it never
+  // sends null.  Its three compass points arrive ALWAYS, as 'N/A' when
+  // there is no pass (loopdata formats the empty value).  So a chain
+  // whose compass keys are in the feed is declared, and its missing
+  // times mean no pass; a chain without them is not declared at all --
+  // a weewx.conf still carrying the 9.7.2 field list, which the
+  // installer rewrites -- and its first paint stands.  Through 9.7.2 a
+  // missing time always meant "not declared", so a pass that vanished
+  // left its row counting down to a pass already over until the page
+  // was reloaded.  A key present with a null value reads as no pass too.
+  function chainDeclared(base, compassLeaf) {
+    return hasKey(base + '.' + compassLeaf + '.ordinal_compass');
+  }
+  function renderWindowRow(name, sunlit, nowTs) {
+    // The Next Visible Pass roster's row: the pass's VISIBLE WINDOW
+    // (weewx-skyfield 2.12), exactly as skyfield's satellites panel and
+    // this page's first paint (_window_lines) print it -- the window's
+    // start date and time and its countdown, then appears/peaks/
+    // disappears at the window's start, peak and end and its length.
+    var base = 'almanac.' + name + '.next_visible_pass';
+    var lineId = 'sat-line-' + name, passId = 'sat-pass-' + name;
+    if (!chainDeclared(base, 'visible_start_azimuth')) {
+      return;
+    }
+    var start = num(latest, base + '.visible_start.unix_epoch.raw');
+    if (start === null) {
+      noPassRow(lineId, passId, T['no visible pass in the coming week'], sunlit);
+      return;
+    }
+    var end = num(latest, base + '.visible_end.unix_epoch.raw');
+    // A window already closed and not yet rolled -- only on a report
+    // whose declaration names a later time leaf of this chain (another
+    // skin's next_visible_pass.set, say), which holds loopdata's group
+    // until that leaf: the window's date and time, no countdown.  On
+    // this page's own declaration the group rolls in the very packet
+    // that reaches the window's end.  A window begun with no end to read
+    // is printed the same way, never "just set".
+    setHtml(lineId, fmtDayHM(start) +
+            (nowTs >= (end === null ? start : end) ? '' : ' \u00B7 ' + satWhen(start, end, nowTs)));
+    var peakAlt = num(latest, base + '.visible_peak_altitude.degree_angle.raw');
+    var dur = num(latest, base + '.visible_duration.second.raw');
+    var startOrd = strAt(base + '.visible_start_azimuth.ordinal_compass');
+    var peakOrd = strAt(base + '.visible_peak_azimuth.ordinal_compass');
+    var endOrd = strAt(base + '.visible_end_azimuth.ordinal_compass');
+    if (peakAlt === null || dur === null || startOrd === null ||
+        peakOrd === null || endOrd === null) {
+      setHtml(passId, '');   // never the last pass's figures under this one
+      return;
+    }
+    setHtml(passId, passSub(startOrd, peakAlt, peakOrd, endOrd, dur / 60));
+  }
+  function renderPassRow(name, sunlit, nowTs) {
+    // The dome roster's row: the next pass of ANY kind, horizon to
+    // horizon -- rise date and countdown, then appears/peaks/disappears
+    // at rise, culmination and set -- tagged visible/not visible (see
+    // passVisibleNow).
+    var base = 'almanac.' + name + '.next_pass';
+    var lineId = 'sat-any-line-' + name, passId = 'sat-any-pass-' + name;
+    if (!chainDeclared(base, 'rise_azimuth')) {
       return;
     }
     var rise = numOr(base + '.rise.unix_epoch.raw', base + '.rise.raw');
-    var setTs = numOr(base + '.set.unix_epoch.raw', base + '.set.raw');
     if (rise === null) {
-      if (sunlit !== null && sunlit !== undefined) {
-        setHtml(lineId, noPassMsg);
-      } else {
-        setHtml(lineId, T['no usable orbital elements \u2014 see the weewxd log']);
-      }
-      setHtml(passId, '');
+      noPassRow(lineId, passId, T['no pass in the coming week'], sunlit);
       return;
     }
+    var setTs = numOr(base + '.set.unix_epoch.raw', base + '.set.raw');
     setHtml(lineId, fmtDayHM(rise) + ' \u00B7 ' + satWhen(rise, setTs, nowTs));
     var maxAlt = numOr(base + '.max_altitude.degree_angle.raw',
                        base + '.max_altitude.raw');
@@ -1823,20 +2540,50 @@ var celestial = (function () {
     var setOrd = strAt(base + '.set_azimuth.ordinal_compass');
     if (maxAlt === null || dur === null || riseOrd === null ||
         culmOrd === null || setOrd === null) {
+      setHtml(passId, '');   // never the last pass's figures under this one
       return;
     }
-    var sub = keepUnits(fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} m',
-                            {rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),
-                             set: esc(setOrd), m: Math.round(dur / 60).toString()}));
-    if (tagVisibility) {
-      var vis = latest[base + '.visible'];
-      if (vis === true) {
-        sub += ' \u00B7 ' + T['visible'];
-      } else if (vis === false) {
-        sub += ' \u00B7 ' + T['not visible'];
-      }
+    var sub = passSub(riseOrd, maxAlt, culmOrd, setOrd, dur / 60);
+    var vis = passVisibleNow(name, rise, setTs, nowTs);
+    if (vis === true) {
+      sub += ' \u00B7 ' + T['visible'];
+    } else if (vis === false) {
+      sub += ' \u00B7 ' + T['not visible'];
     }
     setHtml(passId, sub);
+  }
+  function passVisibleNow(name, rise, setTs, nowTs) {
+    // The dome row's tag: "visible" when the pass is visible (weewx-
+    // skyfield 2.12's rule) and either has not risen yet -- true of the
+    // pass to come -- or is inside its visible window; "not visible"
+    // otherwise.  From rise to the window's start the satellite is in
+    // shadow, too low or in daylight, and from the window's end to set it
+    // is again, and the row says "overhead now" through both.
+    //
+    // The window is the next_visible_pass chain's, not fields of this
+    // chain's own: those would be empty on every pass that is not
+    // visible, and loopdata recomputes a group with an empty leaf on
+    // every packet.  While this pass's window is to come or open, the
+    // next visible pass IS this pass, so its window lies inside this
+    // pass's rise and set; once it closes, that chain has rolled to a
+    // later pass (or to none) and this one is past seeing.  Where the
+    // window chain is not declared (a declaration from before 9.8 that
+    // the installer has not rewritten) the bool alone tags it, as
+    // through 9.7.2.  null: no bool, no tag.
+    var vis = latest['almanac.' + name + '.next_pass' + '.visible'];
+    if (vis !== true) {
+      return vis === false ? false : null;
+    }
+    var vbase = 'almanac.' + name + '.next_visible_pass';
+    if (nowTs < rise || !chainDeclared(vbase, 'visible_start_azimuth')) {
+      return true;
+    }
+    var start = num(latest, vbase + '.visible_start.unix_epoch.raw');
+    var end = num(latest, vbase + '.visible_end.unix_epoch.raw');
+    if (start === null || end === null || setTs === null || start < rise || start >= setTs) {
+      return false;            // the window is some later pass's, or none
+    }
+    return start <= nowTs && nowTs < end;
   }
   function renderSatRosters() {
     // The two countdown rows per satellite, one per table (present only
@@ -1861,18 +2608,14 @@ var celestial = (function () {
     // viewer's: satWhen's "overhead now" / "in {n} days" and the day
     // count that names the calendar day both read it.
     var nowTs = serverNow();
+    // Each row decides for itself whether its chain is in the feed
+    // (chainDeclared).  Not the satellite's az: elements that go stale
+    // mid-session drop the az, and the rows must then say so ("no usable
+    // orbital elements"), not stand on a pass computed before.
     SAT_NAMES.forEach(function(name) {
-      if (!hasKey('almanac.' + name + '.az')) {
-        return;              // not in the loop feed: first paint stands
-      }
       var sunlit = latest['almanac.' + name + '.sunlit'];
-      renderPassRow('almanac.' + name + '.next_pass',
-                    'sat-any-line-' + name, 'sat-any-pass-' + name,
-                    T['no pass in the coming week'], sunlit, nowTs, true);
-      renderPassRow('almanac.' + name + '.next_visible_pass',
-                    'sat-line-' + name, 'sat-pass-' + name,
-                    T['no visible pass in the coming week'], sunlit, nowTs,
-                    false);
+      renderPassRow(name, sunlit, nowTs);
+      renderWindowRow(name, sunlit, nowTs);
     });
   }
   function restoreDomeMarks() {
@@ -2869,14 +3612,16 @@ var celestial = (function () {
 
   // ---- the next-pass chart -------------------------------------------------
   // The chart is skyfield 2.0's pass_chart_html: the sky at the soonest
-  // visible pass's culmination, the arc dashed across it, the featured
-  // satellite's own dot at the arc's peak (a dome-body group -- the same
+  // visible pass's visible peak (weewx-skyfield 2.12: the highest point
+  // of its visible window, where the satellite is always sunlit), the
+  // arc dashed across it and the window solid, the featured satellite's
+  // own dot at that peak (a dome-body group -- the same
   // consumer contract as the dome's marks, under the chart's own SVG
   // ids).  During the pass itself the chart's epoch is within minutes of
   // now, so nudging that ONE dot from the live alt/az -- and flipping
   // its ring/solid look from the live sunlit flag -- is epoch-honest;
-  // the chart's sun, moon, planets and stars belong to the culmination
-  // instant and are never touched.  The fragment refetch (pass-chart.txt,
+  // the chart's sun, moon, planets and stars belong to the visible
+  // peak's instant and are never touched.  The fragment refetch (pass-chart.txt,
   // rewritten each report cycle) swaps in the next chart once a pass
   // completes; a deliberately EMPTY fragment means no visible pass in the
   // elements' validity window and hides the panel.
@@ -3082,7 +3827,7 @@ var celestial = (function () {
       // come from the feed, and no clock however good supplies them --
       // and no verdict either: serverNow is GEN_TS, the instant the
       // chart was drawn for.  The chart therefore stands exactly as the
-      // station drew it, untouched: the dot at the culmination, under the
+      // station drew it, untouched: the dot at the visible peak, under the
       // pass it names.  A page opened mid-pass, or just after one, shows
       // that until the first packet lands -- normally refresh_rate
       // seconds later, but for as long as the feed stays down, since
@@ -3097,8 +3842,13 @@ var celestial = (function () {
     }
     // The window the chart is judged against is the chart's OWN --
     // data-rise/data-set on the track, skyfield 2.3.2 -- because the
-    // feed's next_visible_pass rolls on to the FOLLOWING pass moments
-    // after this one sets.  8.0 through 8.3.2 judged against the feed:
+    // feed's next_visible_pass rolls on to the FOLLOWING pass as this
+    // one's visible window closes (weewx-skyfield 2.12), often minutes
+    // before it sets; through 2.11 it rolled moments after the set.  The
+    // station's next chart follows the same roll, so the chart on the
+    // page is replaced at its next refetch after the window closes, and
+    // the set handled below is reached only when that refetch comes
+    // later than the set.  8.0 through 8.3.2 judged against the feed:
     // at the set instant the mark, having just ridden the arc to its
     // end, was put back at its generated position -- the culmination,
     // MID-ARC -- under a header still naming the finished pass, and
@@ -3109,39 +3859,32 @@ var celestial = (function () {
     // watching when it ended.  Both sides of the comparison are written
     // by the station -- the chart's times by the report, the instant by
     // serverNow -- so the verdict cannot flip with the viewer's clock
-    // and has nothing to latch.  An older chart without the attributes
-    // falls back to the feed's window and 8.3.2's behavior -- restoring
-    // the drawn chart outside the window, the roll-back and all -- on
-    // this same clock; no better and no worse.
+    // and has nothing to latch.  The sweep runs the WHOLE arc, rise to
+    // set, though the chart is drawn at the visible peak (weewx-skyfield
+    // 2.12): the arc is the whole pass and its window is drawn solid,
+    // and the dot's live sunlit look says when it is in shadow.  A chart
+    // without the attributes stands as drawn: every chart since skyfield
+    // 2.3.2 carries them and the floor is 2.12, so only a chart this page
+    // never makes lacks them (through 9.7.2 it fell back to the feed's
+    // next_visible_pass rise and set, which 9.8 no longer declares).
     var now = serverNow();
-    if (b.rise !== null && b.set !== null) {
-      if (now >= b.set) {
-        // Over.  Hide the mark and its label, exactly as the dome does
-        // with a satellite that has set; the arc, the header and the
-        // rest of the chart stand until the next refetch replaces them.
-        passMarkShown(b, false);
-        return;
-      }
-      if (now < b.rise) {
-        passStandsAsDrawn(b);
-        return;
-      }
-    } else {
-      var rise = numOr('almanac.' + b.tag + '.next_visible_pass.rise.unix_epoch.raw',
-                       'almanac.' + b.tag + '.next_visible_pass.rise.raw');
-      var setTs = numOr('almanac.' + b.tag + '.next_visible_pass.set.unix_epoch.raw',
-                        'almanac.' + b.tag + '.next_visible_pass.set.raw');
-      if (rise === null || setTs === null || now < rise || now >= setTs) {
-        passStandsAsDrawn(b);
-        return;
-      }
+    if (b.rise === null || b.set === null || now < b.rise) {
+      passStandsAsDrawn(b);
+      return;
+    }
+    if (now >= b.set) {
+      // Over.  Hide the mark and its label, exactly as the dome does
+      // with a satellite that has set; the arc, the header and the
+      // rest of the chart stand until the next refetch replaces them.
+      passMarkShown(b, false);
+      return;
     }
     var az = num(latest, 'almanac.' + b.tag + '.az');
     var alt = num(latest, 'almanac.' + b.tag + '.alt');
     if (az === null || alt === null) {
       // Nothing to sweep from.  A dot never yet swept stands as drawn;
       // one already on the arc holds its last position rather than
-      // snapping back to the culmination for a single null packet.
+      // snapping back to the drawn peak for a single null packet.
       if (!b.g.hasAttribute('transform')) {
         passStandsAsDrawn(b);
       }
@@ -3385,7 +4128,8 @@ var celestial = (function () {
     // re-anchor and roll them.  Before the first packet the template's
     // first paint stands, and it is exactly what this would render for
     // GEN_TS -- the same arithmetic on the same instant.  The pass chip
-    // is feed-only (rolling is its whole story).
+    // counts to a satellite's visible WINDOW (weewx-skyfield 2.12) and
+    // rolls with the feed.
     //
     // Every target below -- the feed's instants and the generation-baked
     // data-ts alike -- is written by the STATION, so the instant they
@@ -3393,48 +4137,56 @@ var celestial = (function () {
     // viewer's clock.  8.1 through 8.3.3 subtracted Date.now() from
     // these, so a viewer whose clock was ninety seconds fast read every
     // countdown ninety seconds wrong and hid each chip before loopdata
-    // had rolled its target, leaving a gap.  On one clock the -60 grace
-    // and the engine's roll interlock as they were designed to.
+    // had rolled its target, leaving a gap.  On one clock a chip and the
+    // engine's roll agree on the instant a target passes.
     var nowTs = serverNow();
-    var bestTag = null, bestRise = null, bestSet = null, anyPassKey = false;
+    // The pass chip's candidates are the satellites IN THE FEED whose
+    // visible window has not closed; it counts to the soonest window
+    // start among them: "appears in" until it, "overhead now" while it
+    // is open, hidden with no candidate.  No "just set": at the window's
+    // end the satellite has entered shadow, sunk below 10 degrees or met
+    // the dawn -- it has not set.  On this page's own declaration loopdata
+    // rolls next_visible_pass in the packet that reaches the window's
+    // end, so the chip goes straight to the next pass; where another
+    // declaration on the report holds the group until set, the closed
+    // window is passed over and the chip names the next satellite's
+    // pass rather than blanking.  A satellite whose window chain is
+    // declared but carries no start has no visible pass (see
+    // chainDeclared); one whose chain is not declared is no candidate.
+    var bestTag = null, bestStart = null, anySat = false;
     SAT_NAMES.forEach(function(sat) {
       var base = 'almanac.' + sat + '.next_visible_pass';
-      if (!hasKey(base + '.rise.unix_epoch.raw') && !hasKey(base + '.rise.raw')) {
+      if (!chainDeclared(base, 'visible_start_azimuth')) {
         return;
       }
-      anyPassKey = true;
-      var rise = numOr(base + '.rise.unix_epoch.raw', base + '.rise.raw');
-      if (rise === null) {
+      anySat = true;
+      var start = num(latest, base + '.visible_start.unix_epoch.raw');
+      var end = num(latest, base + '.visible_end.unix_epoch.raw');
+      if (start === null || (end !== null && nowTs >= end)) {
         return;
       }
-      if (bestRise === null || rise < bestRise) {
+      if (bestStart === null || start < bestStart) {
         bestTag = sat;
-        bestRise = rise;
-        bestSet = numOr(base + '.set.unix_epoch.raw', base + '.set.raw');
+        bestStart = start;
       }
     });
-    if (anyPassKey) {
-      var passShow = bestRise !== null &&
-          (nowTs < bestRise || (bestSet !== null && nowTs < bestSet + 60));
-      chipShow('chip-pass', passShow);
-      if (passShow) {
+    if (anySat) {
+      chipShow('chip-pass', bestStart !== null);
+      if (bestStart !== null) {
         setHtml('chip-pass-k', esc(satLabel(bestTag)));
-        if (nowTs < bestRise) {
+        if (nowTs < bestStart) {
           setHtml('chip-pass-d', T['appears in']);
-          setHtml('chip-pass-v', fmtDHMS(bestRise - nowTs));
-        } else if (bestSet !== null && nowTs < bestSet) {
-          setHtml('chip-pass-d', T['overhead now']);
-          setHtml('chip-pass-v', '');
+          setHtml('chip-pass-v', fmtDHMS(bestStart - nowTs));
         } else {
-          setHtml('chip-pass-d', T['just set']);
+          setHtml('chip-pass-d', T['overhead now']);
           setHtml('chip-pass-v', '');
         }
       }
     } else {
-      // No feed keys: count from the generation-baked rise/set pair
-      // (the painted label stands).  Without the keys there is no roll,
-      // so a completed pass hides its chip until the next report
-      // cycle regenerates the page.
+      // No window chain in the feed: count from the generation-baked
+      // window start and end (the painted label stands).  Without the
+      // keys there is no roll, so a closed window hides its chip until
+      // the next report cycle regenerates the page.
       var passStatic = chipStaticTs('chip-pass');
       if (passStatic !== null) {
         var passEl = document.getElementById('chip-pass');
@@ -3443,7 +4195,9 @@ var celestial = (function () {
           chipShow('chip-pass', true);
           setHtml('chip-pass-d', T['appears in']);
           setHtml('chip-pass-v', fmtDHMS(passStatic - nowTs));
-        } else if (passSetStatic !== null && nowTs < passSetStatic) {
+        } else if (passSetStatic === null || nowTs < passSetStatic) {
+          // A window with no end baked counts as open, as the first
+          // paint and the live path read it.
           chipShow('chip-pass', true);
           setHtml('chip-pass-d', T['overhead now']);
           setHtml('chip-pass-v', '');

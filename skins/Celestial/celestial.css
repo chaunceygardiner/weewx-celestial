@@ -329,6 +329,12 @@
  * it from a visible floor (the old ramp started from nothing: the oldest
  * segment landed at 1.02:1, ink spent where no eye can find it). */
 .cel-trail{stroke-width:1.5; stroke-linecap:round}
+/* A crowded name's leader (9.8): the line from its mark to its name when
+ * the name cannot touch the mark.  Dotted, in the secondary text color,
+ * so it reads as nothing a trail is -- a trail is solid, in its body's
+ * color, and fades.  A restyle should keep the two unlike. */
+.cel-leader{stroke:var(--muted); stroke-width:1.4; stroke-linecap:round;
+            stroke-dasharray:0 2.8; fill:none}
 /* Comet marks (javascript-drawn on the dial): a brass diamond with an
  * anti-sunward tail fan, solid when naked-eye bright (mag <= 6), the
  * hollow inversion when fainter or when magnitude is honestly absent --
@@ -351,7 +357,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .bodylab.cel-dim{fill:var(--muted)}
 .gridlab{font-size:10px; fill:var(--muted)}
 .cel-earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
-          letter-spacing:.12em; text-anchor:middle}
+          letter-spacing:.12em}
 /* THE DIAL'S NARROW FRAME (9.6).  Below the breakpoint celestial.js
  * rebuilds the dial in a 360-unit frame -- about a unit to the pixel on
  * a phone -- and marks it data-frame="narrow".  These are the sizes that

@@ -341,8 +341,10 @@ The phone drawing is a different drawing, not the desk one with larger
 words: 360 units across instead of 680, its own type sizes, and its
 content thinned to make room for them (stars to magnitude 4.0, a
 constellation named only where its figure is wide enough).  Every body,
-satellite, comet and radiant is drawn and named in both.  The Geocentric
-dial does the same thing in the browser, in this extension's own script.
+satellite, comet and radiant is drawn in both.  The Geocentric
+dial does the same thing in the browser, in this extension's own script;
+there a crowded name may be left off on either drawing, where it could
+not sit so that it reads as its own body's (below).
 
 What that means for your markup, if you read a fragment or style one:
 
@@ -379,7 +381,10 @@ reaching for.
 
 **The dial's label placement measures your type, it does not assume
 it.**  The Geocentric dial places each name against the names already on
-it and drops one it cannot fit rather than stacking it.  The room it
+it, and only where it reads as its own body's: against its mark, or at
+the end of a short dotted line to it, nearer its own mark than any other
+mark, trail or comet tail.  A name that fits nowhere so is dropped
+rather than stacked or written beside another body.  The room it
 reserves is the browser's own measurement of the glyphs it drew — your
 face, at your size, in your language, including whatever the reader's
 device fell back to — taken afresh on every redraw.  So you may size
@@ -392,6 +397,27 @@ cannot do is make room that is not there: on a narrow dial carrying
 large type, expect names to be dropped, and expect *which* ones to vary
 with where the sky has put things.  A dropped name is still reachable —
 its mark keeps its tooltip.
+
+Four things follow for a skin of your own (9.8):
+
+- **A `text-anchor` you give the dial's names has no effect.**  The
+  placement writes every name's anchor, inline, because it decides which
+  side of the mark the name sits on.
+- **The dotted line beside a crowded name is `.cel-leader`**, restyled
+  like any other mark.  Keep it unlike the motion trails (`.cel-trail`,
+  solid and in each body's color), or a reader cannot tell a name's line
+  from a body's path.
+- **Some stylesheets cost the ink measure.**  The placement measures a
+  name's ink with the browser's canvas, and believes it only when the
+  canvas is drawing your face exactly.  A `text-transform`,
+  `font-size-adjust`, `font-stretch`, baseline shift, variation axes or
+  feature settings on the names send them to their whole font box
+  instead: still placed correctly, a little farther from their marks.
+- **A halo, a shadow, a decoration or a filter is allowed for.**  The
+  placement pads the name's box by how far the paint can reach: half a
+  stroke's width (times the miter limit at a miter join, so a halo wants
+  `stroke-linejoin: round`), a shadow's offset and blur, 0.15 em for an
+  underline or overline.
 
 **A set's `label_scale` now defaults to 1.2**, not 1.0.  A chart is
 capped at 640px of glass and its smallest label is 10 units in a 680
@@ -432,8 +458,8 @@ first paint; nothing is fetched that a desktop does not fetch.  The
 scale reaches only the text: dots, markers and rings are drawn once.
 Hold the query in `skin.conf` to the breakpoint in your stylesheet with a
 test of your own; the browser cannot report a mistyped query, it simply
-never matches.  The keys arrived with weewx-skyfield 2.5; 9.6 requires
-2.7.  Keep the query **above** your set's frame threshold: below it this
+never matches.  The keys arrived with weewx-skyfield 2.5; 9.8 requires
+2.12.  Keep the query **above** your set's frame threshold: below it this
 drawing is hidden and its layers with it (see
 [The two drawings](#the-two-drawings)).
 

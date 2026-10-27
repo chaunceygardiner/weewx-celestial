@@ -35,7 +35,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '9.7.2'
+CELESTIAL_VERSION = '9.8'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -138,21 +138,27 @@ PAGE_FIELDS: List[str] = [
     # to these defaults only when the configuration has no [[Satellites]]
     # section to follow.  An almanac that cannot serve one omits its keys from
     # loop-data.txt (loopdata logs once per field) and the page hides
-    # that layer.  next_visible_pass feeds the Next Visible Pass panel's roster;
-    # next_pass -- any pass, its visible bool the row's visible/not-
-    # visible tag -- feeds the dome's.  Times, the duration and the peak
-    # altitude use pinned-unit spellings -- the 7.5/7.6 doctrine: a
-    # [Units] [[Groups]] override on the report must never change a
-    # field's meaning.
+    # that layer.  next_visible_pass feeds the Next Visible Pass panel's
+    # roster and the countdown chip, and is the pass's VISIBLE WINDOW
+    # only (weewx-skyfield 2.12): no rise or set, because loopdata
+    # expires a group at its latest time leaf and a set in this group
+    # would hold a closed window on the page until the satellite set.
+    # next_pass -- any pass, geometric, rise to set -- feeds the dome's
+    # roster; its visible bool and the next_visible_pass window make the
+    # row's visible/not visible tag.  No window fields in this group:
+    # they are empty on every pass that is not visible, and loopdata
+    # recomputes a group with an empty leaf on every packet.  Times, the duration and the peak altitude use
+    # pinned-unit spellings -- the 7.5/7.6 doctrine: a [Units] [[Groups]]
+    # override on the report must never change a field's meaning.
     'almanac.iss.az', 'almanac.iss.alt', 'almanac.iss.sunlit',
     'almanac.iss.label',
-    'almanac.iss.next_visible_pass.rise.unix_epoch.raw',
-    'almanac.iss.next_visible_pass.set.unix_epoch.raw',
-    'almanac.iss.next_visible_pass.max_altitude.degree_angle.raw',
-    'almanac.iss.next_visible_pass.duration.second.raw',
-    'almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass',
-    'almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass',
-    'almanac.iss.next_visible_pass.set_azimuth.ordinal_compass',
+    'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw',
+    'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw',
+    'almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw',
+    'almanac.iss.next_visible_pass.visible_duration.second.raw',
+    'almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass',
+    'almanac.iss.next_visible_pass.visible_peak_azimuth.ordinal_compass',
+    'almanac.iss.next_visible_pass.visible_end_azimuth.ordinal_compass',
     'almanac.iss.next_pass.rise.unix_epoch.raw',
     'almanac.iss.next_pass.set.unix_epoch.raw',
     'almanac.iss.next_pass.max_altitude.degree_angle.raw',
@@ -163,13 +169,13 @@ PAGE_FIELDS: List[str] = [
     'almanac.iss.next_pass.visible',
     'almanac.tiangong.az', 'almanac.tiangong.alt', 'almanac.tiangong.sunlit',
     'almanac.tiangong.label',
-    'almanac.tiangong.next_visible_pass.rise.unix_epoch.raw',
-    'almanac.tiangong.next_visible_pass.set.unix_epoch.raw',
-    'almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw',
-    'almanac.tiangong.next_visible_pass.duration.second.raw',
-    'almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass',
-    'almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass',
-    'almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass',
+    'almanac.tiangong.next_visible_pass.visible_start.unix_epoch.raw',
+    'almanac.tiangong.next_visible_pass.visible_end.unix_epoch.raw',
+    'almanac.tiangong.next_visible_pass.visible_peak_altitude.degree_angle.raw',
+    'almanac.tiangong.next_visible_pass.visible_duration.second.raw',
+    'almanac.tiangong.next_visible_pass.visible_start_azimuth.ordinal_compass',
+    'almanac.tiangong.next_visible_pass.visible_peak_azimuth.ordinal_compass',
+    'almanac.tiangong.next_visible_pass.visible_end_azimuth.ordinal_compass',
     'almanac.tiangong.next_pass.rise.unix_epoch.raw',
     'almanac.tiangong.next_pass.set.unix_epoch.raw',
     'almanac.tiangong.next_pass.max_altitude.degree_angle.raw',

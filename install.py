@@ -99,7 +99,13 @@ def loader():
         # own charts about brass -- neither says anything in any log.  So
         # a skyfield that IS there and is too old refuses, here, where the
         # user is reading.  Gated on installing() for the same reason as
-        # the weewx-loopdata check above.  9.6 raises the floor to 2.7: the
+        # the weewx-loopdata check above.  9.8 raises the floor to 2.12: a
+        # visible pass is 2.12's (sunlit over a dark sky, at least 10
+        # degrees up, for at least a minute), and the page declares its
+        # window -- the visible_* fields -- which an older skyfield does
+        # not have.  Beside one, every satellite's Next Visible Pass row
+        # would say there is none and the countdown chip would never show.
+        # 9.6 raised it to 2.7: the
         # sky dome and the Next Visible Pass chart are drawn TWICE into
         # every fragment, once for a desk and once for a phone, and the
         # phone drawing is 2.7's narrow frame.  An older skyfield does
@@ -125,12 +131,13 @@ def loader():
         except Exception:
             WXSKYFIELD_VERSION = None      # absent, or broken: not ours to judge
         if (WXSKYFIELD_VERSION is not None
-                and version_compare(str(WXSKYFIELD_VERSION), '2.7') < 0):
-            sys.exit("weewx-celestial requires weewx-skyfield 2.7 or later, "
+                and version_compare(str(WXSKYFIELD_VERSION), '2.12') < 0):
+            sys.exit("weewx-celestial requires weewx-skyfield 2.12 or later, "
                      "found %s.  Upgrade weewx-skyfield first, then install "
                      "weewx-celestial.  (weewx-skyfield is optional -- the page "
                      "renders without it -- but an older one is not kept in "
-                     "step: the sky charts are drawn for a phone as well as a "
+                     "step: the page reads a visible pass's window, which 2.12 "
+                     "adds, the sky charts are drawn for a phone as well as a "
                      "desk and the phone drawing is 2.7's, the charts' dates and "
                      "clock times read [Texts] keys 2.6.1 "
                      "renamed, the panels' colors are 2.6's, a skin's narrow label "
@@ -243,7 +250,7 @@ def unlist_celestial_groups(config):
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.7.2",
+            version = "9.8",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

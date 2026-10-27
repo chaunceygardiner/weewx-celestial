@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **9.7.2**, the current release.
+This manual documents weewx-celestial **9.8**, the current release.
 
 ## Start here
 
@@ -51,11 +51,12 @@ page you leave open, on which everything moves.
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
 chart.  Here it is entire, in the bundled sample report (Palo Alto,
-evening on 2 October 2026 — Saturn and Neptune up and trailing their
-wake, the moon, the sun, Mercury, Venus, Mars, Jupiter and Uranus dashed
-below with comet Halley out beyond Jupiter and Mars, Proxima Centauri
-alone at the rim, Terra's evening pass an hour off in the first chip, the
-Draconids five days out under a 4% moon, and every odometer ticking):
+evening on 26 October 2026 — the moon, Uranus, Saturn and Neptune up
+and trailing their wake; the sun, Mercury and Venus dashed below to the
+west, each name against its own mark, and Jupiter and Mars below to the
+north with comet Halley beyond them; Proxima Centauri alone at the rim;
+the ISS's visible pass ten hours off in the first chip, the Southern
+Taurids nine days out under a 15% moon, and every odometer ticking):
 
 ![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
 
@@ -87,7 +88,10 @@ and the page follows, no reload:
 **The Geocentric** — Earth at the center, every body (sun, moon,
 Mercury through Neptune, Proxima Centauri) placed by compass bearing and log
 distance, the moon at its true phase, bodies below the horizon dimmed and
-dashed, and an hour-long motion trail behind every dot.  Beside the dial,
+dashed, and an hour-long motion trail behind every dot.  Each name is
+written only where it reads as its own body's — against its mark, or at
+the end of a short dotted line to it — so on a crowded dial some names
+are left off, and a tap on any mark names it.  Beside the dial,
 a roster gives each body an odometer distance readout that ticks between
 loop refreshes at the body's true radial rate (Mercury can recede ~28 km
 every second while Saturn approaches at the same pace), plus the raw
@@ -98,11 +102,11 @@ dial point, solid when naked-eye bright, hollow when fainter — and
 honestly absent when the Minor Planet Center has dropped the comet's
 elements.
 
-Both installer-default comets on the live dial — Halley to the west and
-up, at 35.8 astronomical units; Hale-Bopp further out at 50.9 and below
-the horizon, so dimmed and dashed.  Each is a hollow diamond, because
-both are far below naked-eye brightness, and each trails three rays
-fanning away from the sun's own dial point.  Their live roster rows sit
+Both installer-default comets on the live dial — Halley to the
+north-northeast, at 35.1 astronomical units, and Hale-Bopp to the south,
+further out at 51.4, both below the horizon, so dimmed and dashed.  Each
+is a hollow diamond, because both are far below naked-eye brightness,
+and each trails three rays fanning away from the sun's own dial point.  Their live roster rows sit
 below the planets', between Neptune and Proxima Centauri:
 
 ![The Geocentric dial with both comet diamonds and their tails](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDial-Comets.png)
@@ -119,7 +123,8 @@ With satellites configured, the dome carries the one
 thing up there that genuinely moves fast: the satellite marker crossing
 in real time — drawn whenever the satellite is up, dimmed unless you
 could actually see it (sunlit satellite, dark sky) — beside a roster of
-each satellite's next pass of any kind, tagged visible or not.
+each satellite's next pass of any kind, tagged visible while it is one
+you can see and not visible before and after that stretch.
 
 The dome during the ISS's July 24 near-zenith visible pass (replayed
 through the live page with the orbital elements Space-Track archived
@@ -131,27 +136,34 @@ really end:
 ![The sky dome during an ISS near-zenith pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDome-ISS-zenith.gif)
 
 **The Next Visible Pass** (new in 8.0) — the whole sky as it will stand at the
-culmination of the soonest upcoming *visible* pass, the pass's arc dashed
-across it under a dated head line, with the visible-pass roster beside
+highest point of the visible stretch of the soonest upcoming *visible* pass,
+the pass's arc dashed across it and that stretch drawn solid, under a
+dated head line, with the visible-pass roster beside
 it.  During the pass itself the page sweeps the satellite's dot live
 along the drawn arc — flipping it between the solid sunlit dot and the
 hollow in-shadow ring as the satellite crosses the shadow line, in step
-with the dome's marker (8.1) — and when the pass ends the dot leaves the
-chart (8.3.3), the arc and head line standing until the next chart
-arrives.  When no configured satellite has a visible pass
+with the dome's marker (8.1).  Once the visible stretch is over, the
+station draws the next visible pass's chart at its next report cycle and
+the page brings it in within five minutes more; if the satellite sets
+first, the dot leaves the chart at the set (8.3.3), the arc and head line
+standing until the next chart arrives.  When no configured satellite has a visible pass
 coming, the chart hides and the roster's honest rows say why.
 
-The same July 24 pass on this panel — the chart features it, so the
-sweep dot rides the dashed arc from the 9:54 PM rise to the 10:05 PM
-set, snapping to the in-shadow ring as the ISS enters Earth's shadow
-near the end, while the visible-pass roster counts down beside it:
+The same July 24 pass on this panel.  The chart is drawn at the highest
+point of the stretch you can see, 9:56 to 10:01 PM, solid on the dashed
+arc.  The sweep dot rides the arc from the 9:54 PM rise, snaps to the
+in-shadow ring as the ISS enters Earth's shadow at the end of that
+stretch, and leaves the chart at the 10:05 PM set; beside it the
+visible-pass roster counts down, then moves on to the next evening's pass
+once the stretch is over:
 
 ![The Next Visible Pass panel during the ISS pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-ISS-zenith.gif)
 
-And the same flip on Tiangong's pass of September 8: it rises sunlit
-in the west-northwest, peaks at 59° to the north-northeast and drops
-into Earth's shadow at 49°, the sweep dot snapping from solid to the
-in-shadow ring mid-ride, in step with the dome's marker:
+And the same flip on Tiangong's pass of September 8: it can be seen
+from 8:49 to 8:53 PM, rising sunlit in the west-northwest and peaking
+at 59° to the north-northeast, until it drops into Earth's shadow at
+49°; the sweep dot snaps from solid to the in-shadow ring there,
+mid-ride, in step with the dome's marker:
 
 ![The Next Visible Pass panel during a Tiangong pass, the sweep dot flipping to the in-shadow ring mid-ride](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-Tiangong-shadow-entry.gif)
 
@@ -212,7 +224,7 @@ What installs:
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.7 everything, and less at each tier below it, down to
+weewx-skyfield 2.12 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -233,7 +245,7 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
   7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-  **2.7 or later** if you run it at all — 9.6 is pinned to it and the
+  **2.12 or later** if you run it at all — 9.8 is pinned to it and the
   installer refuses an older one.  It is what the sky dome, the Next
   Visible Pass chart, the comets, the meteor showers, the full countdown
   row and Proxima Centauri all come from, so without it the page is the

@@ -85,7 +85,7 @@ here.
     # ── the Next Visible Pass chart panel (both strings shared with
     #    weewx-skyfield's Sky page, translations verbatim) ──────────────
     "The Next Visible Pass · the sky at its peak" = "The Next Visible Pass · the sky at its peak"
-    "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark." = "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark."
+    "The whole sky as it will stand at the satellite's highest visible point, on the date above — the dashed arc is the satellite's path and the solid stretch the part you can see, its times at its ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark." = "The whole sky as it will stand at the satellite's highest visible point, on the date above — the dashed arc is the satellite's path and the solid stretch the part you can see, its times at its ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark."
 
     # ── strings rendered inside the embedded dome and chart
     #    (weewx-skyfield's dome_svg and pass_chart_html translate

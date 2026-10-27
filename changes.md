@@ -1,5 +1,69 @@
 # weewx-celestial change history
 
+## 9.8 2026/10/26
+- ACTION REQUIRED: requires weewx-skyfield 2.12 if you run it.  Upgrade
+  weewx-skyfield first; the installer refuses an older one, naming the
+  version it found.  Having none at all is not a refusal.
+- ACTION REQUIRED, for a skin of your own that embeds these panels:
+  re-copy `celestial.js` and `celestial.css` from skins/Celestial/ into
+  your skin and restart WeeWX.  Your `celestial.js` reads satellite fields
+  9.8 no longer declares, and places the dial's names by the rules below;
+  `celestial.css` carries the new dotted line's style.
+- Fixed: the Geocentric dial wrote names beside the wrong bodies, on a
+  phone most of all ("Moon" over Uranus's dot, "Saturn" beside Neptune
+  while "Neptune" sat by Saturn).  Each name now sits against its own
+  mark, measured to the ink of its letters, and only where it is nearer
+  its own mark than any other mark, motion trail or comet tail; where
+  it cannot touch its mark it may hang off a short dotted line, held to
+  the same rule.  A name that fits nowhere so is left off, as before,
+  and its mark still answers a tap.  On a crowded dial that means some
+  bodies about the Sun (Mercury most of all) go unnamed where 9.7.2
+  named them beside another body.  Measured over 211 skies on a phone,
+  9.7.2 put seven in ten of the names it drew where another body was
+  less than twice as far as their own; 9.8 puts none.
+- The dial's ring numbers ("0.01 au", "1 au", ...) now take whichever of
+  eight places around their ring is clear, so they show far more often
+  ("0.01 au" on a phone in about seven skies of ten, where it never
+  showed), and not always on the same spoke.
+- Earth's name is placed like the others, below Earth when there is
+  room, and Earth's mark answers a tap.
+- For a skin of your own: a `text-anchor` on the dial's names no longer
+  has any effect, and the names' dotted line is `.cel-leader`.
+- A visible satellite pass is now weewx-skyfield 2.12's: the satellite
+  sunlit while the sun is at least 6° below the horizon and the
+  satellite at least 10° up, for at least a minute.  The old rule listed
+  passes nobody could see, a few seconds of sunlight low on the horizon.
+- The Next Visible Pass roster now reads the part of the pass you can
+  see: when it begins, then where the satellite appears, how high it
+  peaks, where it disappears and for how many minutes, as weewx-skyfield's
+  own satellites panel does.  The chart is drawn at the highest point of
+  that stretch, which it shows solid on the dashed arc, and its caption
+  says so (a new `[Texts]` key, translated in all nine languages; the
+  old key is gone).
+- The countdown chip counts to the same stretch: `appears in` until it
+  begins, `overhead now` while it lasts, and then the next visible pass.
+  It no longer says `just set`: when the stretch ends the satellite has
+  entered Earth's shadow, sunk low or met the dawn, it has not set.
+- The "next pass overhead" roster still counts every pass, horizon to
+  horizon, and its tag now says `visible` only for a pass still to come
+  that will be, or while the satellite can actually be seen; before and
+  after that stretch it reads `not visible`.
+- Each satellite's Next Visible Pass fields are now the visible stretch
+  (still 19 fields per satellite).  The installer rewrites the satellite groups in `weewx.conf` on
+  install, as always; no hand edit.  A group of your own on the same
+  report that names a satellite's `next_visible_pass.rise` or `.set`
+  keeps that whole group in the feed until the satellite sets (weewx-
+  loopdata groups fields by their chain); the page copes, but read the
+  visible stretch instead.
+- Fixed: a satellite whose next pass disappeared from the feed (none in
+  the coming week) kept the row it was first painted with, counting down
+  to a pass already over, until the page was reloaded.  It now says
+  there is none, and a satellite whose orbital elements go stale while
+  the page is open says that, rather than keep its last pass.
+- Fixed: a pass's minutes now round as weewx-skyfield's do, half to even,
+  so a window of exactly two and a half minutes reads the same on both
+  pages.
+
 ## 9.7.2 2026/10/14
 - `--remove-satellite` names both element files it leaves behind:
   weewx-skyfield 2.10 caches a satellite's elements as
