@@ -439,7 +439,12 @@ own `label_scale`: a chart's smallest label is 10 units times that scale
 in a 680-unit frame, so it reaches the 11px floor at 935px of glass on a
 set scaled 0.8, at 623px on the default 1.2, and at 534px on one scaled
 1.4.  Each fragment carries its own figure, so setting a `label_scale`
-gets you the right switching width without computing one.
+gets you the right switching width without computing one.  This
+extension's stylesheet holds the dome and the pass chart at 640px, so on
+a page that uses it a set below about 1.17, whose switching width is
+over 640px, always shows the phone drawing;
+[Panels in your own skin](own-skin.md#the-two-drawings) says how to lift
+that cap.
 
 A narrow *label layer* is a different and older thing — a second label
 layout inside the desk drawing — and it is now useful only for widths

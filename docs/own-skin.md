@@ -330,12 +330,29 @@ one.
 10 units times the set's `label_scale`, so the width at which it reaches
 11px moves with the scale: 935px at 0.8, 623px at the 1.2 default, 534px
 at 1.4.  Each fragment carries its own as `data-frame-at`, and
-`celestial.js` applies it.  The stylesheet's own `@container` rule states
-the default scale's width, which is what a page with no javascript keeps
-— correct for any set on the default, and the only number a stylesheet
-can state, since a container query's condition takes no variable.  So if
-you set a `label_scale`, you get the right switching width for free; you
-do not have to compute or maintain one.
+`celestial.js` applies it to the fragment's own width.  The stylesheet's
+own `@container` rule states the default scale's width, which is what a
+page with no javascript keeps — correct for any set on the default, and
+the only number a stylesheet can state, since a container query's
+condition takes no variable.  So if you set a `label_scale`, you get the
+right switching width for free; you do not have to compute or maintain
+one.
+
+**Size the box that holds a chart, never the chart.**  The switch
+measures the fragment, so the fragment's width has to be the width the
+drawing is drawn at.  Cap `#dome-svg` and `#pass-chart`, the boxes the
+fragments arrive in, and leave the desk drawing's `<svg>` to fill its
+box.  A desk drawing held narrower than its box by a rule of its own is
+judged by the box, and can be shown too small to read.  The phone
+drawing is another matter: the switch never judges it, so holding it at
+its design size, as this extension's stylesheet does with
+`svg.sky-narrow{max-width:360px}`, is fine.  This
+extension's stylesheet holds both boxes at 640px, so a set at 0.8, whose
+threshold is 935px, always shows the phone drawing; to give it the desk
+drawing in a wider column, lift the cap
+(`#dome-svg, #pass-chart{max-width:none}`).  Through 9.8 the dome's cap
+was on its `<svg>` (`#dome-wrap svg`); a stylesheet of yours that
+overrides that rule should override `#dome-svg` instead.
 
 The phone drawing is a different drawing, not the desk one with larger
 words: 360 units across instead of 680, its own type sizes, and its
@@ -372,9 +389,16 @@ What that means for your markup, if you read a fragment or style one:
 **A set's `narrow_label_scale` and `narrow_media` no longer reach a
 narrow screen.**  They add a second label layout inside the *desk*
 drawing, and where that drawing renders too narrow to be read it is not
-what shows.  They are still accepted and still do their work above that,
-so a set asking for larger labels in the band between a phone and a desk
-— say `"(max-width: 900px)"` — keeps working exactly as it did.  A set
+what shows.  They are still accepted and still do their work wherever
+the desk drawing shows: where the chart's box is at least the set's own
+frame threshold wide (623px at the default `label_scale`, 935px at 0.8).
+So a query for larger labels in a band between a phone and a desk — say
+`"(max-width: 900px)"` — keeps working as it did when the chart's box
+can be that wide in that band, and shows nothing when it cannot.  Under
+this extension's 640px cap a set at 0.8 never shows its desk drawing,
+and so never its layer.  The layer never moves the threshold; to keep
+the desk drawing down to narrower widths, raise the set's `label_scale`,
+which lowers it.  A set
 whose `narrow_media` is a phone breakpoint should drop both keys: a
 phone now gets a drawing made for it, which is what those keys were
 reaching for.

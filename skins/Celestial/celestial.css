@@ -448,7 +448,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * width. */
 /* The box when there are two drawings, and the drawing itself when
  * there is only one: a frame that draws alone is emitted bare, with no
- * box for the rule above to find, and #dome-wrap svg would otherwise
+ * box for the rule above to find, and its 640px box would otherwise
  * stretch a 360 unit drawing to 640px -- the very thing this cap is
  * here to stop. */
 .cel-frame[data-frame="narrow"],
@@ -494,7 +494,15 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 @media (max-width: 1165px){
   .cel-domepanel{display:flex; flex-direction:column; align-items:stretch}
 }
-#dome-wrap svg{max-width:640px; margin:0 auto}
+/* The cap is on the BOX that holds the drawing, never on the drawing, as
+ * #pass-chart's is below.  The frame switch measures the fragment's own
+ * width -- the @container query here and celestial.js alike -- so that
+ * width must be the width the drawing is drawn at.  Capped on the svg,
+ * the fragment measured its whole column while the drawing stood at
+ * 640px, and a set whose own frame threshold lies above 640px (0.8:
+ * 935px) took its desk drawing in a wide column, its smallest label
+ * 7.5px. */
+#dome-svg{max-width:640px; margin:0 auto}
 .cel-roster .cel-eyebrow{margin-top:2px}
 .cel-chip-sat{background:var(--brass)}
 .cel-satline{font-size:max(11px,.8em)}

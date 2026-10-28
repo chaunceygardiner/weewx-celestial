@@ -1,5 +1,28 @@
 # weewx-celestial change history
 
+## 9.9 2026/10/28
+- ACTION REQUIRED only if you embed these panels in a skin of your own
+  (the bundled Celestial report needs nothing): re-copy `celestial.css`
+  from skins/Celestial/ into your skin, and `celestial.js` too if you
+  would rather not see a version line in the browser's console, then
+  restart WeeWX.  If your own stylesheet overrides the dome's cap on
+  `#dome-wrap svg`, move that override to `#dome-svg`.
+- Fixed: a fragment set at a `label_scale` below about 1.17 could show
+  its desk drawing where that drawing reads too small.  The dome's 640px
+  cap sat on the drawing, so the switch between the desk and phone
+  drawings, which measures the box the drawing arrives in, saw the whole
+  column: a set at 0.8 in a column wider than its 935px got the desk
+  drawing at 640px, its smallest label 7.5px.  The cap is now on that
+  box, `#dome-svg`, as the pass chart's has always been on `#pass-chart`.
+  The bundled page, on the default 1.2, looks exactly as it did.
+- The embedding guide says to size the box that holds a chart, never
+  the chart, and no longer says a `narrow_media` band between a phone
+  and a desk "keeps working exactly as it did": a narrow layer shows only
+  where the desk drawing does, where the chart's box is at least the
+  set's own frame threshold wide (623px at the default `label_scale`,
+  935px at 0.8), and raising `label_scale` is what keeps the desk drawing
+  at narrower widths.
+
 ## 9.8 2026/10/26
 - ACTION REQUIRED: requires weewx-skyfield 2.12 if you run it.  Upgrade
   weewx-skyfield first; the installer refuses an older one, naming the

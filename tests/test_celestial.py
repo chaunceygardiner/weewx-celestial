@@ -635,6 +635,71 @@ def handled(page, part, action):
     wait_xhr(page, part, n + 1)
 '''
 
+# Runner-side probe of a page's two-frame charts.  Paste into a runner's
+# source; `page.evaluate(PROBE)` answers, for the dome and the pass chart
+# (None where the page has none): the set's threshold, the script's
+# verdict, the width the fragment measures, the column it sits in, which
+# drawing shows, and the smallest label the reader sees -- each shown
+# text's font size times its drawing's scale, in pixels on the glass.
+FRAME_PROBE = '''
+PROBE = """() => {
+  const one = sel => {
+    const w = document.querySelector(sel);
+    if (w === null) return null;
+    const vis = f => { const e = w.querySelector(".cel-frame[data-frame=" + f + "]");
+      return e !== null && e.getBoundingClientRect().width > 0; };
+    let glass = null;
+    w.querySelectorAll("svg").forEach(svg => {
+      const k = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+      if (!(k > 0)) return;
+      svg.querySelectorAll("text").forEach(t => {
+        if (!(t.getBoundingClientRect().width > 0)) return;
+        const px = parseFloat(getComputedStyle(t).fontSize) * k;
+        if (glass === null || px < glass) glass = px;
+      });
+    });
+    return {at: w.getAttribute("data-frame-at"),
+            fit: w.getAttribute("data-frame-fit"),
+            box: Math.round(w.getBoundingClientRect().width),
+            col: Math.round(w.closest("#dome-wrap, #pass-wrap").getBoundingClientRect().width),
+            wide: vis("wide"), narrow: vis("narrow"), glass: glass};
+  };
+  return {dome: one(".domefrag"), pass: one(".passfrag")};
+}"""
+'''
+
+
+def assert_judged_by_drawn_width(out, kind):
+    """A 0.8 set (threshold 935px) in an 1100px window, read by
+    FRAME_PROBE on three pages: the stylesheet as shipped ('broad'), its
+    640px cap lifted ('uncapped'), and capped at half the column
+    ('half').
+
+    The width judged is the one the drawing is DRAWN at, which is why
+    each chart's cap sits on the box holding its fragment (#dome-svg,
+    #pass-chart) and never on the drawing.  Through 9.8 the dome's sat on
+    its svg: the fragment measured the whole column, over 935, while the
+    drawing stood at 640px with its smallest label at 7.5px."""
+    broad = out['broad'][kind]
+    assert broad['col'] > 935 and broad['box'] == 640, (kind, broad)
+    assert broad['fit'] == 'narrow', (kind, broad)
+    assert broad['narrow'] is True and broad['wide'] is False, (kind, broad)
+    assert broad['glass'] is not None and broad['glass'] >= 11 - 1e-6, (kind, broad)
+    # The cap lifted, the column decides again: the desk drawing, as wide
+    # as the column, its labels over the floor too.
+    uncapped = out['uncapped'][kind]
+    assert uncapped['box'] > 935, (kind, uncapped)
+    assert uncapped['fit'] == 'wide', (kind, uncapped)
+    assert uncapped['wide'] is True and uncapped['narrow'] is False, (kind, uncapped)
+    assert uncapped['glass'] is not None and uncapped['glass'] >= 11 - 1e-6, (kind, uncapped)
+    # Half of the column is under 935: narrow again.  The box must
+    # measure that half, not the shipped 640px cap, which is under 935
+    # as well and would pass every assertion after this one.
+    half = out['half'][kind]
+    assert half['col'] > 935, (kind, half)
+    assert abs(half['box'] - half['col'] / 2) <= 1, (kind, half)
+    assert half['fit'] == 'narrow' and half['narrow'] is True, (kind, half)
+
 
 def load_loopdata():
     """Import the sibling weewx-loopdata checkout's module, or skip the
@@ -9498,7 +9563,7 @@ class TestPanels:
         cap that keeps a phone drawing at its design size has to reach the
         drawing by its own class too.
 
-        Without it #dome-wrap svg's 640px cap stretches a 360 unit
+        Without it the 640px box (#dome-svg) stretches a 360 unit
         drawing to 640px, with ~26px labels: the exact fault the cap
         exists to prevent, arrived at through the degraded path where
         skyfield's wide draw failed and its narrow one did not.
@@ -9578,12 +9643,18 @@ class TestPanels:
         back to the stylesheet's default width, which is wrong for every
         set that declares a label_scale of its own.
 
-        Driven at 800px with a set at 0.8, deliberately: the stylesheet
-        would say wide there (784px of glass, over its 623px), and the
-        set's own width is 935px, so the two disagree and only the
-        fitted answer is right.  And driven with no ResizeObserver,
-        also deliberately: with one, an early measurement is healed as
-        soon as the area is shown and the ordering cannot be tested.
+        Driven at 800px with a set at 0.8, deliberately: the chart is
+        held at its 640px cap, so the stylesheet would say wide there
+        (over its 623px), and the set's own width is 935px, so the two
+        disagree and only the fitted answer is right.  And driven with
+        no ResizeObserver, also deliberately: with one, an early
+        measurement is healed as soon as the area is shown and the
+        ordering cannot be tested.
+
+        The same render then serves the pass chart's half of
+        assert_judged_by_drawn_width, on three more pages in the same
+        browser: shown from the start, at 1100px, as shipped, with its
+        cap lifted and with it capped at half the column.
         Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -9614,6 +9685,16 @@ class TestPanels:
             '<script src="celestial.js"></script></head><body>%s'
             '<section id="pass-sec" hidden><h2>p</h2>%s</section></body></html>'
             % (page.config_script(alm), hidden), encoding='utf-8')
+        # The chart shown from the start, three ways.
+        for name, style in (('broad', ''),
+                            ('uncapped', '<style>#pass-chart{max-width:none}</style>'),
+                            ('half', '<style>#pass-chart{max-width:50%}</style>')):
+            (tmp_path / ('%s.html' % name)).write_text(
+                '<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+                '<link rel="stylesheet" href="celestial.css">%s'
+                '<script src="celestial.js"></script></head><body>%s'
+                '<section id="pass-sec"><h2>p</h2>%s</section></body></html>'
+                % (style, page.config_script(alm), panel), encoding='utf-8')
         _domes, pass_name = celestial_page.fragment_names(fs)
         (tmp_path / pass_name).write_text(page.pass_fragment(alm, fs), encoding='utf-8')
         write_assets(tmp_path, unwrapped=True)   # the runner calls refreshPass
@@ -9628,39 +9709,51 @@ class TestPanels:
         httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         runner = tmp_path / 'runner.py'
+        port = httpd.server_address[1]
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
-            'with sync_playwright() as p:\n'
-            '    b = p.chromium.launch()\n'
-            '    pg = b.new_page(viewport={"width": 800, "height": 900})\n'
-            '    # No ResizeObserver, which is the whole point: WITH one,\n'
-            '    # a fragment measured too early is healed the moment the\n'
-            '    # area becomes visible, and the ordering bug is\n'
-            '    # invisible.  Without one, watchFrames falls back to a\n'
-            '    # window resize listener that never fires here, so the\n'
-            '    # judgment at swap time is the only one there is.\n'
-            '    pg.add_init_script("delete window.ResizeObserver;")\n'
-            '    errs = []\n'
-            "    pg.on('pageerror', lambda e: errs.append(str(e)))\n"
-            '    pg.goto("http://127.0.0.1:%d/index.html")\n'
-            '    pg.wait_for_function("() => typeof refreshPass === \'function\'")\n'
-            '    pg.evaluate("() => refreshPass()")\n'
-            '    pg.wait_for_function("() => document.querySelector('
-            '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
-            '    out = pg.evaluate("""() => {\n'
-            '      const w = document.querySelector(".passfrag");\n'
-            '      const vis = f => { const e = document.querySelector('
-            '".cel-frame[data-frame=" + f + "]");\n'
-            '        return e !== null && e.getBoundingClientRect().width > 0; };\n'
-            '      return {fit: w.getAttribute("data-frame-fit"),\n'
-            '              at: w.getAttribute("data-frame-at"),\n'
-            '              box: Math.round(w.getBoundingClientRect().width),\n'
-            '              wide: vis("wide"), narrow: vis("narrow")};\n'
-            '    }""")\n'
-            '    out["errors"] = errs\n'
-            '    print(json.dumps(out))\n'
-            '    b.close()\n' % httpd.server_address[1])
+            + FRAME_PROBE +
+            ('with sync_playwright() as p:\n'
+             '    b = p.chromium.launch()\n'
+             '    pg = b.new_page(viewport={"width": 800, "height": 900})\n'
+             '    # No ResizeObserver, which is the whole point: WITH one,\n'
+             '    # a fragment measured too early is healed the moment the\n'
+             '    # area becomes visible, and the ordering bug is\n'
+             '    # invisible.  Without one, watchFrames falls back to a\n'
+             '    # window resize listener that never fires here, so the\n'
+             '    # judgment at swap time is the only one there is.\n'
+             '    pg.add_init_script("delete window.ResizeObserver;")\n'
+             '    errs = []\n'
+             "    pg.on('pageerror', lambda e: errs.append(str(e)))\n"
+             '    pg.goto("http://127.0.0.1:%d/index.html")\n'
+             '    pg.wait_for_function("() => typeof refreshPass === \'function\'")\n'
+             '    pg.evaluate("() => refreshPass()")\n'
+             '    pg.wait_for_function("() => document.querySelector('
+             '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
+             '    out = pg.evaluate("""() => {\n'
+             '      const w = document.querySelector(".passfrag");\n'
+             '      const vis = f => { const e = document.querySelector('
+             '".cel-frame[data-frame=" + f + "]");\n'
+             '        return e !== null && e.getBoundingClientRect().width > 0; };\n'
+             '      return {fit: w.getAttribute("data-frame-fit"),\n'
+             '              at: w.getAttribute("data-frame-at"),\n'
+             '              box: Math.round(w.getBoundingClientRect().width),\n'
+             '              wide: vis("wide"), narrow: vis("narrow")};\n'
+             '    }""")\n'
+             '    out["errors"] = errs\n'
+             '    for name in ("broad", "uncapped", "half"):\n'
+             '        pg = b.new_page(viewport={"width": 1100, "height": 900})\n'
+             '        errs = []\n'
+             "        pg.on('pageerror', lambda e: errs.append(str(e)))\n"
+             '        pg.goto("http://127.0.0.1:%d/" + name + ".html")\n'
+             '        pg.wait_for_function("() => document.querySelector('
+             '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
+             '        out[name] = pg.evaluate(PROBE)\n'
+             '        out[name]["errors"] = errs\n'
+             '        pg.close()\n'
+             '    print(json.dumps(out))\n'
+             '    b.close()\n' % (port, port)))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
                                   timeout=120)
@@ -9670,10 +9763,15 @@ class TestPanels:
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == [], out['errors']
         assert out['at'] == '935.0', out
-        # The band where the stylesheet and the set disagree.
+        # The band where the stylesheet and the set disagree: the
+        # fragment at its 640px cap, not the 784px column.
         assert 624 < out['box'] < 935, out
         assert out['fit'] == 'narrow', out
         assert out['narrow'] is True and out['wide'] is False, out
+        for name in ('broad', 'uncapped', 'half'):
+            assert out[name]['errors'] == [], (name, out[name]['errors'])
+            assert out[name]['pass']['at'] == '935.0', (name, out[name])
+        assert_judged_by_drawn_width(out, 'pass')
 
     def test_each_set_carries_the_width_its_own_labels_need(self, wxskyfield_sat_almanac):
         """The width a fragment changes frame at is the SET's, not a
@@ -9709,16 +9807,29 @@ class TestPanels:
         """A set at a label scale of its own changes frame where ITS
         labels stop reading, not where the stylesheet's default says.
 
-        The case: label_scale 0.8 in a 700px column.  The stylesheet
-        switches at 623.29px, so left to itself it shows the DESK
-        drawing there -- and that drawing's smallest label is 10 x 0.8 x
-        700 / 680 = 8.2px, under the floor, which is the whole fault
-        this release removes.  The set's own width is 935px, so the
-        phone drawing is the right one and celestial.js says so.
+        The case: label_scale 0.8 in a 700px column, the dome held at
+        640px.  The stylesheet switches at 623.29px, so
+        left to itself it shows the DESK drawing there -- and that
+        drawing's smallest label is 10 x 0.8 x 640 / 680 = 7.5px, under
+        the floor.  The set's own width is 935px, so the phone drawing is
+        the right one and celestial.js says so.
 
         Also pinned: the stylesheet alone (no javascript) still gets the
         DEFAULT scale right, which is what a page without the script
         keeps.
+
+        And the width judged is the one the drawing is DRAWN at, which is
+        why the dome's 640px cap sits on the box holding its fragment
+        (#dome-svg, as #pass-chart's does) and never on the drawing.  The
+        pass chart's half of this rides the hidden-area test's render
+        rather than drawing the same chart again here.  At 1100px the
+        column is over 935, but the fragment measures 640 and the phone
+        drawing shows, every label on it clearing 11px on the glass.
+        Through 9.8 the dome's cap sat on its svg, the fragment measured
+        the whole column, and the desk drawing showed at 640px.  A page
+        that lifts the cap (`max-width:none`) is judged by its column and
+        keeps the desk drawing; one capping it at a share of its column
+        (`max-width:50%`) is judged by that share.
         Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -9745,6 +9856,12 @@ class TestPanels:
         # The same page with the script withheld: the stylesheet alone.
         (tmp_path / 'nojs.html').write_text(
             html.replace('<script src="celestial.js"></script>', ''), encoding='utf-8')
+        # The same page with the cap lifted, and with it capped by a share
+        # of the column rather than a length.
+        for name, cap in (('uncapped', 'none'), ('half', '50%')):
+            (tmp_path / ('%s.html' % name)).write_text(
+                html.replace('</head>', '<style>#dome-svg{max-width:%s}</style></head>' % cap),
+                encoding='utf-8')
         write_assets(tmp_path)
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -9758,24 +9875,19 @@ class TestPanels:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         runner = tmp_path / 'runner.py'
         runner.write_text(
-            'import json\n'
-            'from playwright.sync_api import sync_playwright\n'
-            'BASE = "http://127.0.0.1:%d/"\n'
-            'PROBE = """() => {\n'
-            '  const w = document.querySelector(".domefrag");\n'
-            '  const vis = f => { const e = document.querySelector(\n'
-            '      ".cel-frame[data-frame=" + f + "]");\n'
-            '    return e !== null && e.getBoundingClientRect().width > 0; };\n'
-            '  return {at: w.getAttribute("data-frame-at"),\n'
-            '          fit: w.getAttribute("data-frame-fit"),\n'
-            '          box: Math.round(w.getBoundingClientRect().width),\n'
-            '          wide: vis("wide"), narrow: vis("narrow")};\n'
-            '}"""\n'
+            ('import json\n'
+             'from playwright.sync_api import sync_playwright\n'
+             'BASE = "http://127.0.0.1:%d/"\n' % httpd.server_address[1])
+            + FRAME_PROBE +
             'out = {}\n'
             'with sync_playwright() as p:\n'
             '    b = p.chromium.launch()\n'
-            '    for name, path in (("js", "index.html"), ("nojs", "nojs.html")):\n'
-            '        pg = b.new_page(viewport={"width": 716, "height": 900})\n'
+            '    for name, path, width in (("js", "index.html", 716),\n'
+            '                              ("nojs", "nojs.html", 716),\n'
+            '                              ("broad", "index.html", 1100),\n'
+            '                              ("uncapped", "uncapped.html", 1100),\n'
+            '                              ("half", "half.html", 1100)):\n'
+            '        pg = b.new_page(viewport={"width": width, "height": 900})\n'
             '        errs = []\n'
             "        pg.on('pageerror', lambda e: errs.append(str(e)))\n"
             '        pg.goto(BASE + path)\n'
@@ -9786,8 +9898,7 @@ class TestPanels:
             '        out[name]["errors"] = errs\n'
             '        pg.close()\n'
             '    b.close()\n'
-            'print(json.dumps(out))\n'
-            % httpd.server_address[1])
+            'print(json.dumps(out))\n')
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
                                   timeout=180)
@@ -9795,11 +9906,16 @@ class TestPanels:
             httpd.shutdown()
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
-        js, nojs = out['js'], out['nojs']
-        assert js['errors'] == [], js['errors']
-        # The column really is in the band where the two answers differ:
-        # wider than the stylesheet's 624, narrower than this set's 935.
-        assert 624 < js['box'] < 935, js
+        # Every page but the one whose script was withheld on purpose:
+        # its config block still calls celestial.start.
+        for name, leg in out.items():
+            if name != 'nojs':
+                assert leg['errors'] == [], (name, leg['errors'])
+        js, nojs = out['js']['dome'], out['nojs']['dome']
+        # In the band where the two answers differ: wider than the
+        # stylesheet's 624, narrower than this set's 935.  The column is
+        # in it, and so is the fragment, held at its 640px cap.
+        assert 624 < js['col'] < 935 and js['box'] == 640, js
         assert js['at'] == '935.0', js
         # The script's verdict, and the drawing it produces.
         assert js['fit'] == 'narrow', js
@@ -9809,6 +9925,7 @@ class TestPanels:
         # the script has to refine it.
         assert nojs['fit'] is None, nojs
         assert nojs['wide'] is True and nojs['narrow'] is False, nojs
+        assert_judged_by_drawn_width(out, 'dome')
 
     def test_a_label_box_is_measured_not_calculated_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
