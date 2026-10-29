@@ -28,10 +28,12 @@ advances each readout at the body's own derived rate, re-anchoring to truth
 on the next packet and freezing rather than inventing data if the feed goes
 stale.
 
-It reads on a phone, too.  Below about 620 pixels of chart width the sky
-dome, the Next Visible Pass chart and the Geocentric dial are drawn
-again at phone size — a different drawing, not the desktop's shrunk
-down — so every label stays legible instead of landing at five pixels.
+It reads on a phone, too.  Where a chart is drawn too narrow for its
+labels — below about 620 pixels on a phone or tablet, 570 on a desk,
+whose screen is farther away — the sky dome, the Next Visible Pass
+chart and the Geocentric dial are drawn again at phone size — a
+different drawing, not the desktop's shrunk down — so every label stays
+legible instead of landing at five pixels.
 Turning the phone switches between them instantly, with nothing fetched.
 
 ![Celestial Sample Report](CelestialSampleReport.png)

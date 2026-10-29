@@ -223,9 +223,13 @@ shares the row with its roster.  A window rule could not see that, and it
 could not see a consuming skin's chrome at all.  The threshold itself is
 derived, and derived per fragment set: a chart's smallest label is 10
 units times that set's `label_scale`, so the width at which it reaches
-11px moves with the scale — 935px at 0.8, 623px at the 1.2 default,
-534px at 1.4.  Each fragment carries its own width as `data-frame-at`,
-and the page honors it.
+the floor moves with the scale — on a phone or tablet, whose floor is
+11px, 935px at 0.8, 623px at the 1.2 default, 534px at 1.4; on a desk,
+whose floor is the 10px the charts are laid out for, 850px, 567px and
+486px.  The device's primary pointer says which (a phone in landscape is
+as wide as a narrow desk window).  Each fragment carries the phone
+width, the desk width is ten elevenths of it, and the page honors the
+one its device takes.
 
 That choice is what makes turning a phone free: it is a style
 recalculation, with nothing fetched and nothing recomputed.  The cost is

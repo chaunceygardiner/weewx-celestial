@@ -328,13 +328,20 @@ one.
 
 **The width is derived per set, not fixed.**  A chart's smallest label is
 10 units times the set's `label_scale`, so the width at which it reaches
-11px moves with the scale: 935px at 0.8, 623px at the 1.2 default, 534px
-at 1.4.  Each fragment carries its own as `data-frame-at`, and
-`celestial.js` applies it to the fragment's own width.  The stylesheet's
-own `@container` rule states the default scale's width, which is what a
-page with no javascript keeps — correct for any set on the default, and
-the only number a stylesheet can state, since a container query's
-condition takes no variable.  So if you set a `label_scale`, you get the
+the floor moves with the scale.  There are two floors.  On a phone or
+tablet it is 11px, a small screen's: 935px at 0.8, 623px at the 1.2
+default, 534px at 1.4.  On a desk, with a mouse or trackpad, it is the
+10px the charts are laid out for: 850px, 567px, 486px.  The width cannot
+say which device is showing it — a phone in landscape is as wide as a
+narrow desk window — so the device's primary pointer decides, through
+the media query `(pointer: fine)`; anything not fine keeps the phone
+rule.  Each fragment carries the phone width as `data-frame-at`; the
+desk width is ten elevenths of it, the ratio of the two floors, and
+`celestial.js` applies whichever this device takes to the fragment's
+own width.  The stylesheet's own `@container` rules state the default
+scale's two widths, which is what a page with no javascript keeps —
+correct for any set on the default, and the only numbers a stylesheet
+can state, since a container query's condition takes no variable.  So if you set a `label_scale`, you get the
 right switching width for free; you do not have to compute or maintain
 one.
 
@@ -383,20 +390,24 @@ What that means for your markup, if you read a fragment or style one:
   two.  Take the one inside the box you mean, or act on both.
 - You do **not** need to match a breakpoint: the panels measure
   themselves.  If you want your chrome to change at the same moment the
-  drawings do, put your own `@container` query on the same wrapper
-  rather than guessing a viewport width.
+  drawings do, key it to the verdict the script writes on the wrapper,
+  `data-frame-fit="wide"` or `"narrow"`, rather than guessing a width:
+  the width differs by device and by set.  A `@container` query on the
+  wrapper at the stylesheet's widths is the fallback for a page with no
+  javascript.
 
 **A set's `narrow_label_scale` and `narrow_media` no longer reach a
 narrow screen.**  They add a second label layout inside the *desk*
 drawing, and where that drawing renders too narrow to be read it is not
 what shows.  They are still accepted and still do their work wherever
 the desk drawing shows: where the chart's box is at least the set's own
-frame threshold wide (623px at the default `label_scale`, 935px at 0.8).
+frame threshold wide (623px at the default `label_scale` on a phone,
+567px on a desk; 935px and 850px at 0.8).
 So a query for larger labels in a band between a phone and a desk — say
 `"(max-width: 900px)"` — keeps working as it did when the chart's box
 can be that wide in that band, and shows nothing when it cannot.  Under
 this extension's 640px cap a set at 0.8 never shows its desk drawing,
-and so never its layer.  The layer never moves the threshold; to keep
+on either device, and so never its layer.  The layer never moves the threshold; to keep
 the desk drawing down to narrower widths, raise the set's `label_scale`,
 which lowers it.  A set
 whose `narrow_media` is a phone breakpoint should drop both keys: a
@@ -464,10 +475,11 @@ narrow layer:
 ```
 
 The set takes the default `label_scale`, so its frame threshold is 623px
-and a 900px query sits above it — which is what makes the layer reachable
-at all.  Declaring `label_scale = 0.8` here instead would move the
-threshold to 935px and the query would never show anything, because below
-935px this drawing is hidden and the phone one is shown in its place.
+(567px on a desk) and a 900px query sits above it — which is what makes
+the layer reachable at all.  Declaring `label_scale = 0.8` here instead
+would move the threshold to 935px (850px on a desk) and the query would
+never show anything, because below that this drawing is hidden and the
+phone one is shown in its place.
 
 ```
     $celestial.dome_html($almanac, set='stars')

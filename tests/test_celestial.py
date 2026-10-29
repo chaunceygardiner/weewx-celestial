@@ -701,6 +701,151 @@ def assert_judged_by_drawn_width(out, kind):
     assert half['fit'] == 'narrow' and half['narrow'] is True, (kind, half)
 
 
+# The runner for the device-rule test: one browser, a context per
+# device, each leg a resize in that context's page.  T0, BASE and the
+# STEP_HELPERS come first.
+DESK_RUNNER = '''
+READ = """() => {
+  const shown = (sel, f) => { const e = document.querySelector(
+      sel + ' .cel-frame[data-frame=' + f + ']');
+    return e !== null && e.getBoundingClientRect().width > 0; };
+  const one = sel => { const w = document.querySelector(sel);
+    if (w === null) return null;
+    let glass = null;
+    w.querySelectorAll('svg').forEach(svg => {
+      const k = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+      if (!(k > 0)) return;
+      svg.querySelectorAll('text').forEach(t => {
+        if (!(t.getBoundingClientRect().width > 0)) return;
+        const px = parseFloat(getComputedStyle(t).fontSize) * k;
+        if (glass === null || px < glass) glass = px; }); });
+    return {box: w.getBoundingClientRect().width,
+            shown: shown(sel, 'wide') && !shown(sel, 'narrow') ? 'wide'
+                 : shown(sel, 'narrow') && !shown(sel, 'wide') ? 'narrow' : 'both/none',
+            glass: glass}; };
+  const d = document.getElementById('dial');
+  return {dome: one('.domefrag'), pass: one('.passfrag'),
+          dial: d === null ? null : d.getAttribute('data-frame'),
+          dialBox: d === null ? null : d.parentNode.getBoundingClientRect().width};
+}"""
+def column(page, target):
+    # Size the window so the charts' column is TARGET px; the stacked
+    # layout's margin is measured, not assumed.
+    w = page.viewport_size['width']
+    for _ in range(8):
+        box = page.evaluate(
+            "() => document.querySelector('.domefrag').getBoundingClientRect().width")
+        if abs(box - target) < 0.5:
+            return
+        # Under the 640px cap the column cannot be read off the box, so
+        # step down until it is, then correct exactly.
+        w = int(round(w + target - box)) if box < 639 else w - 120
+        page.set_viewport_size({'width': w, 'height': 900})
+    assert abs(page.evaluate(
+        "() => document.querySelector('.domefrag').getBoundingClientRect().width")
+        - target) < 1.0, ('column', target)     # the legs sit 1.4px off the threshold
+def settle(page, want):
+    # Until the charts and the dial all say WANT.  The ceiling is a
+    # failure, not a pause: a leg that never gets there raises here,
+    # naming the frame it waited for, rather than reading a page that
+    # never settled.
+    page.wait_for_function("""w => {
+      const f = s => { const e = document.querySelector(s);
+                       return e && e.getAttribute('data-frame-fit'); };
+      const d = document.getElementById('dial');
+      return f('.domefrag') === w && f('.passfrag') === w
+             && (!d || d.getAttribute('data-frame') === w); }""",
+      arg=want, timeout=5000)
+# The page's pointer, made switchable: the change a two-in-one makes when
+# its keyboard comes off, which no browser emulation can do mid-page.
+POINTER = """(() => {
+  const real = window.matchMedia.bind(window);
+  const ls = [];
+  window.__fine = true;
+  window.matchMedia = q => q !== '(pointer: fine)' ? real(q) : {
+    media: q, get matches() { return window.__fine; },
+    addEventListener: (t, f) => ls.push(f), addListener: f => ls.push(f),
+    removeEventListener() {}, removeListener() {} };
+  window.__flipPointer = fine => {
+    window.__fine = fine; ls.forEach(f => f({matches: fine})); };
+})()"""
+out = {'errors': []}
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    def live(name, touch, path, legs, init=None):
+        ctx = b.new_context(viewport={'width': 800, 'height': 900}, has_touch=touch)
+        pg = ctx.new_page()
+        pg.on('pageerror', lambda e: out['errors'].append(name + ': ' + str(e)))
+        if init:
+            pg.add_init_script(init)
+        open_paused(pg, BASE + path, T0)
+        pg.wait_for_function('() => dialMarks !== null', timeout=10000)
+        for target, want in legs:
+            column(pg, target)
+            settle(pg, want)
+            out['%s %s' % (name, target)] = pg.evaluate(READ)
+        return ctx, pg
+    ctx, _ = live('desk', False, 'index.html', ((565, 'narrow'), (568, 'wide')))
+    ctx.close()
+    ctx, _ = live('touch', True, 'index.html', ((622, 'narrow'), (625, 'wide')))
+    ctx.close()
+    ctx, pg = live('flip', False, 'index.html', ((600, 'wide'),), init=POINTER)
+    pg.evaluate('() => window.__flipPointer(false)')
+    settle(pg, 'narrow')
+    out['flip after'] = pg.evaluate(READ)
+    ctx.close()
+    for name, touch in (('nojs desk', False), ('nojs touch', True)):
+        ctx = b.new_context(viewport={'width': 800, 'height': 900}, has_touch=touch)
+        pg = ctx.new_page()
+        pg.goto(BASE + 'nojs.html')
+        pg.wait_for_function("() => document.querySelector('.domefrag') !== null")
+        column(pg, 600)
+        out[name] = pg.evaluate(READ)
+        ctx.close()
+    b.close()
+print(json.dumps(out))
+'''
+
+# The bundled page as an almanac renders it, and the three-packet feed
+# that draws its dial: three browser tests drive the same page, and each
+# render costs seconds on a Pi, so each is made once per test process.
+# The page is keyed on what decides the render -- the almanac's instant
+# and place, and WHICH almanacs are registered (the satellite sky and the
+# plain one are different session objects) -- so a caller with another
+# sky gets its own render, never the first caller's.
+_ONCE = {}
+
+
+def sample_sat_page(alm):
+    key = ('page', alm.time_ts, alm.lat, alm.lon, alm.altitude,
+           tuple(id(a) for a in weewx.almanac.almanacs))
+    if key not in _ONCE:
+        _ONCE[key] = TestSampleSkinRenders.render(alm, sky_page=make_sky_page())
+    return _ONCE[key]
+
+
+def dial_feed():
+    if 'feed' not in _ONCE:
+        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+                  'saturn', 'uranus', 'neptune', 'proxima_centauri']
+        packets = []
+        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
+            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=report_formatter())
+            r = {'current.dateTime.raw': ts,
+                 'almanac.moon.phase': alm.moon.phase,
+                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
+                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
+            for b in bodies:
+                obj = getattr(alm, b)
+                r['almanac.%s.az' % b] = obj.az
+                r['almanac.%s.alt' % b] = obj.alt
+                r['almanac.%s.earth_distance' % b] = obj.earth_distance
+            packets.append(loop_file(r).encode())
+        _ONCE['feed'] = packets
+    return list(_ONCE['feed'])
+
+
 def load_loopdata():
     """Import the sibling weewx-loopdata checkout's module, or skip the
     calling test."""
@@ -6601,8 +6746,8 @@ class TestSampleSkinRenders:
 
         Neither number is read and compared to the other: both are
         DERIVED here from the same rule -- a drawing is shown while its
-        smallest label reaches 11px -- and checked against what the
-        files say.  The charts are a 680 unit frame with 10 unit labels
+        smallest label reaches the floor, 11px on a phone and 10px on a
+        desk -- and checked against what the files say, for each floor.  The charts are a 680 unit frame with 10 unit labels
         times the default scale; the dial is a 660 unit frame with the
         12 unit labels this skin gives it.  They are different numbers
         on purpose."""
@@ -6618,10 +6763,20 @@ class TestSampleSkinRenders:
         # number is for.
         default_at = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE)
         assert float(m.group(1)) == round(default_at, 1), (m.group(1), default_at)
+        # The desk rule is the phone width times the ratio of the two
+        # floors, and the script states that ratio as the two floors.
+        ratio = re.search(r'var DESK_RATIO = (\d+) / (\d+);', js)
+        assert ratio is not None, 'the script names no desk ratio'
+        assert (float(ratio.group(1)), float(ratio.group(2))) == \
+            (celestial_page.DESK_LABEL_FLOOR_PX, celestial_page.LABEL_FLOOR_PX), ratio.groups()
+        desk_at = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE,
+                                                 celestial_page.DESK_LABEL_FLOOR_PX)
+        desk_js = float(m.group(1)) * float(ratio.group(1)) / float(ratio.group(2))
         # Which its own type must of course still clear.
         dial_px = float(re.search(
             r'#dial\[data-frame="wide"\] \.gridlab\{font-size:([\d.]+)px\}', css).group(1))
         assert dial_px * float(m.group(1)) / 660.0 >= celestial_page.LABEL_FLOOR_PX
+        assert dial_px * desk_js / 660.0 >= celestial_page.DESK_LABEL_FLOOR_PX
         # And the stylesheet's own, which is the DEFAULT scale's: the
         # last width still narrow, a hair under the first wide one,
         # since a container query has no `not`.
@@ -6630,11 +6785,30 @@ class TestSampleSkinRenders:
         want_css = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE)
         assert len(set(queries)) == 1, queries
         assert 0 < want_css - float(queries[0]) < 0.05, (queries[0], want_css)
+        # The desk rule: a container query at the desk width, inside a
+        # media query that asks only about the POINTER.
+        desk_css = re.findall(
+            r'@media \(pointer: fine\)\{\s*@container \(min-width: ([\d.]+)px\)', css)
+        assert desk_css == ['%.1f' % desk_at], desk_css
         # And it is the DRAWING that is measured, never the window: a
-        # @media query here would be the bug this replaced.
-        blocks = re.findall(r'@media ([^{]+)\{((?:[^{}]|\{[^{}]*\})*)\}', css)
-        assert not [q for q, body in blocks if 'data-frame=' in body], \
-            'a frame switch is keyed to the viewport'
+        # @media query on a width here would be the bug this replaced.
+        # The pointer query is the one @media allowed near a frame rule.
+        # Each block is read where it stands, to its own closing brace.
+        code = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
+        for m in re.finditer(r'@media ([^{]+)\{', code):
+            depth, i = 1, m.end()
+            while depth and i < len(code):
+                depth += {'{': 1, '}': -1}.get(code[i], 0)
+                i += 1
+            if 'data-frame=' in code[m.end():i]:
+                assert m.group(1).strip() == '(pointer: fine)', \
+                    'a frame switch is keyed to the viewport: %s' % m.group(1)
+        # And the desk rule reaches only fragments at the DEFAULT scale,
+        # keyed on the phone width every fragment carries; any other
+        # set's desk width is elsewhere and the script decides it.
+        desk_rules = re.findall(r'\.(?:dome|pass)frag\[data-frames="both"\]'
+                                r'\[data-frame-at="([\d.]+)"\]', css)
+        assert desk_rules and set(desk_rules) == {'%.1f' % default_at}, desk_rules
 
     def test_the_label_scale_default_clears_the_floor(self):
         """The default label scale and the frame threshold are one
@@ -6662,6 +6836,12 @@ class TestSampleSkinRenders:
         m = re.search(r'#dial\[data-frame="wide"\] \.gridlab\{font-size:([\d.]+)px\}', css)
         assert m is not None, 'the dial declares no wide grid label size'
         assert float(m.group(1)) * dial_at / 660.0 >= floor, (m.group(1), dial_at)
+        # And the desk rule's, at the desk floor.
+        desk_floor = celestial_page.DESK_LABEL_FLOOR_PX
+        desk_at = celestial_page.frame_threshold(scale, desk_floor)
+        assert 10.0 * scale * desk_at / 680.0 == pytest.approx(desk_floor), (scale, desk_at)
+        dial_desk = dial_at * desk_floor / floor      # what DESK_RATIO gives the dial
+        assert float(m.group(1)) * dial_desk / 660.0 >= desk_floor, (m.group(1), dial_desk)
 
     def test_chart_palette_in_step_with_skyfield(self):
         """The dial's grid color, its Mars dot and the three dome label
@@ -9786,9 +9966,15 @@ class TestPanels:
         assert celestial_page.frame_threshold(1.0) == 748.0
         for scale, want in ((0.8, 935.0), (1.2, 623.3), (1.35, 554.1), (1.4, 534.3)):
             assert round(celestial_page.frame_threshold(scale), 1) == want, scale
-        # The floor the derivation stands on, spelled out rather than
+        # And the desk rule's, on the 10px floor the charts are laid out
+        # for: one floor below the phone's at every scale.
+        for scale, want in ((0.8, 850.0), (1.2, 566.7), (1.35, 503.7), (1.4, 485.7)):
+            assert round(celestial_page.frame_threshold(
+                scale, celestial_page.DESK_LABEL_FLOOR_PX), 1) == want, scale
+        # The floors the derivation stands on, spelled out rather than
         # folded into a magic number.
         assert celestial_page.LABEL_FLOOR_PX == 11.0
+        assert celestial_page.DESK_LABEL_FLOOR_PX == 10.0
         alm = wxskyfield_sat_almanac
         for scale, want in ((0.8, '935.0'), (celestial_page.DEFAULT_LABEL_SCALE, '623.3')):
             page = self.sets_page(make_sky_page(),
@@ -9798,9 +9984,124 @@ class TestPanels:
             for markup in (page.dome_html(alm, set='s'), page.pass_html(alm, set='s'),
                            page.dome_fragment(alm, 0, 300, fs), page.pass_fragment(alm, fs)):
                 assert 'data-frame-at="%s"' % want in markup, (scale, markup[:200])
+                # The desk width is not carried: the script derives it.
+                assert 'data-frame-at-desk' not in markup, (scale, markup[:200])
         # A fragment with one drawing switches nothing, so it declares
         # no width either.
         assert 'data-frame-at' not in celestial_page.CelestialPage._frames_attr('<svg></svg>')
+
+    def test_a_desk_keeps_its_desk_drawing_longer_than_a_phone_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The floor follows the device, not the width.  On a phone the
+        desk drawing shows while its smallest label reaches 11px (623.3px
+        of chart at the default scale); on a desk, with a fine primary
+        pointer, while it reaches the 10px the charts are laid out for
+        (566.7px).  A phone in landscape is as wide as a narrow desk
+        window, which is why no width alone can decide.
+
+        Driven on the bundled page, whose stacked layout gives the dome,
+        the pass chart and the dial one column, at widths a pixel or two
+        either side of each threshold -- a single width cannot catch a
+        threshold a few pixels off.  Each leg reads which drawing is
+        DISPLAYED, not the verdict attribute, so a stylesheet slip that
+        left the attribute right and the wrong drawing showing would
+        fail it; and the dial must agree with the charts, which is what
+        sharing the number is for.  Then: the stylesheet alone paints the
+        desk drawing first on a desk; and a pointer that changes with the
+        window unmoved re-decides both.
+
+        Its own browser and server, because each device needs a context
+        of its own (touch is set when a context is made, not after).
+        Cost: about 6 s net on a Pi -- the page render is shared with
+        two other tests and made once per process.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        packets = dial_feed()
+        html = sample_sat_page(wxskyfield_sat_almanac)
+        assert html.count('data-frame-at="623.3"') == 2, 'dome and pass, default set'
+        (tmp_path / 'index.html').write_text(html)
+        # The stylesheet alone.
+        nojs = re.sub(r'<script\b[^>]*>.*?</script>', '', html, flags=re.S)
+        assert 'celestial.start' not in nojs
+        (tmp_path / 'nojs.html').write_text(nojs)
+        write_assets(tmp_path, unwrapped=True)   # the runner reads dialMarks
+
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS
+            + ('T0 = %r\nBASE = "http://127.0.0.1:%d/"\n' % (float(TIME_TS), port))
+            + DESK_RUNNER)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=240)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == [], out['errors']
+
+        def agrees(leg, want, floor=None):
+            got = out[leg]
+            assert got['dome'] is not None and got['pass'] is not None, (leg, got)
+            for kind in ('dome', 'pass'):
+                assert got[kind]['shown'] == want, (leg, kind, got)
+            assert got['dial'] == want, (leg, 'dial', got)
+            # The dial is judged on the same column the charts are.
+            assert abs(got['dialBox'] - got['dome']['box']) < 1.5, (leg, got)
+            if floor is not None:
+                assert got['dome']['glass'] >= floor - 0.05, (leg, got)
+
+        # A desk: wide down to 566.7 and not a pixel below it, every
+        # label it shows at least 10px.
+        agrees('desk 565', 'narrow')
+        agrees('desk 568', 'wide', floor=10)
+        # A phone or tablet: the phone rule, unchanged, at 11px.
+        agrees('touch 622', 'narrow')
+        agrees('touch 625', 'wide', floor=11)
+        # The pointer changes with the window unmoved: both re-decide.
+        agrees('flip 600', 'wide')
+        agrees('flip after', 'narrow')
+        # The stylesheet alone: a desk paints the desk drawing first, a
+        # phone the phone drawing.
+        for leg, want in (('nojs desk', 'wide'), ('nojs touch', 'narrow')):
+            for kind in ('dome', 'pass'):
+                assert out[leg][kind]['shown'] == want, (leg, kind, out[leg])
 
     def test_a_sets_own_threshold_beats_the_stylesheets_in_a_real_browser(
             self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
@@ -9884,6 +10185,7 @@ class TestPanels:
             '    b = p.chromium.launch()\n'
             '    for name, path, width in (("js", "index.html", 716),\n'
             '                              ("nojs", "nojs.html", 716),\n'
+            '                              ("nojs band", "nojs.html", 616),\n'
             '                              ("broad", "index.html", 1100),\n'
             '                              ("uncapped", "uncapped.html", 1100),\n'
             '                              ("half", "half.html", 1100)):\n'
@@ -9909,7 +10211,7 @@ class TestPanels:
         # Every page but the one whose script was withheld on purpose:
         # its config block still calls celestial.start.
         for name, leg in out.items():
-            if name != 'nojs':
+            if not name.startswith('nojs'):
                 assert leg['errors'] == [], (name, leg['errors'])
         js, nojs = out['js']['dome'], out['nojs']['dome']
         # In the band where the two answers differ: wider than the
@@ -9925,6 +10227,13 @@ class TestPanels:
         # the script has to refine it.
         assert nojs['fit'] is None, nojs
         assert nojs['wide'] is True and nojs['narrow'] is False, nojs
+        # In the desk band (a 600px drawing, between the default's 566.7
+        # and this set's 850) the stylesheet's desk rule must not reach
+        # this set: it states the default scale's width, and would hand a
+        # 0.8 set its desk drawing at 7px labels.
+        band = out['nojs band']['dome']
+        assert 590 < band['box'] < 610, band
+        assert band['wide'] is False and band['narrow'] is True, band
         assert_judged_by_drawn_width(out, 'dome')
 
     def test_a_label_box_is_measured_not_calculated_in_a_real_browser(
@@ -10076,26 +10385,9 @@ class TestPanels:
         if not os.path.exists(pwenv):
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
-        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-                  'saturn', 'uranus', 'neptune', 'proxima_centauri']
-        packets = []
-        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
-            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=report_formatter())
-            r = {'current.dateTime.raw': ts,
-                 'almanac.moon.phase': alm.moon.phase,
-                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
-                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
-            for b in bodies:
-                obj = getattr(alm, b)
-                r['almanac.%s.az' % b] = obj.az
-                r['almanac.%s.alt' % b] = obj.alt
-                r['almanac.%s.earth_distance' % b] = obj.earth_distance
-            packets.append(loop_file(r).encode())
+        packets = dial_feed()
 
-        (tmp_path / 'index.html').write_text(
-            TestSampleSkinRenders.render(wxskyfield_sat_almanac,
-                                         sky_page=make_sky_page()))
+        (tmp_path / 'index.html').write_text(sample_sat_page(wxskyfield_sat_almanac))
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
         served = {'n': 0}
@@ -10508,7 +10800,11 @@ class TestPanels:
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    for name, w in (("desk", 1400), ("phone", 390), ("small", 600)):\n'
-            '        page = browser.new_page(viewport={"width": w, "height": 900})\n'
+            '        # The phone and the small screen are touch devices: the\n'
+            '        # phone rule (11px) is theirs, the desk rule (10px) the\n'
+            '        # desk\'s, and a width alone cannot tell them apart.\n'
+            '        page = browser.new_page(viewport={"width": w, "height": 900},\n'
+            '                                has_touch=(name != "desk"))\n'
             '        errors, fetched = [], []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "        page.on('request', lambda r: fetched.append(r.url.split('/')[-1].split('?')[0]) if '.txt' in r.url and 'loop' not in r.url else None)\n"
@@ -10561,8 +10857,10 @@ class TestPanels:
         # A 1400px window draws them wide; 390 and 600 draw them narrow.
         # This page carries only the panel stylesheet, so its chrome is a
         # browser's default body margin and the drawing is the window
-        # less 16px -- 584px at 600, under the 624 the wide frame needs
-        # to carry an 11px label.
+        # less 16px -- 584px at 600, under the 623.3 the wide frame needs
+        # to carry an 11px label on a touch device.  (On a desk, whose
+        # floor is 10px, 584 would be wide: the desk rule's own test
+        # covers that.)
         assert wide_state(out['desk']['before']) == WIDE, out['desk']['before']
         assert wide_state(out['phone']['before']) == NARROW, out['phone']['before']
         assert wide_state(out['small']['before']) == NARROW, out['small']['before']
@@ -10696,8 +10994,7 @@ class TestPanels:
         fixture = os.path.join(REPO_ROOT, 'tests', 'fixtures', 'dial-skies.json')
         first = jsonlib.load(open(fixture))['sets'][0]['skies'][0]['rec']
         packet = loop_file(dict(first, **{'current.dateTime.raw': TIME_TS})).encode()
-        (tmp_path / 'index.html').write_text(
-            TestSampleSkinRenders.render(wxskyfield_sat_almanac, sky_page=make_sky_page()))
+        (tmp_path / 'index.html').write_text(sample_sat_page(wxskyfield_sat_almanac))
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
         class Handler(http.server.SimpleHTTPRequestHandler):

@@ -419,19 +419,28 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * THE THRESHOLD IS DERIVED, not chosen.  The wide drawing is used only
  * where it is legible: its smallest label is 10 units scaled by the
  * set's label_scale, 12 units at the 1.2 default, in a 680 unit frame
- * -- so it needs 11 x 680 / 12 = 623.3px of glass to put that label at
- * 11px.  Below that the narrow drawing is the better drawing, at any
- * viewport.  celestial.js gives the dial this same number, rounded up,
- * so that an uncustomized page changes all of its drawings at one
- * width rather than showing a desk dial beside a phone-sized dome; a
- * test derives both.
+ * -- so on a phone it needs 11 x 680 / 12 = 623.3px of glass to put
+ * that label at 11px, and on a desk 10 x 680 / 12 = 566.7px to put it
+ * at 10px, the size the charts are laid out for.  11px is a phone's
+ * floor (a small screen held close); a desk is farther away, and there
+ * the question is only whether a drawing is near its own size.  The
+ * WIDTH cannot say which device is showing it -- a phone in landscape
+ * gives a column as wide as a narrow desk window -- so the desk number
+ * applies only where the primary pointer is fine, below.  Below its
+ * number the narrow drawing is the better drawing, at any viewport.
+ * celestial.js gives the dial these same numbers, so that an
+ * uncustomized page changes all of its drawings at one width rather
+ * than showing a desk dial beside a phone-sized dome; a test derives
+ * them all.
  *
  * KNOWN, DELIBERATE: the Nu validator's CSS checker does not yet know
- * container-type or @container and reports both as errors.  They are
- * not defects -- every engine has shipped them since 2023 -- and a
- * browser too old to know the at-rule ignores it and keeps the wide
- * drawing, which is what it had before.  The release gate pins those
- * two errors rather than expecting none, so a third one still fails. */
+ * container-type or @container and reports each as an error: three in
+ * all, the property once and the two @container rules (the second is
+ * the desk rule).  They are not defects -- every engine has shipped them
+ * since 2023 -- and a browser too old to know the at-rule ignores it and
+ * keeps the wide drawing, which is what it had before.  The release gate
+ * pins those three errors rather than expecting none, so a fourth one
+ * still fails. */
 .domefrag, .passfrag{container-type:inline-size}
 /* A drawing is never stretched past the size it was laid out for.  Each
  * of these caps is its frame's own width: 640px for the 660 and 680 unit
@@ -461,6 +470,24 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
   .passfrag[data-frames="both"] .cel-frame[data-frame="narrow"]{display:block}
   .domefrag[data-frames="both"] .cel-frame[data-frame="wide"],
   .passfrag[data-frames="both"] .cel-frame[data-frame="wide"]{display:none}
+}
+/* The desk rule: on a fine primary pointer the desk drawing holds down
+ * to 566.7px.  It is here and not only in the script so that a desk
+ * window in the band paints the right drawing first, rather than the
+ * phone one replaced at load.  Only for a fragment drawn at the DEFAULT
+ * scale, the one whose phone width is 623.3 (the attribute every
+ * fragment carries): any other set's desk width is elsewhere (850px at
+ * 0.8), and this rule would hand it a desk drawing too small to read
+ * until the script corrected it.  The extra attribute gives it the
+ * specificity of the data-frame-fit rules below, which come later and
+ * so still win. */
+@media (pointer: fine){
+  @container (min-width: 566.7px){
+    .domefrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="narrow"],
+    .passfrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="narrow"]{display:none}
+    .domefrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="wide"],
+    .passfrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="wide"]{display:block}
+  }
 }
 /* AND THE SET'S OWN ANSWER WINS.  The width above is the DEFAULT label
  * scale's; a set that declares another changes frame somewhere else

@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.9';
+  var CELESTIAL_JS_VERSION = '9.10';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -462,7 +462,34 @@ var celestial = (function () {
   // fitFrames, comparing against the same 623.3, said wide -- a
   // phone-sized dial beside desk-sized charts, which is the very thing
   // the shared number exists to prevent.
+  //
+  // TWO FLOORS, ONE FOR EACH DEVICE.  623.3 is the phone rule: 11px, the
+  // floor where a small screen held close stops reading.  On a desk the
+  // question is only whether a drawing is near its own size, so its
+  // floor is the 10px the charts are laid out for, and every width
+  // scales by the ratio of the two floors: the default set's desk width
+  // is 623.3 x 10/11 = 566.64 (the dial's smallest label is then
+  // 12 x 566.64 / 660 = 10.3px).  The exact rule gives 566.67, and the
+  // stylesheet states that; the 0.03px between them is the attribute's
+  // one-decimal precision, the same hair the phone rule carries at
+  // 623.3 against its 623.33, and in that sliver this script's verdict
+  // stands, as it does across the stylesheet's 623.29.  The ratio is
+  // the ONE desk number in this file; the charts and the dial both
+  // apply it to the phone width
+  // they already have, so nothing on a page can take one rule while its
+  // neighbor takes the other.  The width cannot say which device is
+  // showing it -- a phone in landscape is as wide as a narrow desk
+  // window -- so deskRule() asks the primary pointer.
   var NARROW_BELOW = 623.3;
+  var DESK_RATIO = 10 / 11;    // DESK_LABEL_FLOOR_PX / LABEL_FLOOR_PX; a test pins it
+  function deskRule() {
+    // Only a FINE primary pointer (a mouse, a trackpad) takes the desk
+    // floor.  Coarse, none (a television, a kiosk, a keyboard), or no
+    // matchMedia at all keeps the phone rule: the larger type is the
+    // safe answer for a device nothing here can identify.  A fresh query
+    // each time; the change listener in watchFrames holds its own.
+    return !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
+  }
   function dialBox(dial) {
     // The element the dial's width comes FROM, never the dial itself.
     // Each frame is capped near its own design size -- 640px for the
@@ -479,27 +506,30 @@ var celestial = (function () {
     // not narrow: it gets the wide frame, which is what it had before
     // there were two.
     var w = dialBox(dial).getBoundingClientRect().width;
-    return w > 0 && w < NARROW_BELOW;
+    var below = deskRule() ? NARROW_BELOW * DESK_RATIO : NARROW_BELOW;
+    return w > 0 && w < below;
   }
   // THE SET'S OWN THRESHOLD.  Every fragment that carries two drawings
-  // carries the width it changes between them at -- data-frame-at,
-  // derived by celestial_page.frame_threshold from that set's
-  // label_scale, because a chart's smallest label is 10 units TIMES
-  // that scale and so the width at which it stops reading moves with
-  // it: 935px at 0.8, 623px at the 1.2 default, 534px at 1.4.
+  // carries the width it changes between them at -- data-frame-at, the
+  // phone rule's, derived by celestial_page.frame_threshold from that
+  // set's label_scale, because a chart's smallest label is 10 units
+  // TIMES that scale and so the width at which it stops reading moves
+  // with it: 935px at 0.8, 623px at the 1.2 default, 534px at 1.4.  On
+  // a desk each is scaled by DESK_RATIO here: 850, 567 and 486.
   //
-  // celestial.css can only state one of those: a container query's
+  // celestial.css can only state the default's: a container query's
   // condition cannot be a variable, and a <style> element is not valid
   // inside a fragment.  So the stylesheet carries the DEFAULT scale's
-  // width -- right for any page that takes the default, and the answer
+  // widths -- right for any page that takes the default, and the answer
   // a page with no javascript keeps -- and this refines it per
   // fragment, so no set can silently show a drawing its labels have
   // stopped reading on.
   function fitFrames() {
     var wraps = document.querySelectorAll(
         '.domefrag[data-frame-at], .passfrag[data-frame-at]');
+    var ratio = deskRule() ? DESK_RATIO : 1;
     Array.prototype.forEach.call(wraps, function(w) {
-      var at = parseFloat(w.getAttribute('data-frame-at'));
+      var at = parseFloat(w.getAttribute('data-frame-at')) * ratio;
       var width = w.getBoundingClientRect().width;
       if (!isFinite(at) || width <= 0) {
         return;            // not laid out yet, or a wrapper without one
@@ -518,6 +548,22 @@ var celestial = (function () {
     }
     framesWatched = true;
     fitFrames();
+    if (window.matchMedia) {
+      // The primary pointer can change with the window unmoved -- a
+      // two-in-one losing its keyboard -- and then neither observer
+      // below fires.  This query object is held only to listen; deskRule
+      // asks a fresh one each time.
+      var pointer = window.matchMedia('(pointer: fine)');
+      var onPointer = function() {
+        fitFrames();
+        dialFrameCheck();
+      };
+      if (pointer.addEventListener) {
+        pointer.addEventListener('change', onPointer);
+      } else if (pointer.addListener) {
+        pointer.addListener(onPointer);
+      }
+    }
     if (window.ResizeObserver) {
       var ro = new window.ResizeObserver(fitFrames);
       ['dome-svg', 'pass-chart'].forEach(function(id) {
@@ -560,6 +606,24 @@ var celestial = (function () {
       // labels stand as they were last measured.
     });
   }
+  var dialEl = null;
+  function dialFrameCheck() {
+    // Redraw the dial if the frame it is in is no longer the one its
+    // width and this device call for; true when it did.  Rebuilt, never
+    // adjusted: the frames do not draw the same elements (the narrow one
+    // names every other ring), so there is no set of marks to move from
+    // one to the other.  Changing frame does not change the element's
+    // width, so this cannot drive itself.
+    if (dialMarks === null || dialEl === null) {
+      return false;      // nothing drawn yet: the first build measures
+    }                    // for itself
+    if ((dialNow === DIAL_NARROW) === narrowDial(dialEl)) {
+      return false;
+    }
+    dialMarks = null;
+    renderGeo();
+    return true;
+  }
   var dialWatched = false;
   function watchDialFrame(dial) {
     // Armed by the first buildDial, not by start(): start() runs from
@@ -571,11 +635,12 @@ var celestial = (function () {
       return;
     }
     dialWatched = true;
+    dialEl = dial;
     var onResize = function() {
       if (dialMarks === null) {
         return;          // nothing drawn yet: the first build measures
       }                  // for itself
-      if ((dialNow === DIAL_NARROW) === narrowDial(dial)) {
+      if (!dialFrameCheck()) {
         // The frame is the one already drawn -- but the resize can still
         // have changed what the stylesheet resolves for a label, through
         // a media or container query of a consuming skin's own, and a
@@ -590,16 +655,10 @@ var celestial = (function () {
         // does not touch -- only the label boxes change -- so re-placing
         // is both the correct answer and the cheaper one.
         placeLabels();
-        return;
       }
-      // Rebuilt, never adjusted: the frames do not draw the same
-      // elements (the narrow one names every other ring), so there is no
-      // set of marks to move from one to the other.  Turning a phone
-      // therefore costs one redraw of a drawing this script builds in a
-      // few milliseconds, and no fetch at all.  Changing frame does not
-      // change the element's width, so this cannot drive itself.
-      dialMarks = null;
-      renderGeo();
+      // Otherwise dialFrameCheck has redrawn it in the other frame:
+      // turning a phone costs one redraw of a drawing this script builds
+      // in a few milliseconds, and no fetch at all.
     };
     if (window.ResizeObserver) {
       // The CONTAINER is watched, for dialBox's reason: the capped dial

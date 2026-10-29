@@ -589,9 +589,9 @@ class FragmentSet(NamedTuple):
 # chosen: a chart is capped at 640px of glass, its smallest label is 10
 # units in a 680 unit frame, and 10 units renders 9.4px there -- under
 # any legibility standard, on every desktop there has ever been.  1.2
-# puts it at 11.3px at the cap and at 11.0px at 624px, which is the
-# width celestial.css lets the wide drawing fall to before it hands over
-# to the narrow one.  The two numbers are one decision.
+# puts it at 11.3px at the cap, at 11.0px at 623.3px (where a phone hands
+# over to the narrow drawing) and at 10.0px at 566.7px (where a desk
+# does).  The numbers are one decision.
 DEFAULT_LABEL_SCALE = 1.2
 
 # THE FRAME THRESHOLD, and it belongs to the SET rather than to this
@@ -601,23 +601,34 @@ DEFAULT_LABEL_SCALE = 1.2
 # A chart's smallest label is 10 units before the set's label_scale
 # multiplies it, in a frame 680 units across, so on a drawing rendered W
 # pixels wide it lands at 10 x scale x W / 680 px.  Setting that at the
-# 11px floor and solving for W gives the threshold below.  It is
-# therefore a function of the scale and NOT a constant: a set at 0.8
-# needs 935px to stay legible, one at 1.4 only 535px, and a single
-# number would hand the phone drawing to a column that could carry the
-# detailed one -- or, far worse, the detailed one to a column that
-# cannot.
+# floor and solving for W gives the threshold below.  It is therefore a
+# function of the scale and NOT a constant: a set at 0.8 needs 935px to
+# stay legible on a phone, one at 1.4 only 535px, and a single number
+# would hand the phone drawing to a column that could carry the detailed
+# one -- or, far worse, the detailed one to a column that cannot.
+#
+# TWO FLOORS, because legibility depends on the device and the width
+# does not say which device is showing the drawing.  11px is a phone's:
+# a small screen held close is where smaller text stops reading.  A desk
+# screen is farther away, and there the question is whether a drawing
+# is near the size it was laid out for -- these charts are laid out for
+# 10px labels -- so its floor is 10px.  A phone in landscape gives a
+# column as wide as a narrow desk window, which is why the floor follows
+# the pointer (celestial.js reads `(pointer: fine)`) rather than a width.
 LABEL_FLOOR_PX = 11.0
+DESK_LABEL_FLOOR_PX = 10.0
 WIDE_FRAME_UNITS = 680.0
 SMALLEST_LABEL_UNITS = 10.0
 
 
-def frame_threshold(label_scale: float) -> float:
+def frame_threshold(label_scale: float, floor_px: float = LABEL_FLOOR_PX) -> float:
     """The narrowest glass a set's DESK drawing still reads on, in CSS
-    pixels.  Every fragment carries its own, and celestial.js switches
-    frames by it; celestial.css carries the default scale's answer as
-    the floor for a page with no javascript."""
-    return (LABEL_FLOOR_PX * WIDE_FRAME_UNITS
+    pixels, for a floor of `floor_px`: the phone rule by default,
+    `DESK_LABEL_FLOOR_PX` for a desk.  Every fragment carries the phone
+    rule's, and celestial.js derives the desk rule's from it by the ratio
+    of the two floors; celestial.css carries the default scale's answers
+    for a page with no javascript."""
+    return (floor_px * WIDE_FRAME_UNITS
             / (SMALLEST_LABEL_UNITS * float(label_scale)))
 
 DEFAULT_SET = FragmentSet('', DEFAULT_PREFIX, DEFAULT_LABEL_SCALE, None)
@@ -1777,7 +1788,10 @@ class CelestialPage:
         A wrapper that carries two drawings also carries the width at
         which it changes between them (see frame_threshold), because
         that width is the SET's and this is the only place a consumer's
-        page can learn it."""
+        page can learn it.  It is the PHONE rule's; the desk rule's is
+        the same width times DESK_LABEL_FLOOR_PX / LABEL_FLOOR_PX, which
+        celestial.js computes, so a fragment written by any release since
+        9.6 carries everything the script needs."""
         if FRAME_MARK % 'narrow' not in markup:
             return ''
         return ' data-frames="both" data-frame-at="%.1f"' % frame_threshold(fs.label_scale)

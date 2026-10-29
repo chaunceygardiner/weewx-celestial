@@ -1,5 +1,34 @@
 # weewx-celestial change history
 
+## 9.10 2026/10/28
+- ACTION REQUIRED only if you embed these panels in a skin of your own
+  (the bundled Celestial report needs nothing): re-copy `celestial.js`
+  and `celestial.css` from skins/Celestial/ into your skin and restart
+  WeeWX.  The two move together: a 9.10 stylesheet with an older script
+  paints a desk window's drawing twice at load.  If your own chrome
+  changes at the charts' switching width
+  through a `@container` query at 623px, key it to the wrapper's
+  `data-frame-fit` instead: on a desk the width is now different.
+- On a desk, a chart keeps its desk drawing down to a narrower width.
+  The switch to the phone drawing comes where the desk drawing's
+  smallest label falls under a floor, and that floor was 11px on every
+  device.  11px is a phone's floor; a desk screen sits farther away, and
+  the charts are laid out for 10px labels, so on a device whose primary
+  pointer is a mouse or trackpad the floor is now 10px: the default
+  scale switches at 567px instead of 623px.  Phones and tablets are
+  unchanged.  The device decides because a phone in landscape is as
+  wide as a narrow desk window.  On the bundled page this reaches desk
+  windows about 653-709px wide; a skin that embeds the charts in a
+  narrower column gains more.  The Geocentric dial follows the same
+  rule, so the page still changes all of its drawings together.  The
+  fragment files are unchanged; the script derives the desk width from
+  the phone width they already carry.
+- For a skin of your own whose set has a `narrow_media` layer at a
+  phone breakpoint (say `(max-width: 600px)`): on a desk that layer now
+  shows inside the desk drawing in windows between the two widths,
+  where the phone drawing showed before.  Drop both keys, as the
+  embedding guide has said since 9.6; a phone gets a drawing of its own.
+
 ## 9.9 2026/10/28
 - ACTION REQUIRED only if you embed these panels in a skin of your own
   (the bundled Celestial report needs nothing): re-copy `celestial.css`

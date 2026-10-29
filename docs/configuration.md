@@ -436,13 +436,18 @@ same page as desktops gets it for free.
 Which one shows is decided by **how wide the chart itself renders**, not
 by the viewport, and the width it changes at is derived from the set's
 own `label_scale`: a chart's smallest label is 10 units times that scale
-in a 680-unit frame, so it reaches the 11px floor at 935px of glass on a
-set scaled 0.8, at 623px on the default 1.2, and at 534px on one scaled
-1.4.  Each fragment carries its own figure, so setting a `label_scale`
-gets you the right switching width without computing one.  This
-extension's stylesheet holds the dome and the pass chart at 640px, so on
-a page that uses it a set below about 1.17, whose switching width is
-over 640px, always shows the phone drawing;
+in a 680-unit frame.  On a phone or tablet the desk drawing shows while
+that label is at least 11px, a small screen's floor: 935px of glass on a
+set scaled 0.8, 623px on the default 1.2, 534px on one scaled 1.4.  On a
+desk, with a mouse or trackpad, the floor is the 10px the charts are
+laid out for: 850px, 567px and 486px.  (A phone in landscape is as wide
+as a narrow desk window, so the device decides which floor applies, not
+the width.)  Each fragment carries its own figures, so setting a
+`label_scale` gets you the right switching widths without computing
+them.  This extension's stylesheet holds the dome and the pass chart at
+640px, so on a page that uses it a set whose switching width is over
+640px always shows the phone drawing: below about 1.17 on a phone, below
+about 1.06 on a desk;
 [Panels in your own skin](own-skin.md#the-two-drawings) says how to lift
 that cap.
 
@@ -458,10 +463,11 @@ above that threshold, where the desk drawing is still what shows:
 ```
 
 Note what is *not* here: a `label_scale`.  The set takes the default, so
-its threshold is 623px and the 900px query sits above it.  Declaring
-`label_scale = 0.8` would move the threshold to 935px, and the layer
-would never show — below 935px this drawing is hidden and the phone one
-is shown instead.
+its threshold is 623px (567px on a desk) and the 900px query sits above
+it.  Declaring
+`label_scale = 0.8` would move the threshold to 935px (850px on a desk),
+and the layer would never show — below that this drawing is hidden and
+the phone one is shown instead.
 
 The scale reaches only the text: the star dots, markers and rings are
 drawn once, the same at every scale.
