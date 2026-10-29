@@ -2,7 +2,7 @@
 
 A design for removing the per-station hand edit a consumer skin needs
 before its Celestial panels go live.  Written 2026-08-30, after the
-weewx-liveseasons conversion — the design's acceptance test — reported
+conversion of a consuming skin — the design's acceptance test — reported
 it as blocking.  Nothing is built; this is for review first.
 
 ## The problem, exactly
@@ -91,7 +91,7 @@ using that skin, and correctly write nothing — leaving the state this
 design calls broken, on the fresh path.  It works on an upgrade, where
 the stanza is already there, which is every existing station and therefore
 every test either side would naturally have run.  Found by the
-liveseasons session reading weectl rather than trusting the happy path.
+consuming skin's conversion, reading weectl rather than trusting the happy path.
 
 Two things that ordering settles in our favor: `_install_files` is line
 197, so the consumer's `skin.conf` IS on disk when `configure()` runs and
@@ -196,7 +196,7 @@ reason first.
 ## Tear-down: the groups are pruned when the skin is gone
 
 Half 1 improves bring-up and would have quietly degraded removal, which
-the liveseasons session caught by reading weectl.  There is **no
+the consuming skin's conversion caught by reading weectl.  There is **no
 uninstall hook**: `ExtensionInstaller` has `process_args` and `configure`
 and nothing else, and `uninstall_extension` calls `uninstall_files` and
 then `remove_and_prune(config_dict, installer['config'])`, which prunes
@@ -340,4 +340,4 @@ The verification is a scratch CitySim station with a consumer skin
 declaring `celestial_panels` in its `skin.conf` and NOTHING in
 `weewx.conf`, installed in each of the three orders above, with the
 fresh-install case run from a config that has no such report stanza at
-all — before any of it is handed to the liveseasons session.
+all — before any of it is handed to the consuming skin.

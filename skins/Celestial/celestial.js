@@ -2645,7 +2645,7 @@ var celestial = (function () {
     // generated backdrop emits neither (checked: zero display
     // attributes in a rendered dome), so the wide selector costs
     // nothing and cannot hide what the almanac meant to draw.  Found by
-    // the liveseasons port's review.
+    // a consuming skin's review of its port.
     // Array.prototype.forEach.call, not NodeList.forEach: this file is
     // ES5 throughout -- no arrow functions, no const, no classList --
     // and the block below deliberately supports engines too old for

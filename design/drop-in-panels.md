@@ -10,10 +10,10 @@ are recorded at the end.
 
 weewx-skyfield's manual says "three things to arrange" and a panel is one
 Cheetah call.  Celestial's manual says there is no supported way to reuse
-its panels at all, and the one consumer that tried -- weewx-liveseasons --
+its panels at all, and the one consumer that tried -- a skin that embedded them by copying --
 shows what that costs:
 
-| liveseasons file | lines | what it forked from celestial |
+| consumer file | lines | what it forked from celestial |
 |---|---|---|
 | `celestial_today_updater.inc` | 1,239 | Geocentric dial, roster, comets, countdown row |
 | `celestial_stars_updater.inc` | 1,349 | dome slot walk, satellite marks, stale line |
@@ -27,7 +27,7 @@ not design: the stars fork's slot-0 fallback carries an after-the-fact
 justification where celestial clamps to `count - 1`; the countdown is a
 different function (`fmtCountdown(ts, nowTs)` against `fmtDHMS(sec)`), so
 the 8.1-8.3.5 chip rulings were re-derived rather than carried; and
-8.3.4, 8.3.5 and 8.4 each became a separate liveseasons release with
+8.3.4, 8.3.5 and 8.4 each became a separate release of the consuming skin, with
 its own review rounds.  It was too hard to keep them in sync, so they
 drifted.  Every celestial fix is paid for twice and the two are no longer
 the same program.
@@ -69,7 +69,7 @@ The dome adds a fifth: the **staggered fragment set** (`dome-svg.txt`,
 `dome-svg-1..9.txt`) with the wrapper protocol
 (`data-dome-ts/-slot/-step/-count/-interval/-palette`) that the page walks
 to step the sky between cycles.  It is in scope; it is the part that
-actually broke in two places (8.4 and liveseasons 8.4.6 fixed the same
+actually broke in two places (8.4 and the consuming skin fixed the same
 slot-count arithmetic separately), so it is the part that most needs one
 owner.
 
@@ -211,14 +211,14 @@ once when its root element is absent (`#countdown`, `#dial`, `#dome-svg`,
 `refreshDome`, `passSvg`, `refreshPass`); the dial and the countdown do
 not yet.  With every render guarded, a page holding any subset of
 panels runs the one script with no per-panel wiring -- which is what
-liveseasons' five tabs need and why they forked.
+the consuming skin's five tabs need and why they forked.
 
 **Fragment names become config.**  Today the fragment names are
 literals relative to the page URL (`dome-svg-3.txt`, `pass-chart.txt`).
 The config carries the prefix of the fragment set the page embeds
 (default `dome-svg`, so the sample skin's URLs do not change), taken
-from the set the page named in its `dome_html` call -- liveseasons'
-`dome-svg-sp` twin becomes a set name instead of a forked constant.
+from the set the page named in its `dome_html` call -- the consuming
+skin's `dome-svg-sp` twin becomes a set name instead of a forked constant.
 
 As built (step 4): NOT config.  The config block is emitted at the top
 of `<body>`, before the `dome_html(set=...)` call it would have to
@@ -332,8 +332,8 @@ theme, its language, its `[Almanac]` names, its `HTML_ROOT`, and the
 instant its page was generated for.  Today the CheetahGenerator writes
 the set, one template per output file, and a template resolves relative
 to the skin that lists it -- so a consumer skin cannot point at
-Celestial's templates, and copying eleven files (liveseasons:
-twenty-two) is what we are trying to end.  A first draft of this design
+Celestial's templates, and copying eleven files (the consuming
+skin: twenty-two) is what we are trying to end.  A first draft of this design
 moved the set to a separate `CelestialDome` report.  That made every
 `(theme, label_scale, lang)` combination a stanza of its own, whose
 theme and language a user keeps in agreement with the page by hand,
@@ -370,7 +370,7 @@ reads too.  The arithmetic that was fixed twice lives once, and the two
 wrappers cannot disagree because there is no second copy.
 
 **The set is the unit of agreement.**  A skin that needs more than
-one set -- liveseasons' desktop and smartphone label scales -- declares
+one set -- say desktop and smartphone label scales -- declares
 them in its own `skin.conf`, beside `[CheetahGenerator]` and
 `[CopyGenerator]`, the way `[ImageGenerator]` declares its plots:
 
@@ -440,8 +440,8 @@ theme (step 1 refused that until the page could follow a set).
 
 A set's `theme` chooses the plate for the panels **skyfield draws** --
 the dome and the pass chart, whose colors are inline in the SVG.  It
-is what lets a light site carry a night dome, which is liveseasons
-today (`palette='night'` written into a light page).  The panels
+is what lets a light site carry a night dome, which is what the
+consuming skin did (`palette='night'` written into a light page).  The panels
 celestial draws -- the dial, the roster, the chips -- take their colors
 from `celestial.css` tokens switched by the `theme-light` class on the
 root element, so they follow the page, not a set.  A night dial beside
@@ -611,16 +611,16 @@ diffing `install.py`.
                 comets = almanac.halley.az, almanac.halley.alt, ...   # written by configure()
 ```
 
-### A consumer, in liveseasons' shape
+### A consumer
 
 Its `weewx.conf` stanza gains one key, and the installer then keeps the
 two dynamic groups under it as it does for `[[CelestialReport]]`:
 
 ```
 [StdReport]
-    [[LiveSeasonsReport]]
+    [[MySkinReport]]
         HTML_ROOT = public_html
-        skin = LiveSeasons
+        skin = MySkin
         celestial_panels = dome, pass
         [[[LoopData]]]
             [[[[fields]]]]
@@ -680,25 +680,25 @@ not pin.
 The dome-slot, pass-sweep, freeze and stalled-feed browser tests are the
 ones that matter most; they drive the exact code that moves.
 
-## Liveseasons is the acceptance test
+## A real consuming skin is the acceptance test
 
-The design is done when liveseasons can delete its three updaters and
+The design is done when the consuming skin can delete its three updaters and
 twenty-four fragment files and replace them with the four steps above
 (a two-set `[CelestialFragments]` section for its two label scales), and its tabs
 then behave like current celestial -- which is better than they behave
-today, since every fix since 8.0 arrives at once.  Whatever liveseasons
+today, since every fix since 8.0 arrives at once.  Whatever that skin
 loses in that swap it never chose to have.  That conversion is done
 BEFORE celestial 9.0 is cut, against the unreleased 9.0 on the
 dogfooding instances, and what it finds is fixed here first: shipping
 the interface before its one real consumer has been built against it
 would be shipping it untested (corrected 2026-08-30 from this
 paragraph's original "after celestial 9.0 ships").  Nothing in this
-design needs a liveseasons-specific option, and none is proposed.
+design needs an option specific to that skin, and none is proposed.
 
 ## Tests, new and moved
 
 - `dome_slots` pinned across the thirteen intervals (ported from
-  liveseasons' `test_the_count_declared_is_the_count_emitted`), replacing the two-place
+  the consuming skin's test of the same arithmetic), replacing the two-place
   arithmetic test.
 - `celestial.js` contains no Cheetah (`$`, `#` outside comments) and
   declares exactly one global.
@@ -781,7 +781,7 @@ Six steps, roughly, each leaving the tests green:
    `changes.md`; release notes; the README screenshot only if the look
    changed, which it must not have.
 
-Then the liveseasons conversion from the manual (the acceptance test
+Then the consuming skin's conversion from the manual (the acceptance test
 above), then 9.0.  The version is a major because `realtime_updater.inc` and
 the fragment templates go away, and a user who edited either has work
 to do at upgrade; `upgrading.md` says what.
@@ -799,11 +799,11 @@ kept so the reasons are not lost.
    Rejected: paste only (a consumer with satellites re-pastes after every
    `--add-satellite`); the installer writing the static groups too (a
    consumer's field set on every machine's `weewx.conf`, which
-   liveseasons 8.5 just moved away from).
+   the consuming skin had just moved away from).
 2. **Fragments from `FragmentGenerator`** in the consumer's own
    `generator_list`, sets in its `skin.conf`; the sample skin uses it
    too.  Rejected: copied one-liner templates (eleven files per set,
-   twenty-two for liveseasons); a separate fragments report (a stanza per
+   twenty-two for the consuming skin); a separate fragments report (a stanza per
    theme, scale and language, kept in agreement by hand).
 3. **Satellite rosters are separate methods** (`dome_roster_html`, and
    `pass_html`'s roster its own call), so a consumer places them
@@ -820,7 +820,7 @@ of the sequencing above.
 
 ## 9.3 addendum: one page, every screen
 
-Liveseasons' one-URL pages (its `design/one-url-pages.md`) dropped the
+The consuming skin's one-URL pages dropped the
 `*_smartphone.html` twins, which left the dome and the pass chart as the
 one piece CSS alone could not serve: skyfield sizes and places labels at
 render time, so a phone needs its own label layout.  Two designs were
@@ -833,7 +833,7 @@ tried on 2026-09-12:
   sixth round's finding that the deeper change belongs in skyfield:
   `label_scale` reaches only the text (dots, markers, rings, gradient
   and viewBox are the same at every scale -- verified in the code and
-  by liveseasons on bambi's served files, 806 identical circles), and
+  on a station's served files, 806 identical circles), and
   the labels are ~8 KB of a 147 KB dome fragment.
 - Then LABEL LAYERS in weewx-skyfield 2.5, the design ruled: the chart
   methods take `label_layers=[(scale, media_query), ...]`, the label
@@ -852,8 +852,8 @@ tried on 2026-09-12:
   Visible on every page: skyfield moves the cardinals, ring figures and
   track times to the top of the drawing.
 
-The lesson, recorded here so it is not re-learned: the liveseasons
-proposal rejected a CSS rescale because "it moves the collisions", and
+The lesson, recorded here so it is not re-learned: the consuming
+skin's proposal rejected a CSS rescale because "it moves the collisions", and
 the collision layout is skyfield's knowledge -- the answer was to ask
 skyfield to lay the labels out twice in the file, not to fetch a second
 file that carries the same marks again.  Put the change where the

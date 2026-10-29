@@ -304,18 +304,16 @@ Every one runs the code.
   the fields.
 - changes.md: the bullets, with skyfield 2.12 at the top as action
   required.
-- **weewx-tempestas reads `next_visible_pass.rise` and `.set` through
-  celestial's own `satellites` group** (its skin.conf:47 names
-  `celestial_panels = geocentric, dome, pass`, and :268-275 says the
-  satellite fields are celestial's): its pass chip
-  (celestial_today_updater.inc:399-430), its first paint
-  (celestial_today.inc:160) and its `SAT_SUFFIXES` gate
-  (test_tempestas.py:253, :576).  The first 9.8 install redeclares
-  that group without them, so tempestas switches to the window fields
-  in the same rollout, and its handoff is written before this is
-  built.  Putting rise and set back in a group of its own would keep
+- **A consuming skin reads `next_visible_pass.rise` and `.set` through
+  celestial's own `satellites` group** (its skin.conf names
+  `celestial_panels = geocentric, dome, pass` and leaves the satellite
+  fields to celestial): its pass chip, its first paint and a gate in
+  its tests.  The first 9.8 install redeclares that group without
+  them, so that skin switches to the window fields in the same
+  rollout, and is told before this is built.  Putting rise and set
+  back in a group of its own would keep
   the `next_visible_pass` group on the report until set, the state
-  point 4 handles; the handoff says that too.
+  point 4 handles; it is told that too.
 
 ## Settled
 
@@ -328,7 +326,7 @@ Settled 2026-10-26 after the review:
   disappears ENE · 10 m" and the pass row "appears ESE · peaks 17° ESE
   · disappears E · 2 m".  Kept: each is true of what its table is
   about, and the dome's tag (point 3) says when the pass can be seen.
-- **weewx-tempestas moves in the same rollout,** as above.
+- **The consuming skin moves in the same rollout,** as above.
 
 Points 3 to 6 follow from skyfield's own definitions, loopdata's
 delivery and its handoff, and are taken as written: the dome's tag

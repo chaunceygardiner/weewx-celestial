@@ -1454,7 +1454,7 @@ class TestSampleSkinRenders:
         """theme = light is the WHOLE page: the class the stylesheet's
         light plate hangs on, and the embedded dome rendered on
         skyfield's matching paper palette.  A night dome inside a light
-        page (the Tempestas shape, correct there) is the one outcome
+        page (a consuming skin's shape, correct there) is the one outcome
         this page must never produce, so the night plate's own gradient
         stop is asserted ABSENT rather than the paper one merely
         present."""
@@ -1702,7 +1702,7 @@ class TestSampleSkinRenders:
         does -- and the walk, which clamps to count - 1, could never ask
         for it, so the last 50 s of every cycle showed the slot before.
         Declared == emitted, and the last slot askable, on intervals that
-        do NOT divide: neither this repo nor liveseasons had such a
+        do NOT divide: neither this repo nor its consuming skin had such a
         station, which is how it survived four review rounds."""
         def emitted(seconds):
             """The slots this interval actually writes, and what each one
@@ -2065,7 +2065,7 @@ class TestSampleSkinRenders:
         shown twice).  The one-second tick survives for extrapolated
         MOTION -- the dial's bodies, the dome's marks, the pass chart's
         sweep, each on packetAge -- and for elapsed-time housekeeping.
-        Same rule, same survivors as weewx-liveseasons 8.4.4.
+        Same rule, same survivors as the consuming skin's own port.
 
         Structural rather than a browser run on purpose: the rule is
         about which names appear where.  The rendered-value half (GEN_TS
@@ -3668,8 +3668,8 @@ class TestSampleSkinRenders:
         so on every one-second tick, rewriting the same attributes to the
         same values for hours on a chart nothing had touched.  8.3.5 put
         the asDrawn latch in front of that; 8.4 pins it, because the
-        fix had no test of its own on this side (liveseasons measured it,
-        celestial took it on trust).
+        fix had no test of its own on this side (a consuming skin measured
+        it, celestial took it on trust).
 
         The chart's window is moved an hour ahead of the page's clock, a
         packet lands so renderPass runs at all, and every attribute write
@@ -3987,7 +3987,7 @@ class TestSampleSkinRenders:
         a daytime sky with no sun in it -- and no live satellite marker
         survives, dot or name (the name sits in the chart's label layers,
         apart from its dot, so each is removed on its own).  The display
-        half was found by the liveseasons port's review of this same
+        half was found by a consuming skin's review of its port of this same
         function.  Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -15403,7 +15403,7 @@ class TestInstallerDeclaresFields:
         # Any other target report renders them a second time: counted.
         elsewhere = {'Skyfield': {'Satellites': {}, 'Comets': {}},
                      'LoopData': {'Include': {'fields': list(legacy)},
-                                  'Formatting': {'target_report': 'LiveSeasonsReport'}}}
+                                  'Formatting': {'target_report': 'OtherReport'}}}
         engine = self._engine(elsewhere)
         self._installer().configure(engine)
         assert 'still carries 47 entries' in '\n'.join(engine.printer.lines)
